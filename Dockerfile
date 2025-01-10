@@ -5,6 +5,8 @@ WORKDIR /app
 # Копіюємо package.json і встановлюємо залежності
 COPY package.json ./
 RUN npm install
+RUN npm install express jsonwebtoken bcrypt pg
+
 
 # Копіюємо весь проєкт
 COPY . .
@@ -13,4 +15,4 @@ COPY . .
 EXPOSE 3000
 
 # Запускаємо бекенд
-CMD ["node", "index.js"]
+CMD ["node", "src/index.js"]
