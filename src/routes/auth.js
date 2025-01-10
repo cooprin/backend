@@ -16,7 +16,7 @@ router.post('/register', async (req, res) => {
     );
 
     if (userCheck.rows.length > 0) {
-      return res.status(400).json({ message: 'User already exists' });
+      return res.status(400).json({ message: 'User already exists!' });
     }
 
     // Hash password
