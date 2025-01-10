@@ -13,7 +13,7 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
-
+//for test
 // Routes
 app.use('/auth', authRoutes);
 
