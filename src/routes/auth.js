@@ -7,7 +7,7 @@ const { pool } = require('../database');
 // Register
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, fullName } = req.body;
+    const { email, password, firstName, lastName, phone } = req.body;
     
     // Check if user exists
     const userCheck = await pool.query(
@@ -25,8 +25,10 @@ router.post('/register', async (req, res) => {
 
     // Create user
     const result = await pool.query(
-      'INSERT INTO users (email, password, full_name) VALUES ($1, $2, $3) RETURNING id, email, full_name',
-      [email, hashedPassword, fullName]
+      `INSERT INTO users (email, password, first_name, last_name, phone) 
+       VALUES ($1, $2, $3, $4, $5) 
+       RETURNING id, email, first_name, last_name, phone`,
+      [email, hashedPassword, firstName, lastName, phone]
     );
 
     res.status(201).json({
@@ -62,12 +64,18 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
+    // Update last login
+    await pool.query(
+      'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
+      [user.id]
+    );
+
     // Create token
     const token = jwt.sign(
       { 
         userId: user.id,
         email: user.email,
-        role: user.role 
+        roleId: user.role_id 
       },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
@@ -78,8 +86,12 @@ router.post('/login', async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
-        fullName: user.full_name,
-        role: user.role
+        firstName: user.first_name,
+        lastName: user.last_name,
+        phone: user.phone,
+        avatarUrl: user.avatar_url,
+        roleId: user.role_id,
+        isActive: user.is_active
       }
     });
   } catch (err) {
@@ -100,7 +112,8 @@ router.get('/me', async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
     const result = await pool.query(
-      'SELECT id, email, full_name, role FROM users WHERE id = $1',
+      `SELECT id, email, first_name, last_name, phone, avatar_url, role_id, is_active, last_login 
+       FROM users WHERE id = $1`,
       [decoded.userId]
     );
 
