@@ -74,7 +74,7 @@ const removeOldAvatar = async (userId) => {
 };
 
 // Змінено маршрут з PUT /update-avatar на POST /users/avatar
-router.post('/users/avatar', authenticate, upload.single('avatar'), async (req, res) => {
+router.post('/avatar', authenticate, upload.single('avatar'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ 
