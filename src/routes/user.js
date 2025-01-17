@@ -8,17 +8,29 @@ const fs = require('fs');
 const router = express.Router();
 
 // Налаштування для multer
-const uploadDir = process.env.UPLOAD_DIR || 'uploads';
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
+    destination: function (req, file, cb) {
+      cb(null, process.env.UPLOAD_DIR)
+    },
+    filename: function (req, file, cb) {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
+      cb(null, `avatar-${uniqueSuffix}${path.extname(file.originalname)}`)
+    }
+  });
+
+const upload = multer({ 
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB ліміт
   },
-  filename: (req, file, cb) => {
-    const uniqueName = `${Date.now()}-${file.originalname}`;
-    cb(null, uniqueName);
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true)
+    } else {
+      cb(new Error('Дозволені лише зображення'))
+    }
   }
 });
-const upload = multer({ storage });
 
 // Middleware для перевірки токену
 const authenticate = (req, res, next) => {
@@ -37,6 +49,28 @@ const authenticate = (req, res, next) => {
   }
 };
 
+router.put('/update-avatar', upload.single('avatar'), async (req, res) => {
+    try {
+      const filePath = `/uploads/${req.file.filename}` // шлях для доступу до файлу
+      
+      // Оновіть поле avatar у базі даних
+      await User.update(
+        { avatar: filePath },
+        { where: { id: req.user.id } }
+      )
+  
+      res.json({ 
+        success: true, 
+        avatar: filePath 
+      })
+    } catch (error) {
+      res.status(500).json({ 
+        success: false, 
+        message: 'Помилка при завантаженні аватара' 
+      })
+    }
+  });
+  
 // Оновлення профілю
 router.put('/update-profile', authenticate, upload.single('avatar'), async (req, res) => {
   try {

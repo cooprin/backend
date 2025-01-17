@@ -12,6 +12,7 @@ app.use(cors({
   origin: process.env.CORS_ORIGIN,
   credentials: true
 }));
+app.use('/uploads', express.static(process.env.UPLOAD_DIR));
 app.use(express.json());
 //for test
 // Routes
