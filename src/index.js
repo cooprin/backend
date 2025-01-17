@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const authRoutes = require('./routes/auth');
+const userRoutes = require('./routes/user');
 const { setupDatabase } = require('./database');
 
 const app = express();
@@ -15,6 +16,7 @@ app.use(express.json());
 //for test
 // Routes
 app.use('/auth', authRoutes);
+app.use('/user', userRoutes);
 
 // Database setup
 setupDatabase().then(() => {
