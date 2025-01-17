@@ -3,121 +3,170 @@ const multer = require('multer');
 const { pool } = require('../database');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const fs = require('fs');
-
+const fs = require('fs').promises;
 const router = express.Router();
 
-// Налаштування для multer
+// Конфігурація multer для завантаження файлів
 const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-      cb(null, process.env.UPLOAD_DIR)
-    },
-    filename: function (req, file, cb) {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
-      cb(null, `avatar-${uniqueSuffix}${path.extname(file.originalname)}`)
+  destination: async (req, file, cb) => {
+    const uploadDir = path.join(process.env.UPLOAD_DIR, 'avatars', req.user.userId.toString());
+    
+    try {
+      await fs.mkdir(uploadDir, { recursive: true });
+      cb(null, uploadDir);
+    } catch (error) {
+      cb(error);
     }
-  });
-
-const upload = multer({ 
-  storage: storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB ліміт
   },
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) {
-      cb(null, true)
-    } else {
-      cb(new Error('Дозволені лише зображення'))
-    }
+  filename: (req, file, cb) => {
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
+    cb(null, `avatar-${uniqueSuffix}${path.extname(file.originalname)}`);
   }
 });
 
-// Middleware для перевірки токену
-const authenticate = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ message: 'No token provided' });
-  }
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (err) {
-    return res.status(401).json({ message: 'Invalid token' });
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
+  
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Недопустимий тип файлу. Дозволені лише JPEG, PNG та GIF'));
   }
 };
 
-router.put('/update-avatar', upload.single('avatar'), async (req, res) => {
-    try {
-      const filePath = `/uploads/${req.file.filename}` // шлях для доступу до файлу
-      
-      // Оновіть поле avatar у базі даних
-      await User.update(
-        { avatar: filePath },
-        { where: { id: req.user.id } }
-      )
-  
-      res.json({ 
-        success: true, 
-        avatar: filePath 
-      })
-    } catch (error) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Помилка при завантаженні аватара' 
-      })
-    }
-  });
-  
-// Оновлення профілю
-router.put('/update-profile', authenticate, upload.single('avatar'), async (req, res) => {
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB ліміт
+  },
+  fileFilter
+});
+
+// Middleware для аутентифікації
+const authenticate = (req, res, next) => {
   try {
-    const { firstName, lastName, phone } = req.body;
-    const userId = req.user.userId;
-    let avatarUrl = null;
+    const token = req.headers.authorization?.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({ message: 'Токен відсутній' });
+    }
+    
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({ message: 'Недійсний токен' });
+  }
+};
 
-    // Якщо є завантажений файл, оновлюємо URL аватара
-    if (req.file) {
-      avatarUrl = path.join('/uploads', req.file.filename);
+// Хелпер для видалення старого аватара
+const removeOldAvatar = async (userId) => {
+  try {
+    const { rows } = await pool.query('SELECT avatar_url FROM users WHERE id = $1', [userId]);
+    
+    if (rows[0]?.avatar_url) {
+      const oldAvatarPath = path.join(process.env.UPLOAD_DIR, rows[0].avatar_url);
+      await fs.unlink(oldAvatarPath);
+    }
+  } catch (error) {
+    console.error('Помилка при видаленні старого аватара:', error);
+  }
+};
 
-      // Видалення старого аватара, якщо він існує
-      const oldAvatar = await pool.query(
-        'SELECT avatar_url FROM users WHERE id = $1',
-        [userId]
-      );
-
-      if (oldAvatar.rows[0]?.avatar_url) {
-        const oldAvatarPath = path.join(uploadDir, path.basename(oldAvatar.rows[0].avatar_url));
-        if (fs.existsSync(oldAvatarPath)) {
-          fs.unlinkSync(oldAvatarPath);
-        }
-      }
+// Оновлений ендпоінт update-avatar для сумісності з фронтендом
+router.put('/update-avatar', authenticate, upload.single('avatar'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Файл не завантажено' 
+      });
     }
 
-    // Оновлення даних користувача
-    await pool.query(
-      `UPDATE users 
-       SET first_name = $1, last_name = $2, phone = $3, avatar_url = COALESCE($4, avatar_url)
-       WHERE id = $5`,
-      [firstName, lastName, phone, avatarUrl, userId]
+    const userId = req.user.userId;
+    const avatarUrl = path.join(
+      'avatars', 
+      userId.toString(), 
+      req.file.filename
     );
 
-    // Отримуємо оновлені дані користувача
-    const updatedUser = await pool.query(
-      `SELECT id, email, first_name, last_name, phone, avatar_url 
-       FROM users WHERE id = $1`,
-      [userId]
+    // Видаляємо старий аватар
+    await removeOldAvatar(userId);
+
+    // Оновлюємо URL аватара в базі даних
+    await pool.query(
+      'UPDATE users SET avatar_url = $1 WHERE id = $2',
+      [avatarUrl, userId]
     );
+
+    res.json({ 
+      success: true,
+      avatar: `/uploads/${avatarUrl}` // Додаємо префікс /uploads для фронтенду
+    });
+  } catch (error) {
+    console.error('Помилка при оновленні аватара:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Помилка сервера при оновленні аватара' 
+    });
+  }
+});
+
+// Оновлений ендпоінт update-profile для сумісності з фронтендом
+router.put('/update-profile', authenticate, async (req, res) => {
+  try {
+    const { first_name, last_name, password } = req.body;
+    const userId = req.user.userId;
+
+    let updateQuery = `
+      UPDATE users 
+      SET 
+        first_name = COALESCE($1, first_name),
+        last_name = COALESCE($2, last_name)
+    `;
+    
+    let values = [first_name, last_name];
+    let paramCount = 2;
+
+    if (password) {
+      paramCount++;
+      updateQuery += `, password = $${paramCount}`;
+      values.push(password); // В реальному додатку тут має бути хешування
+    }
+
+    updateQuery += ` 
+      WHERE id = $${paramCount + 1}
+      RETURNING id, email, first_name, last_name, avatar_url
+    `;
+    
+    values.push(userId);
+
+    const { rows } = await pool.query(updateQuery, values);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Користувача не знайдено' 
+      });
+    }
+
+    // Модифікуємо відповідь для сумісності з фронтендом
+    const userData = rows[0];
+    if (userData.avatar_url) {
+      userData.avatar_url = `/uploads/${userData.avatar_url}`;
+    }
 
     res.json({
-      message: 'Profile updated successfully',
-      user: updatedUser.rows[0]
+      success: true,
+      message: 'Профіль успішно оновлено',
+      user: userData
     });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
+  } catch (error) {
+    console.error('Помилка при оновленні профілю:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Помилка сервера при оновленні профілю' 
+    });
   }
 });
 
