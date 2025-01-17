@@ -73,8 +73,8 @@ const removeOldAvatar = async (userId) => {
   }
 };
 
-// Оновлений ендпоінт update-avatar для сумісності з фронтендом
-router.put('/update-avatar', authenticate, upload.single('avatar'), async (req, res) => {
+// Змінено маршрут з PUT /update-avatar на POST /users/avatar
+router.post('/users/avatar', authenticate, upload.single('avatar'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ 
