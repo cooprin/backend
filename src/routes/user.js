@@ -4,13 +4,13 @@ const { pool } = require('../database');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const fs = require('fs').promises;
+const bcrypt = require('bcrypt');
 const router = express.Router();
 
-// Конфігурація multer для завантаження файлів
+// Multer configuration for file uploads
 const storage = multer.diskStorage({
   destination: async (req, file, cb) => {
     const uploadDir = path.join(process.env.UPLOAD_DIR, 'avatars', req.user.userId.toString());
-    
     try {
       await fs.mkdir(uploadDir, { recursive: true });
       cb(null, uploadDir);
@@ -26,74 +26,64 @@ const storage = multer.diskStorage({
 
 const fileFilter = (req, file, cb) => {
   const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
-  
   if (allowedTypes.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error('Недопустимий тип файлу. Дозволені лише JPEG, PNG та GIF'));
+    cb(new Error('Invalid file type. Only JPEG, PNG and GIF are allowed'));
   }
 };
 
 const upload = multer({
   storage,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB ліміт
+    fileSize: 5 * 1024 * 1024 // 5MB limit
   },
   fileFilter
 });
 
-// Middleware для аутентифікації
+// Authentication middleware
 const authenticate = (req, res, next) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
-    
     if (!token) {
-      return res.status(401).json({ message: 'Токен відсутній' });
+      return res.status(401).json({ message: 'Token is missing' });
     }
-    
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
     next();
   } catch (error) {
-    return res.status(401).json({ message: 'Недійсний токен' });
+    return res.status(401).json({ message: 'Invalid token' });
   }
 };
 
-// Хелпер для видалення старого аватара
+// Helper to remove old avatar
 const removeOldAvatar = async (userId) => {
   try {
     const { rows } = await pool.query('SELECT avatar_url FROM users WHERE id = $1', [userId]);
-    
     if (rows[0]?.avatar_url) {
       const oldAvatarPath = path.join(process.env.UPLOAD_DIR, rows[0].avatar_url);
       await fs.unlink(oldAvatarPath);
     }
   } catch (error) {
-    console.error('Помилка при видаленні старого аватара:', error);
+    console.error('Error removing old avatar:', error);
   }
 };
 
-// Змінено маршрут з PUT /update-avatar на POST /users/avatar
+// Avatar upload endpoint
 router.post('/avatar', authenticate, upload.single('avatar'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ 
         success: false,
-        message: 'Файл не завантажено' 
+        message: 'No file uploaded' 
       });
     }
 
     const userId = req.user.userId;
-    const avatarUrl = path.join(
-      'avatars', 
-      userId.toString(), 
-      req.file.filename
-    );
+    const avatarUrl = path.join('avatars', userId.toString(), req.file.filename);
 
-    // Видаляємо старий аватар
     await removeOldAvatar(userId);
 
-    // Оновлюємо URL аватара в базі даних
     await pool.query(
       'UPDATE users SET avatar_url = $1 WHERE id = $2',
       [avatarUrl, userId]
@@ -101,56 +91,39 @@ router.post('/avatar', authenticate, upload.single('avatar'), async (req, res) =
 
     res.json({ 
       success: true,
-      avatar: `/uploads/${avatarUrl}` // Додаємо префікс /uploads для фронтенду
+      avatar: `/uploads/${avatarUrl}`
     });
   } catch (error) {
-    console.error('Помилка при оновленні аватара:', error);
+    console.error('Error updating avatar:', error);
     res.status(500).json({ 
       success: false,
-      message: 'Помилка сервера при оновленні аватара' 
+      message: 'Server error while updating avatar' 
     });
   }
 });
 
-// Оновлений ендпоінт update-profile для сумісності з фронтендом
+// Profile update endpoint
 router.put('/update-profile', authenticate, async (req, res) => {
   try {
-    const { first_name, last_name, password } = req.body;
+    const { first_name, last_name } = req.body;
     const userId = req.user.userId;
 
-    let updateQuery = `
-      UPDATE users 
-      SET 
-        first_name = COALESCE($1, first_name),
-        last_name = COALESCE($2, last_name)
-    `;
-    
-    let values = [first_name, last_name];
-    let paramCount = 2;
-
-    if (password) {
-      paramCount++;
-      updateQuery += `, password = $${paramCount}`;
-      values.push(password); // В реальному додатку тут має бути хешування
-    }
-
-    updateQuery += ` 
-      WHERE id = $${paramCount + 1}
-      RETURNING id, email, first_name, last_name, avatar_url
-    `;
-    
-    values.push(userId);
-
-    const { rows } = await pool.query(updateQuery, values);
+    const { rows } = await pool.query(
+      `UPDATE users 
+       SET first_name = COALESCE($1, first_name),
+           last_name = COALESCE($2, last_name)
+       WHERE id = $3
+       RETURNING id, email, first_name, last_name, avatar_url`,
+      [first_name, last_name, userId]
+    );
 
     if (rows.length === 0) {
       return res.status(404).json({ 
         success: false,
-        message: 'Користувача не знайдено' 
+        message: 'User not found' 
       });
     }
 
-    // Модифікуємо відповідь для сумісності з фронтендом
     const userData = rows[0];
     if (userData.avatar_url) {
       userData.avatar_url = `/uploads/${userData.avatar_url}`;
@@ -158,14 +131,65 @@ router.put('/update-profile', authenticate, async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Профіль успішно оновлено',
+      message: 'Profile updated successfully',
       user: userData
     });
   } catch (error) {
-    console.error('Помилка при оновленні профілю:', error);
+    console.error('Error updating profile:', error);
     res.status(500).json({ 
       success: false,
-      message: 'Помилка сервера при оновленні профілю' 
+      message: 'Server error while updating profile' 
+    });
+  }
+});
+
+// Password change endpoint
+router.put('/change-password', authenticate, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+    const userId = req.user.userId;
+
+    // Get current user's password hash
+    const { rows } = await pool.query(
+      'SELECT password FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Verify current password
+    const isValidPassword = await bcrypt.compare(current_password, rows[0].password);
+    if (!isValidPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Current password is incorrect'
+      });
+    }
+
+    // Hash new password
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(new_password, saltRounds);
+
+    // Update password
+    await pool.query(
+      'UPDATE users SET password = $1 WHERE id = $2',
+      [hashedPassword, userId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Password updated successfully'
+    });
+  } catch (error) {
+    console.error('Error changing password:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while changing password'
     });
   }
 });
