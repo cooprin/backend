@@ -14,7 +14,7 @@ app.use(cors({
 }));
 app.use('/uploads', express.static(process.env.UPLOAD_DIR));
 app.use(express.json());
-//for test
+
 // Routes
 app.use('/auth', authRoutes);
 app.use('/user', userRoutes);
