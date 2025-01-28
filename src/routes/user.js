@@ -84,13 +84,16 @@ router.get('/', authenticate, async (req, res) => {
     
     // Get users
     const usersQuery = `
-      SELECT id, role_id, email, first_name, last_name, phone, 
-             avatar_url, is_active, last_login, created_at, updated_at
-      FROM users 
-      ${searchCondition}
-      ORDER BY ${sortBy} ${orderDirection}
-      LIMIT $1 OFFSET $2
-    `;
+   SELECT users.id, users.email, users.first_name, users.last_name, 
+          users.phone, users.avatar_url, users.is_active, 
+          users.last_login, users.created_at, users.updated_at, 
+          roles.name AS role_name
+   FROM users
+   LEFT JOIN roles ON users.role_id = roles.id
+   ${searchCondition}
+   ORDER BY ${sortBy} ${orderDirection}
+   LIMIT $1 OFFSET $2
+`;
     
     const params = [perPage, offset];
     if (search) {
