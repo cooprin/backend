@@ -5,16 +5,19 @@ WORKDIR /app
 # Копіюємо package.json і встановлюємо залежності
 COPY package*.json ./
 RUN npm install
-RUN npm install express jsonwebtoken bcrypt pg
+RUN npm install express jsonwebtoken bcrypt pg winston
+
+# Створюємо структуру директорій
+RUN mkdir -p /app/data/uploads /app/data/logs
 
 # Копіюємо всі файли проекту
 COPY . .
 
-# Створюємо базові директорії
-RUN mkdir -p /app/data/uploads /app/data/logs
-
 # Налаштовуємо права
-RUN chmod +x /app/scripts/init-dirs.js
+RUN chown -R node:node /app/data
+
+# Переключаємось на користувача node
+USER node
 
 # Відкриваємо порт
 EXPOSE 3000

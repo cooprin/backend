@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../database');
+const { AuditService, auditLogTypes } = require('../services/auditService');
 
 // Register
 router.post('/register', async (req, res) => {
@@ -31,6 +32,21 @@ router.post('/register', async (req, res) => {
       [email, hashedPassword, firstName, lastName, phone]
     );
 
+    // Логуємо створення користувача через реєстрацію
+    await AuditService.log({
+      userId: result.rows[0].id, // ID нового користувача
+      actionType: auditLogTypes.USER.CREATE,
+      entityType: 'USER',
+      entityId: result.rows[0].id,
+      newValues: {
+        email,
+        firstName,
+        lastName,
+        phone
+      },
+      ipAddress: req.ip
+    });
+
     res.status(201).json({
       message: 'User registered successfully',
       user: result.rows[0]
@@ -53,6 +69,8 @@ router.post('/login', async (req, res) => {
     );
 
     if (result.rows.length === 0) {
+      // Логуємо невдалу спробу входу
+      await AuditService.logAuth(false, null, email, req.ip);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
@@ -61,6 +79,8 @@ router.post('/login', async (req, res) => {
     // Check password
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
+      // Логуємо невдалу спробу входу
+      await AuditService.logAuth(false, user.id, email, req.ip);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
@@ -80,6 +100,9 @@ router.post('/login', async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
+
+    // Логуємо успішний вхід
+    await AuditService.logAuth(true, user.id, email, req.ip);
 
     res.json({
       token,
