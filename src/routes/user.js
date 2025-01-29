@@ -96,6 +96,99 @@ router.get('/', authenticate, async (req, res) => {
     });
   }
 });
+// Profile update endpoint (відсутній)
+router.put('/update-profile', authenticate, async (req, res) => {
+  try {
+    const { first_name, last_name, phone } = req.body;
+    const userId = req.user.userId;
+
+    const { rows } = await pool.query(
+      `UPDATE users 
+       SET first_name = COALESCE($1, first_name),
+           last_name = COALESCE($2, last_name),
+           phone = COALESCE($3, phone),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $4
+       RETURNING id, email, first_name, last_name, phone, avatar_url, role_id`,
+      [first_name, last_name, phone, userId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    const userData = rows[0];
+    if (userData.avatar_url) {
+      userData.avatar_url = `/uploads/avatars/${userData.id}/${userData.avatar_url}`;
+    }
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: userData
+    });
+  } catch (error) {
+    console.error('Error updating profile:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error while updating profile' 
+    });
+  }
+});
+
+// Change password endpoint (відсутній)
+router.put('/change-password', authenticate, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+    const userId = req.user.userId;
+
+    // Get current user's password hash
+    const { rows } = await pool.query(
+      'SELECT password FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Verify current password
+    const isValidPassword = await bcrypt.compare(current_password, rows[0].password);
+    if (!isValidPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Current password is incorrect'
+      });
+    }
+
+    // Hash new password
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(new_password, saltRounds);
+
+    // Update password
+    await pool.query(
+      'UPDATE users SET password = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [hashedPassword, userId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Password updated successfully'
+    });
+  } catch (error) {
+    console.error('Error changing password:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while changing password'
+    });
+  }
+});
 
 // Get roles
 router.get('/roles', authenticate, async (req, res) => {
