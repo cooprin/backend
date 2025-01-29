@@ -22,42 +22,6 @@ const authenticate = (req, res, next) => {
   }
 };
 
-// Multer configuration for file uploads
-const storage = multer.diskStorage({
-  destination: async (req, file, cb) => {
-    const uploadDir = path.join(process.env.UPLOAD_DIR, 'avatars', req.user.userId.toString());
-    try {
-      await fs.mkdir(uploadDir, { recursive: true });
-      cb(null, uploadDir);
-    } catch (error) {
-      cb(error);
-    }
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
-    cb(null, `avatar-${uniqueSuffix}${path.extname(file.originalname)}`);
-  }
-});
-
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
-  if (allowedTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('Invalid file type. Only JPEG, PNG and GIF are allowed'));
-  }
-};
-
-const upload = multer({
-  storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
-  },
-  fileFilter
-});
-
-
-
 // Get all users with pagination, sorting and search
 router.get('/', authenticate, async (req, res) => {
   try {
@@ -72,28 +36,38 @@ router.get('/', authenticate, async (req, res) => {
     
     // Build search condition
     const searchCondition = search 
-      ? `WHERE first_name ILIKE $3 OR last_name ILIKE $3 OR email ILIKE $3`
+      ? `WHERE users.first_name ILIKE $3 OR users.last_name ILIKE $3 OR users.email ILIKE $3`
       : '';
     
-    // Get total count
+    // Get total count with search condition
     const countQuery = `
       SELECT COUNT(*) 
       FROM users 
       ${searchCondition}
     `;
     
-    // Get users
+    // Get users with roles
     const usersQuery = `
-   SELECT users.id, users.email, users.first_name, users.last_name, 
-          users.phone, users.avatar_url, users.is_active, 
-          users.last_login, users.created_at, users.updated_at, 
-          roles.name AS role_name
-   FROM users
-   LEFT JOIN roles ON users.role_id = roles.id
-   ${searchCondition}
-   ORDER BY ${sortBy} ${orderDirection}
-   LIMIT $1 OFFSET $2
-`;
+      SELECT 
+        users.id,
+        users.email,
+        users.first_name,
+        users.last_name,
+        users.phone,
+        users.avatar_url,
+        users.is_active,
+        users.last_login,
+        users.created_at,
+        users.updated_at,
+        users.role_id,
+        roles.name as role_name,
+        roles.description as role_description
+      FROM users
+      LEFT JOIN roles ON users.role_id = roles.id
+      ${searchCondition}
+      ORDER BY users.${sortBy} ${orderDirection}
+      LIMIT $1 OFFSET $2
+    `;
     
     const params = [perPage, offset];
     if (search) {
@@ -107,7 +81,7 @@ router.get('/', authenticate, async (req, res) => {
     
     const users = usersResult.rows.map(user => ({
       ...user,
-      avatar_url: user.avatar_url ? `/uploads/${user.avatar_url}` : null
+      avatar_url: user.avatar_url ? `/uploads/avatars/${user.id}/${user.avatar_url}` : null
     }));
 
     res.json({
@@ -119,6 +93,26 @@ router.get('/', authenticate, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error while fetching users'
+    });
+  }
+});
+
+// Get roles
+router.get('/roles', authenticate, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, name, description FROM roles ORDER BY name'
+    );
+    
+    res.json({
+      success: true,
+      roles: rows
+    });
+  } catch (error) {
+    console.error('Error fetching roles:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching roles'
     });
   }
 });
@@ -137,14 +131,26 @@ router.post('/', authenticate, async (req, res) => {
       });
     }
     
+    // Check if role exists
+    const roleExists = await pool.query('SELECT id FROM roles WHERE id = $1', [role_id]);
+    if (roleExists.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid role'
+      });
+    }
+    
     // Hash password
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
     
     const { rows } = await pool.query(
-      `INSERT INTO users (email, password, role_id, first_name, last_name, phone, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, email, role_id, first_name, last_name, phone, is_active`,
+      `INSERT INTO users (
+        email, password, role_id, first_name, last_name, 
+        phone, is_active, created_at, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      RETURNING id, email, role_id, first_name, last_name, phone, is_active`,
       [email, hashedPassword, role_id, first_name, last_name, phone, is_active]
     );
     
@@ -179,12 +185,28 @@ router.put('/:id', authenticate, async (req, res) => {
       });
     }
     
+    // Check if role exists
+    if (role_id) {
+      const roleExists = await pool.query('SELECT id FROM roles WHERE id = $1', [role_id]);
+      if (roleExists.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid role'
+        });
+      }
+    }
+    
     const { rows } = await pool.query(
       `UPDATE users 
-       SET email = $1, role_id = $2, first_name = $3, last_name = $4, 
-           phone = $5, is_active = $6, updated_at = CURRENT_TIMESTAMP
+       SET email = $1,
+           role_id = $2,
+           first_name = $3,
+           last_name = $4,
+           phone = $5,
+           is_active = $6,
+           updated_at = CURRENT_TIMESTAMP
        WHERE id = $7
-       RETURNING id, email, role_id, first_name, last_name, phone, is_active, avatar_url`,
+       RETURNING id, email, role_id, first_name, last_name, phone, is_active`,
       [email, role_id, first_name, last_name, phone, is_active, id]
     );
     
@@ -195,20 +217,53 @@ router.put('/:id', authenticate, async (req, res) => {
       });
     }
     
-    const userData = rows[0];
-    if (userData.avatar_url) {
-      userData.avatar_url = `/uploads/${userData.avatar_url}`;
-    }
-    
     res.json({
       success: true,
-      user: userData
+      user: rows[0]
     });
   } catch (error) {
     console.error('Error updating user:', error);
     res.status(500).json({
       success: false,
       message: 'Server error while updating user'
+    });
+  }
+});
+
+// Change password
+router.put('/:id/password', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { password } = req.body;
+    
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    
+    const { rows } = await pool.query(
+      `UPDATE users 
+       SET password = $1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+       RETURNING id`,
+      [hashedPassword, id]
+    );
+    
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Password updated successfully'
+    });
+  } catch (error) {
+    console.error('Error updating password:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while updating password'
     });
   }
 });
@@ -221,7 +276,8 @@ router.put('/:id/status', authenticate, async (req, res) => {
     
     const { rows } = await pool.query(
       `UPDATE users 
-       SET is_active = $1, updated_at = CURRENT_TIMESTAMP
+       SET is_active = $1,
+           updated_at = CURRENT_TIMESTAMP
        WHERE id = $2
        RETURNING id, is_active`,
       [is_active, id]
@@ -252,9 +308,6 @@ router.delete('/:id', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Remove user's avatar if exists
-    await removeOldAvatar(id);
-    
     const { rows } = await pool.query(
       'DELETE FROM users WHERE id = $1 RETURNING id',
       [id]
@@ -280,159 +333,4 @@ router.delete('/:id', authenticate, async (req, res) => {
   }
 });
 
-// Get roles (needed for the role selection dropdown)
-router.get('/roles', authenticate, async (req, res) => {
-  try {
-    const { rows } = await pool.query('SELECT id, name FROM roles ORDER BY name');
-    
-    res.json({
-      success: true,
-      roles: rows
-    });
-  } catch (error) {
-    console.error('Error fetching roles:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching roles'
-    });
-  }
-});
-
-// Helper to remove old avatar
-const removeOldAvatar = async (userId) => {
-  try {
-    const { rows } = await pool.query('SELECT avatar_url FROM users WHERE id = $1', [userId]);
-    if (rows[0]?.avatar_url) {
-      const oldAvatarPath = path.join(process.env.UPLOAD_DIR, rows[0].avatar_url);
-      await fs.unlink(oldAvatarPath);
-    }
-  } catch (error) {
-    console.error('Error removing old avatar:', error);
-  }
-};
-
-// Avatar upload endpoint
-router.post('/avatar', authenticate, upload.single('avatar'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'No file uploaded' 
-      });
-    }
-
-    const userId = req.user.userId;
-    const avatarUrl = path.join('avatars', userId.toString(), req.file.filename);
-
-    await removeOldAvatar(userId);
-
-    await pool.query(
-      'UPDATE users SET avatar_url = $1 WHERE id = $2',
-      [avatarUrl, userId]
-    );
-
-    res.json({ 
-      success: true,
-      avatar: `/uploads/${avatarUrl}`
-    });
-  } catch (error) {
-    console.error('Error updating avatar:', error);
-    res.status(500).json({ 
-      success: false,
-      message: 'Server error while updating avatar' 
-    });
-  }
-});
-
-// Profile update endpoint
-router.put('/update-profile', authenticate, async (req, res) => {
-  try {
-    const { first_name, last_name } = req.body;
-    const userId = req.user.userId;
-
-    const { rows } = await pool.query(
-      `UPDATE users 
-       SET first_name = COALESCE($1, first_name),
-           last_name = COALESCE($2, last_name)
-       WHERE id = $3
-       RETURNING id, email, first_name, last_name, avatar_url`,
-      [first_name, last_name, userId]
-    );
-
-    if (rows.length === 0) {
-      return res.status(404).json({ 
-        success: false,
-        message: 'User not found' 
-      });
-    }
-
-    const userData = rows[0];
-    if (userData.avatar_url) {
-      userData.avatar_url = `/uploads/${userData.avatar_url}`;
-    }
-
-    res.json({
-      success: true,
-      message: 'Profile updated successfully',
-      user: userData
-    });
-  } catch (error) {
-    console.error('Error updating profile:', error);
-    res.status(500).json({ 
-      success: false,
-      message: 'Server error while updating profile' 
-    });
-  }
-});
-
-// Password change endpoint
-router.put('/change-password', authenticate, async (req, res) => {
-  try {
-    const { current_password, new_password } = req.body;
-    const userId = req.user.userId;
-
-    // Get current user's password hash
-    const { rows } = await pool.query(
-      'SELECT password FROM users WHERE id = $1',
-      [userId]
-    );
-
-    if (rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    // Verify current password
-    const isValidPassword = await bcrypt.compare(current_password, rows[0].password);
-    if (!isValidPassword) {
-      return res.status(400).json({
-        success: false,
-        message: 'Current password is incorrect'
-      });
-    }
-
-    // Hash new password
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(new_password, saltRounds);
-
-    // Update password
-    await pool.query(
-      'UPDATE users SET password = $1 WHERE id = $2',
-      [hashedPassword, userId]
-    );
-
-    res.json({
-      success: true,
-      message: 'Password updated successfully'
-    });
-  } catch (error) {
-    console.error('Error changing password:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while changing password'
-    });
-  }
-});
 module.exports = router;
