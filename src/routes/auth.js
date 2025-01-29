@@ -137,7 +137,7 @@ router.get('/me', async (req, res) => {
     // Форматуємо шлях до аватара, якщо він існує
     const userData = result.rows[0];
     if (userData.avatar_url) {
-      userData.avatar_url = `/uploads/avatars/${userData.avatar_url}`;
+      userData.avatar_url = `/uploads/${userData.avatar_url}`;
     }
 
     res.json(userData);
