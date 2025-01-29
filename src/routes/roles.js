@@ -1,5 +1,6 @@
 const express = require('express');
 const { pool } = require('../database');
+const jwt = require('jsonwebtoken');
 const router = express.Router();
 
 // Authentication middleware

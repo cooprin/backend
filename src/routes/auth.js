@@ -112,8 +112,21 @@ router.get('/me', async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
     const result = await pool.query(
-      `SELECT id, email, first_name, last_name, phone, avatar_url, role_id, is_active, last_login 
-       FROM users WHERE id = $1`,
+      `SELECT 
+        users.id, 
+        users.email, 
+        users.first_name, 
+        users.last_name, 
+        users.phone, 
+        users.avatar_url, 
+        users.role_id, 
+        users.is_active, 
+        users.last_login,
+        roles.name as role_name,
+        roles.description as role_description
+       FROM users 
+       LEFT JOIN roles ON users.role_id = roles.id 
+       WHERE users.id = $1`,
       [decoded.userId]
     );
 
@@ -121,7 +134,13 @@ router.get('/me', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    res.json(result.rows[0]);
+    // Форматуємо шлях до аватара, якщо він існує
+    const userData = result.rows[0];
+    if (userData.avatar_url) {
+      userData.avatar_url = `/uploads/avatars/${userData.id}/${userData.avatar_url}`;
+    }
+
+    res.json(userData);
   } catch (err) {
     console.error(err);
     if (err.name === 'JsonWebTokenError') {
