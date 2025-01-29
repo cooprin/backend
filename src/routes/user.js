@@ -96,6 +96,74 @@ router.get('/', authenticate, async (req, res) => {
     });
   }
 });
+
+// Налаштування multer для завантаження файлів
+const storage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    const uploadDir = path.join(process.env.UPLOAD_DIR, 'avatars', req.user.userId);
+    try {
+      await fs.mkdir(uploadDir, { recursive: true });
+      cb(null, uploadDir);
+    } catch (error) {
+      cb(error);
+    }
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
+    const ext = path.extname(file.originalname);
+    cb(null, `avatar-${uniqueSuffix}${ext}`);
+  }
+});
+
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Only JPEG, PNG and GIF are allowed'));
+  }
+};
+
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  },
+  fileFilter
+});
+
+// Avatar upload endpoint
+router.post('/avatar', authenticate, upload.single('avatar'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'No file uploaded' 
+      });
+    }
+
+    const userId = req.user.userId;
+    const avatarUrl = path.join('avatars', userId.toString(), req.file.filename);
+
+    // Оновлюємо шлях до аватара в базі даних
+    await pool.query(
+      'UPDATE users SET avatar_url = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [avatarUrl, userId]
+    );
+
+    res.json({ 
+      success: true,
+      avatar: `/uploads/${avatarUrl}`
+    });
+  } catch (error) {
+    console.error('Error updating avatar:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error while updating avatar' 
+    });
+  }
+});
+
 // Profile update endpoint (відсутній)
 router.put('/update-profile', authenticate, async (req, res) => {
   try {
