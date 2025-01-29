@@ -3,6 +3,7 @@ const { pool } = require('../database');
 const jwt = require('jsonwebtoken');
 const { AuditService, auditLogTypes } = require('../services/auditService');
 const router = express.Router();
+const { authenticate } = require('./auth');
 
 // Authentication middleware без змін...
 
