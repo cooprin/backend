@@ -9,12 +9,118 @@ const { AuditService, auditLogTypes } = require('../services/auditService');
 const router = express.Router();
 const { authenticate } = require('./auth');
 
-// Authentication middleware залишається без змін...
+// Authentication middleware
+const authenticate = (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ message: 'Token is missing' });
+    }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({ message: 'Invalid token' });
+  }
+};
+// Налаштування multer для завантаження файлів
+const storage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    const uploadDir = path.join(process.env.UPLOAD_DIR, 'avatars', req.user.userId);
+    try {
+      await fs.mkdir(uploadDir, { recursive: true });
+      cb(null, uploadDir);
+    } catch (error) {
+      cb(error);
+    }
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
+    const ext = path.extname(file.originalname);
+    cb(null, `avatar-${uniqueSuffix}${ext}`);
+  }
+});
+
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Only JPEG, PNG and GIF are allowed'));
+  }
+};
+
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  },
+  fileFilter
+});
+
+
 
 // Get all users with pagination, sorting and search
 router.get('/', authenticate, async (req, res) => {
   try {
-    // Існуюча логіка залишається...
+    const page = parseInt(req.query.page) || 1;
+    const perPage = parseInt(req.query.perPage) || 10;
+    const offset = (page - 1) * perPage;
+    const search = req.query.search || '';
+    const sortBy = req.query.sortBy || 'last_name';
+    const descending = req.query.descending === 'true';
+    
+    const orderDirection = descending ? 'DESC' : 'ASC';
+    
+    // Build search condition
+    const searchCondition = search 
+      ? `WHERE users.first_name ILIKE $3 OR users.last_name ILIKE $3 OR users.email ILIKE $3`
+      : '';
+    
+    // Get total count with search condition
+    const countQuery = `
+      SELECT COUNT(*) 
+      FROM users 
+      ${searchCondition}
+    `;
+    
+    // Get users with roles
+    const usersQuery = `
+      SELECT 
+        users.id,
+        users.email,
+        users.first_name,
+        users.last_name,
+        users.phone,
+        users.avatar_url,
+        users.is_active,
+        users.last_login,
+        users.created_at,
+        users.updated_at,
+        users.role_id,
+        roles.name as role_name,
+        roles.description as role_description
+      FROM users
+      LEFT JOIN roles ON users.role_id = roles.id
+      ${searchCondition}
+      ORDER BY users.${sortBy} ${orderDirection}
+      LIMIT $1 OFFSET $2
+    `;
+    
+    const params = [perPage, offset];
+    if (search) {
+      params.push(`%${search}%`);
+    }
+    
+    const [countResult, usersResult] = await Promise.all([
+      pool.query(countQuery, search ? [`%${search}%`] : []),
+      pool.query(usersQuery, params)
+    ]);
+    
+    const users = usersResult.rows.map(user => ({
+      ...user,
+      avatar_url: user.avatar_url ? `/uploads/avatars/${user.id}/${user.avatar_url}` : null
+    }));
     
     // Додаємо логування перегляду списку
     await AuditService.log({

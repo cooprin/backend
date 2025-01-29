@@ -5,7 +5,21 @@ const { AuditService, auditLogTypes } = require('../services/auditService');
 const router = express.Router();
 const { authenticate } = require('./auth');
 
-// Authentication middleware без змін...
+// Authentication middleware
+const authenticate = (req, res, next) => {
+    try {
+      const token = req.headers.authorization?.split(' ')[1];
+      if (!token) {
+        return res.status(401).json({ message: 'Token is missing' });
+      }
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      req.user = decoded;
+      next();
+    } catch (error) {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
+  };
+
 
 // Get all roles with pagination, sorting and search
 router.get('/', authenticate, async (req, res) => {
@@ -17,7 +31,38 @@ router.get('/', authenticate, async (req, res) => {
     const sortBy = req.query.sortBy || 'name';
     const descending = req.query.descending === 'true';
     
-    // Існуюча логіка отримання ролей...
+    const orderDirection = descending ? 'DESC' : 'ASC';
+    
+    // Build search condition
+    const searchCondition = search 
+      ? `WHERE name ILIKE $3 OR description ILIKE $3`
+      : '';
+    
+    // Get total count
+    const countQuery = `
+      SELECT COUNT(*) 
+      FROM roles 
+      ${searchCondition}
+    `;
+    
+    // Get roles
+    const rolesQuery = `
+      SELECT id, name, description, created_at, updated_at
+      FROM roles
+      ${searchCondition}
+      ORDER BY ${sortBy} ${orderDirection}
+      LIMIT $1 OFFSET $2
+    `;
+    
+    const params = [perPage, offset];
+    if (search) {
+      params.push(`%${search}%`);
+    }
+    
+    const [countResult, rolesResult] = await Promise.all([
+      pool.query(countQuery, search ? [`%${search}%`] : []),
+      pool.query(rolesQuery, params)
+    ]);
 
     // Логуємо перегляд списку ролей
     await AuditService.log({
