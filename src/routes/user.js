@@ -7,7 +7,6 @@ const fs = require('fs').promises;
 const bcrypt = require('bcrypt');
 const { AuditService, auditLogTypes } = require('../services/auditService');
 const router = express.Router();
-const { authenticate } = require('./auth');
 
 // Authentication middleware
 const authenticate = (req, res, next) => {

@@ -5,20 +5,6 @@ const jwt = require('jsonwebtoken');
 const { pool } = require('../database');
 const { AuditService, auditLogTypes } = require('../services/auditService');
 
-// Authentication middleware
-const authenticate = (req, res, next) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ message: 'Token is missing' });
-    }
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (error) {
-    return res.status(401).json({ message: 'Invalid token' });
-  }
-};
 
 // Register
 router.post('/register', async (req, res) => {
@@ -188,5 +174,4 @@ router.get('/me', async (req, res) => {
   }
 });
 
-module.exports = {router,
-authenticate};
+module.exports = router;
