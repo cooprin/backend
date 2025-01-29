@@ -3,21 +3,8 @@ const { pool } = require('../database');
 const jwt = require('jsonwebtoken');
 const { AuditService, auditLogTypes } = require('../services/auditService');
 const router = express.Router();
+const { authenticate } = require('./auth');
 
-// Authentication middleware
-const authenticate = (req, res, next) => {
-    try {
-      const token = req.headers.authorization?.split(' ')[1];
-      if (!token) {
-        return res.status(401).json({ message: 'Token is missing' });
-      }
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = decoded;
-      next();
-    } catch (error) {
-      return res.status(401).json({ message: 'Invalid token' });
-    }
-  };
 
 
 // Get all roles with pagination, sorting and search

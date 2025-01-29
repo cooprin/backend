@@ -3,8 +3,22 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../database');
-const { AuditService, auditLogTypes } = require('../services/auditService');
+const { AuditService } = require('../services/auditService');
 
+// Authentication middleware
+const authenticate = (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ message: 'Token is missing' });
+    }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({ message: 'Invalid token' });
+  }
+};
 
 // Register
 router.post('/register', async (req, res) => {
@@ -33,18 +47,13 @@ router.post('/register', async (req, res) => {
       [email, hashedPassword, firstName, lastName, phone]
     );
 
-    // Логуємо створення користувача через реєстрацію
+    // Логуємо реєстрацію
     await AuditService.log({
-      userId: result.rows[0].id, // ID нового користувача
-      actionType: auditLogTypes.USER.CREATE,
+      userId: result.rows[0].id,
+      actionType: 'USER_REGISTER',
       entityType: 'USER',
       entityId: result.rows[0].id,
-      newValues: {
-        email,
-        firstName,
-        lastName,
-        phone
-      },
+      newValues: { email, firstName, lastName, phone },
       ipAddress: req.ip
     });
 
@@ -71,7 +80,12 @@ router.post('/login', async (req, res) => {
 
     if (result.rows.length === 0) {
       // Логуємо невдалу спробу входу
-      await AuditService.logAuth(false, null, email, req.ip);
+      await AuditService.log({
+        actionType: 'LOGIN_FAILED',
+        entityType: 'USER',
+        newValues: { email },
+        ipAddress: req.ip
+      });
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
@@ -81,7 +95,14 @@ router.post('/login', async (req, res) => {
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
       // Логуємо невдалу спробу входу
-      await AuditService.logAuth(false, user.id, email, req.ip);
+      await AuditService.log({
+        userId: user.id,
+        actionType: 'LOGIN_FAILED',
+        entityType: 'USER',
+        entityId: user.id,
+        newValues: { email },
+        ipAddress: req.ip
+      });
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
@@ -103,7 +124,14 @@ router.post('/login', async (req, res) => {
     );
 
     // Логуємо успішний вхід
-    await AuditService.logAuth(true, user.id, email, req.ip);
+    await AuditService.log({
+      userId: user.id,
+      actionType: 'LOGIN_SUCCESS',
+      entityType: 'USER',
+      entityId: user.id,
+      newValues: { email },
+      ipAddress: req.ip
+    });
 
     res.json({
       token,
@@ -125,16 +153,8 @@ router.post('/login', async (req, res) => {
 });
 
 // Get current user
-router.get('/me', async (req, res) => {
+router.get('/me', authenticate, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    
-    if (!token) {
-      return res.status(401).json({ message: 'No token provided' });
-    }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
     const result = await pool.query(
       `SELECT 
         users.id, 
@@ -151,14 +171,13 @@ router.get('/me', async (req, res) => {
        FROM users 
        LEFT JOIN roles ON users.role_id = roles.id 
        WHERE users.id = $1`,
-      [decoded.userId]
+      [req.user.userId]
     );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Форматуємо шлях до аватара, якщо він існує
     const userData = result.rows[0];
     if (userData.avatar_url) {
       userData.avatar_url = `/uploads/${userData.avatar_url}`;
@@ -167,11 +186,11 @@ router.get('/me', async (req, res) => {
     res.json(userData);
   } catch (err) {
     console.error(err);
-    if (err.name === 'JsonWebTokenError') {
-      return res.status(401).json({ message: 'Invalid token' });
-    }
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-module.exports = router;
+module.exports = {
+  router,
+  authenticate
+};
