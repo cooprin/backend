@@ -565,6 +565,19 @@ router.put('/:id/password', authenticate, isAdmin, async (req, res) => {
       });
     }
 
+    // Отримуємо інформацію про користувача перед зміною пароля
+    const userInfo = await pool.query(
+      'SELECT email, first_name, last_name FROM users WHERE id = $1',
+      [id]
+    );
+
+    if (userInfo.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
     // Hash new password
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
@@ -578,19 +591,17 @@ router.put('/:id/password', authenticate, isAdmin, async (req, res) => {
       [hashedPassword, id]
     );
 
-    if (rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
     // Логуємо зміну пароля адміністратором
     await AuditService.log({
       userId: req.user.userId,
       actionType: 'ADMIN_PASSWORD_CHANGE',
       entityType: 'USER',
       entityId: id,
+      newValues: {
+        user_email: userInfo.rows[0].email,
+        user_name: `${userInfo.rows[0].first_name} ${userInfo.rows[0].last_name}`,
+        changed_by_admin: true
+      },
       ipAddress: req.ip
     });
 
