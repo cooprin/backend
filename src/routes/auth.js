@@ -78,6 +78,18 @@ router.post('/login', async (req, res) => {
 
     const user = result.rows[0];
 
+    if (!user.is_active) {
+      await AuditService.log({
+        userId: user.id,
+        actionType: 'LOGIN_FAILED',
+        entityType: 'USER',
+        entityId: user.id,
+        newValues: { email, reason: 'Account inactive' },
+        ipAddress: req.ip
+      });
+      return res.status(403).json({ message: 'Account is deactivated' });
+    }
+
     // Check password
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {

@@ -618,6 +618,13 @@ router.delete('/:id', authenticate, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
+    if (id === req.user.userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete your own account'
+      });
+    }
+
     // Отримуємо дані користувача перед видаленням для логування
     const userData = await pool.query(
       'SELECT * FROM users WHERE id = $1',
