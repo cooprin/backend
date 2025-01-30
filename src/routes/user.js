@@ -382,7 +382,7 @@ router.get('/roles', authenticate, async (req, res) => {
 });
 
 // Create new user
-router.post('/', authenticate, async (req, res) => {
+router.post('/', authenticate, isAdmin, async (req, res) => {
   try {
     const { email, password, role_id, first_name, last_name, phone, is_active } = req.body;
     
