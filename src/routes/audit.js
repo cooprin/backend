@@ -122,5 +122,38 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
     });
   }
 });
+// Get unique action and entity types
+router.get('/types', authenticate, isAdmin, async (req, res) => {
+    try {
+      const actionTypesQuery = `
+        SELECT DISTINCT action_type 
+        FROM audit_logs 
+        WHERE action_type IS NOT NULL
+        ORDER BY action_type`;
+  
+      const entityTypesQuery = `
+        SELECT DISTINCT entity_type 
+        FROM audit_logs 
+        WHERE entity_type IS NOT NULL
+        ORDER BY entity_type`;
+  
+      const [actionTypes, entityTypes] = await Promise.all([
+        pool.query(actionTypesQuery),
+        pool.query(entityTypesQuery)
+      ]);
+  
+      res.json({
+        success: true,
+        actionTypes: actionTypes.rows.map(row => row.action_type),
+        entityTypes: entityTypes.rows.map(row => row.entity_type)
+      });
+    } catch (error) {
+      console.error('Error fetching log types:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Server error while fetching log types'
+      });
+    }
+  });
 
 module.exports = router;
