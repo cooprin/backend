@@ -552,6 +552,70 @@ router.put('/:id', authenticate, isAdmin, async (req, res) => {
   }
 });
 
+// Admin change user password
+router.put('/:id/password', authenticate, isAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { password } = req.body;
+    
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password is required'
+      });
+    }
+
+    // Hash new password
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    const { rows } = await pool.query(
+      `UPDATE users 
+       SET password = $1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+       RETURNING id`,
+      [hashedPassword, id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Логуємо зміну пароля адміністратором
+    await AuditService.log({
+      userId: req.user.userId,
+      actionType: 'ADMIN_PASSWORD_CHANGE',
+      entityType: 'USER',
+      entityId: id,
+      ipAddress: req.ip
+    });
+
+    res.json({
+      success: true,
+      message: 'Password updated successfully'
+    });
+  } catch (error) {
+    console.error('Error changing user password:', error);
+    // Логуємо помилку
+    await AuditService.log({
+      userId: req.user.userId,
+      actionType: 'ERROR',
+      entityType: 'USER',
+      entityId: req.params.id,
+      ipAddress: req.ip,
+      newValues: { error: error.message }
+    });
+    res.status(500).json({
+      success: false,
+      message: 'Server error while changing user password'
+    });
+  }
+});
+
 // Toggle user status
 router.put('/:id/status', authenticate, isAdmin, async (req, res) => {
   try {
