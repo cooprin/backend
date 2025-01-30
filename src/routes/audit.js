@@ -5,9 +5,10 @@ const isAdmin = require('../middleware/isAdmin');
 const { pool } = require('../database');
 
 // Get audit logs
+// Get audit logs
 router.get('/', authenticate, isAdmin, async (req, res) => {
     try {
-        const { 
+        let { 
             page = 1, 
             perPage = 10,
             sortBy = 'created_at',
@@ -19,17 +20,26 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
             search 
         } = req.query;
 
+        // Перевіряємо чи perPage === 'All' і встановлюємо відповідне значення
+        if (perPage === 'All') {
+            perPage = null; // або можна встановити дуже велике число, наприклад 999999
+        } else {
+            perPage = parseInt(perPage);
+        }
+        
+        page = parseInt(page);
+
         console.log('Query params:', { 
             page, perPage, sortBy, descending, 
             actionType, entityType, dateFrom, dateTo, search 
         });
 
-        const offset = (page - 1) * perPage;
+        const offset = (page - 1) * (perPage || 0);
         const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
 
         let conditions = [];
-        let params = [perPage, offset];
-        let paramIndex = 3;
+        let params = [];
+        let paramIndex = 1;
 
         if (search) {
             conditions.push(`(
@@ -74,7 +84,7 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
             ${whereClause}
         `;
 
-        const logsQuery = `
+        let logsQuery = `
             SELECT 
                 al.id,
                 al.user_id,
@@ -90,17 +100,22 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
             LEFT JOIN users u ON al.user_id = u.id
             ${whereClause}
             ORDER BY al.${sortBy} ${orderDirection}
-            LIMIT $1 OFFSET $2
         `;
 
+        // Додаємо LIMIT та OFFSET тільки якщо perPage не null
+        if (perPage) {
+            logsQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+            params.push(perPage, offset);
+        }
+
         console.log('Executing queries with params:', params);
+        console.log('Logs query:', logsQuery);
 
         const [countResult, logsResult] = await Promise.all([
-            pool.query(countQuery, conditions.length ? params.slice(2) : []),
+            pool.query(countQuery, conditions.length ? params.slice(0, paramIndex - 1) : []),
             pool.query(logsQuery, params)
         ]);
 
-        // Форматуємо результати без парсингу JSON, оскільки використовується JSONB
         const logs = logsResult.rows.map(log => ({
             ...log,
             created_at: log.created_at.toISOString()
