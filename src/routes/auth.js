@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../database');
 const { AuditService } = require('../services/auditService');
+const authenticate = require('../middleware/auth');
 
 
 // Register
