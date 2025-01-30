@@ -109,21 +109,6 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
       avatar_url: user.avatar_url ? `/uploads/avatars/${user.id}/${user.avatar_url}` : null
     }));
     
-    // Додаємо логування перегляду списку
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'LIST_VIEW',
-      entityType: 'USER',
-      ipAddress: req.ip,
-      newValues: {
-        page,
-        perPage,
-        search,
-        sortBy,
-        descending
-      }
-    });
-
     res.json({
       users,
       total: parseInt(countResult.rows[0].count)
@@ -352,14 +337,6 @@ router.get('/roles', authenticate, async (req, res) => {
       'SELECT id, name, description FROM roles ORDER BY name'
     );
     
-    // Логуємо перегляд ролей
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'VIEW_ROLES',
-      entityType: 'ROLE',
-      ipAddress: req.ip
-    });
-
     res.json({
       success: true,
       roles: rows

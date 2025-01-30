@@ -51,15 +51,6 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
       pool.query(rolesQuery, params)
     ]);
 
-    // Логуємо перегляд списку ролей
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ROLES_LIST_VIEW',
-      entityType: 'ROLE',
-      ipAddress: req.ip,
-      newValues: { page, perPage, search, sortBy, descending }
-    });
-
     res.json({
       roles: rolesResult.rows,
       total: parseInt(countResult.rows[0].count)
