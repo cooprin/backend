@@ -71,20 +71,34 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
       `;
   
       const logsQuery = `
-        SELECT 
-          al.*,
-          u.email as user_email
-        FROM audit_logs al
-        LEFT JOIN users u ON al.user_id = u.id
-        ${whereClause}
-        ORDER BY al.${sortBy} ${orderDirection}
-        LIMIT $1 OFFSET $2
-      `;
-  
-      const [countResult, logsResult] = await Promise.all([
-        pool.query(countQuery, conditions.length ? params.slice(2) : []),
-        pool.query(logsQuery, params)
-      ]);
+  SELECT 
+    al.*,
+    u.email as user_email
+  FROM audit_logs al
+  LEFT JOIN users u ON al.user_id = u.id
+  ${whereClause}
+  ORDER BY al.${sortBy} ${orderDirection}
+  LIMIT $1 OFFSET $2
+`;
+
+const [countResult, logsResult] = await Promise.all([
+  pool.query(countQuery, conditions.length ? params.slice(2) : []),
+  pool.query(logsQuery, params)
+]);
+
+// Форматуємо результати
+const logs = logsResult.rows.map(log => ({
+  ...log,
+  old_values: log.old_values ? JSON.parse(log.old_values) : null,
+  new_values: log.new_values ? JSON.parse(log.new_values) : null,
+  created_at: log.created_at.toISOString()
+}));
+
+res.json({
+  success: true,
+  logs,
+  total: parseInt(countResult.rows[0].count)
+});
   
       res.json({
         success: true,
