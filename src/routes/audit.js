@@ -100,11 +100,9 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
             pool.query(logsQuery, params)
         ]);
 
-        // Форматуємо результати
+        // Форматуємо результати без парсингу JSON, оскільки використовується JSONB
         const logs = logsResult.rows.map(log => ({
             ...log,
-            old_values: log.old_values ? JSON.parse(log.old_values) : null,
-            new_values: log.new_values ? JSON.parse(log.new_values) : null,
             created_at: log.created_at.toISOString()
         }));
 
