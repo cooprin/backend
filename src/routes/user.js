@@ -7,7 +7,8 @@ const fs = require('fs').promises;
 const bcrypt = require('bcrypt');
 const { AuditService, auditLogTypes } = require('../services/auditService');
 const router = express.Router();
-const { authenticate } = require('./auth');
+const authenticate = require('../middleware/auth');
+const isAdmin = require('../middleware/isAdmin');
 
 // Налаштування multer для завантаження файлів
 const storage = multer.diskStorage({
@@ -47,7 +48,7 @@ const upload = multer({
 
 
 // Get all users with pagination, sorting and search
-router.get('/', authenticate, async (req, res) => {
+router.get('/', authenticate, isAdmin, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const perPage = parseInt(req.query.perPage) || 10;
@@ -456,7 +457,7 @@ router.post('/', authenticate, async (req, res) => {
 });
 
 // Update user
-router.put('/:id', authenticate, async (req, res) => {
+router.put('/:id', authenticate, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { email, role_id, first_name, last_name, phone, is_active } = req.body;
@@ -552,7 +553,7 @@ router.put('/:id', authenticate, async (req, res) => {
 });
 
 // Toggle user status
-router.put('/:id/status', authenticate, async (req, res) => {
+router.put('/:id/status', authenticate, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { is_active } = req.body;
@@ -613,7 +614,7 @@ router.put('/:id/status', authenticate, async (req, res) => {
 });
 
 // Delete user
-router.delete('/:id', authenticate, async (req, res) => {
+router.delete('/:id', authenticate, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 

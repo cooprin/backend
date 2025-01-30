@@ -3,12 +3,13 @@ const { pool } = require('../database');
 const jwt = require('jsonwebtoken');
 const { AuditService, auditLogTypes } = require('../services/auditService');
 const router = express.Router();
-const { authenticate } = require('./auth');
+const authenticate = require('../middleware/auth');
+const isAdmin = require('../middleware/isAdmin');
 
 
 
 // Get all roles with pagination, sorting and search
-router.get('/', authenticate, async (req, res) => {
+router.get('/', authenticate, isAdmin, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const perPage = parseInt(req.query.perPage) || 10;
@@ -81,7 +82,7 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // Create new role
-router.post('/', authenticate, async (req, res) => {
+router.post('/', authenticate, isAdmin, async (req, res) => {
   try {
     const { name, description } = req.body;
     
@@ -132,7 +133,7 @@ router.post('/', authenticate, async (req, res) => {
 });
 
 // Update role
-router.put('/:id', authenticate, async (req, res) => {
+router.put('/:id', authenticate, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description } = req.body;
@@ -205,7 +206,7 @@ router.put('/:id', authenticate, async (req, res) => {
 });
 
 // Delete role
-router.delete('/:id', authenticate, async (req, res) => {
+router.delete('/:id', authenticate, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
