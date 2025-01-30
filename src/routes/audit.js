@@ -15,7 +15,8 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
       actionType,
       entityType,
       dateFrom,
-      dateTo 
+      dateTo,
+      search 
     } = req.query;
 
     const offset = (page - 1) * perPage;
