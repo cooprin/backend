@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth');
-const { isAdmin } = require('../middleware/isAdmin');
+const authenticate = require('../middleware/auth');
+const isAdmin = require('../middleware/isAdmin');
 const { pool } = require('../database');
 
 // Get audit logs
