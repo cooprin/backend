@@ -1,16 +1,15 @@
 const express = require('express');
 const multer = require('multer');
 const { pool } = require('../database');
-const jwt = require('jsonwebtoken');
 const path = require('path');
 const fs = require('fs').promises;
 const bcrypt = require('bcrypt');
-const { AuditService, auditLogTypes } = require('../services/auditService');
+const { AuditService } = require('../services/auditService');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
-const isAdmin = require('../middleware/isAdmin');
+const checkPermission = require('../middleware/checkPermission');
 
-// Налаштування multer для завантаження файлів
+// Налаштування multer
 const storage = multer.diskStorage({
   destination: async (req, file, cb) => {
     const uploadDir = path.join(process.env.UPLOAD_DIR, 'avatars', req.user.userId);
@@ -45,10 +44,8 @@ const upload = multer({
   fileFilter
 });
 
-
-
-// Get all users with pagination, sorting and search
-router.get('/', authenticate, isAdmin, async (req, res) => {
+// Get all users
+router.get('/', authenticate, checkPermission('users.read'), async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const perPage = parseInt(req.query.perPage) || 10;
@@ -59,39 +56,30 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
     
     const orderDirection = descending ? 'DESC' : 'ASC';
     
-    // Build search condition
     const searchCondition = search 
       ? `WHERE users.first_name ILIKE $3 OR users.last_name ILIKE $3 OR users.email ILIKE $3`
       : '';
     
-    // Get total count with search condition
+    const usersQuery = `
+      SELECT 
+        u.*,
+        array_agg(DISTINCT r.name) as roles,
+        array_agg(DISTINCT p.code) as permissions
+      FROM users u
+      LEFT JOIN user_roles ur ON u.id = ur.user_id
+      LEFT JOIN roles r ON ur.role_id = r.id
+      LEFT JOIN role_permissions rp ON r.id = rp.role_id
+      LEFT JOIN permissions p ON rp.permission_id = p.id
+      ${searchCondition}
+      GROUP BY u.id
+      ORDER BY u.${sortBy} ${orderDirection}
+      LIMIT $1 OFFSET $2
+    `;
+    
     const countQuery = `
       SELECT COUNT(*) 
       FROM users 
       ${searchCondition}
-    `;
-    
-    // Get users with roles
-    const usersQuery = `
-      SELECT 
-        users.id,
-        users.email,
-        users.first_name,
-        users.last_name,
-        users.phone,
-        users.avatar_url,
-        users.is_active,
-        users.last_login,
-        users.created_at,
-        users.updated_at,
-        users.role_id,
-        roles.name as role_name,
-        roles.description as role_description
-      FROM users
-      LEFT JOIN roles ON users.role_id = roles.id
-      ${searchCondition}
-      ORDER BY users.${sortBy} ${orderDirection}
-      LIMIT $1 OFFSET $2
     `;
     
     const params = [perPage, offset];
@@ -106,7 +94,9 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
     
     const users = usersResult.rows.map(user => ({
       ...user,
-      avatar_url: user.avatar_url ? `/uploads/avatars/${user.id}/${user.avatar_url}` : null
+      avatar_url: user.avatar_url ? `/uploads/avatars/${user.id}/${user.avatar_url}` : null,
+      roles: user.roles.filter(Boolean),
+      permissions: user.permissions.filter(Boolean)
     }));
     
     res.json({
@@ -115,14 +105,6 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching users:', error);
-    // Логуємо помилку
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ERROR',
-      entityType: 'USER',
-      ipAddress: req.ip,
-      newValues: { error: error.message }
-    });
     res.status(500).json({
       success: false,
       message: 'Server error while fetching users'
@@ -130,543 +112,183 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
   }
 });
 
-// Avatar upload endpoint
-router.post('/avatar', authenticate, upload.single('avatar'), async (req, res) => {
+// Create user
+router.post('/', authenticate, checkPermission('users.create'), async (req, res) => {
+  const client = await pool.connect();
   try {
-    if (!req.file) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'No file uploaded' 
-      });
-    }
+    await client.query('BEGIN');
 
-    const userId = req.user.userId;
-    const avatarUrl = path.join('avatars', userId.toString(), req.file.filename);
-
-    // Зберігаємо старий аватар для логування
-    const oldUser = await pool.query('SELECT avatar_url FROM users WHERE id = $1', [userId]);
-    const oldAvatarUrl = oldUser.rows[0]?.avatar_url;
-
-    await pool.query(
-      'UPDATE users SET avatar_url = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      [avatarUrl, userId]
-    );
-
-    // Логуємо зміну аватара
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'AVATAR_UPDATE',
-      entityType: 'USER',
-      entityId: userId,
-      oldValues: { avatar_url: oldAvatarUrl },
-      newValues: { avatar_url: avatarUrl },
-      ipAddress: req.ip
-    });
-
-    res.json({ 
-      success: true,
-      avatar: `/uploads/${avatarUrl}`
-    });
-  } catch (error) {
-    console.error('Error updating avatar:', error);
-    // Логуємо помилку
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ERROR',
-      entityType: 'USER',
-      entityId: req.user.userId,
-      ipAddress: req.ip,
-      newValues: { error: error.message }
-    });
-    res.status(500).json({ 
-      success: false,
-      message: 'Server error while updating avatar' 
-    });
-  }
-});
-// Profile update endpoint
-router.put('/update-profile', authenticate, async (req, res) => {
-  try {
-    const { first_name, last_name, phone } = req.body;
-    const userId = req.user.userId;
-
-    // Отримуємо старі дані для логування
-    const oldUserData = await pool.query(
-      'SELECT first_name, last_name, phone FROM users WHERE id = $1',
-      [userId]
-    );
-
-    const { rows } = await pool.query(
-      `UPDATE users 
-       SET first_name = COALESCE($1, first_name),
-           last_name = COALESCE($2, last_name),
-           phone = COALESCE($3, phone),
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $4
-       RETURNING id, email, first_name, last_name, phone, avatar_url, role_id`,
-      [first_name, last_name, phone, userId]
-    );
-
-    if (rows.length === 0) {
-      return res.status(404).json({ 
-        success: false,
-        message: 'User not found' 
-      });
-    }
-
-    // Логуємо оновлення профілю
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'PROFILE_UPDATE',
-      entityType: 'USER',
-      entityId: userId,
-      oldValues: oldUserData.rows[0],
-      newValues: { first_name, last_name, phone },
-      ipAddress: req.ip
-    });
-
-    const userData = rows[0];
-    if (userData.avatar_url) {
-      userData.avatar_url = `/uploads/avatars/${userData.id}/${userData.avatar_url}`;
-    }
-
-    res.json({
-      success: true,
-      message: 'Profile updated successfully',
-      user: userData
-    });
-  } catch (error) {
-    console.error('Error updating profile:', error);
-    // Логуємо помилку
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ERROR',
-      entityType: 'USER',
-      entityId: req.user.userId,
-      ipAddress: req.ip,
-      newValues: { error: error.message }
-    });
-    res.status(500).json({ 
-      success: false,
-      message: 'Server error while updating profile' 
-    });
-  }
-});
-
-// Change password endpoint
-router.put('/change-password', authenticate, async (req, res) => {
-  try {
-    const { current_password, new_password } = req.body;
-    const userId = req.user.userId;
-
-    // Get current user's password hash
-    const { rows } = await pool.query(
-      'SELECT password FROM users WHERE id = $1',
-      [userId]
-    );
-
-    if (rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    // Verify current password
-    const isValidPassword = await bcrypt.compare(current_password, rows[0].password);
-    if (!isValidPassword) {
-      // Логуємо невдалу спробу зміни пароля
-      await AuditService.log({
-        userId: req.user.userId,
-        actionType: 'PASSWORD_CHANGE_FAILED',
-        entityType: 'USER',
-        entityId: userId,
-        ipAddress: req.ip
-      });
-      return res.status(400).json({
-        success: false,
-        message: 'Current password is incorrect'
-      });
-    }
-
-    // Hash new password
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(new_password, saltRounds);
-
-    // Update password
-    await pool.query(
-      'UPDATE users SET password = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      [hashedPassword, userId]
-    );
-
-    // Логуємо успішну зміну пароля
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'PASSWORD_CHANGE',
-      entityType: 'USER',
-      entityId: userId,
-      ipAddress: req.ip
-    });
-
-    res.json({
-      success: true,
-      message: 'Password updated successfully'
-    });
-  } catch (error) {
-    console.error('Error changing password:', error);
-    // Логуємо помилку
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ERROR',
-      entityType: 'USER',
-      entityId: req.user.userId,
-      ipAddress: req.ip,
-      newValues: { error: error.message }
-    });
-    res.status(500).json({
-      success: false,
-      message: 'Server error while changing password'
-    });
-  }
-});
-
-// Get roles
-router.get('/roles', authenticate, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT id, name, description FROM roles ORDER BY name'
+    const { email, password, firstName, lastName, phone, roles } = req.body;
+    
+    const existingUser = await client.query(
+      'SELECT id FROM users WHERE email = $1',
+      [email]
     );
     
-    res.json({
-      success: true,
-      roles: rows
-    });
-  } catch (error) {
-    console.error('Error fetching roles:', error);
-    // Логуємо помилку
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ERROR',
-      entityType: 'ROLE',
-      ipAddress: req.ip,
-      newValues: { error: error.message }
-    });
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching roles'
-    });
-  }
-});
-
-// Create new user
-router.post('/', authenticate, isAdmin, async (req, res) => {
-  try {
-    const { email, password, role_id, first_name, last_name, phone, is_active } = req.body;
-    
-    // Check if email already exists
-    const existingUser = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
     if (existingUser.rows.length > 0) {
       return res.status(400).json({
         success: false,
         message: 'Email already exists'
       });
     }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
     
-    // Check if role exists
-    const roleExists = await pool.query('SELECT id FROM roles WHERE id = $1', [role_id]);
-    if (roleExists.rows.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid role'
-      });
-    }
-    
-    // Hash password
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
-    
-    const { rows } = await pool.query(
+    const userResult = await client.query(
       `INSERT INTO users (
-        email, password, role_id, first_name, last_name, 
-        phone, is_active, created_at, updated_at
+        email, password, first_name, last_name, phone, is_active, 
+        created_at, updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      RETURNING id, email, role_id, first_name, last_name, phone, is_active`,
-      [email, hashedPassword, role_id, first_name, last_name, phone, is_active]
+      VALUES ($1, $2, $3, $4, $5, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      RETURNING *`,
+      [email, hashedPassword, firstName, lastName, phone]
     );
 
-    // Логуємо створення користувача
+    // Додаємо ролі
+    if (roles && roles.length > 0) {
+      const roleValues = roles.map(roleId => 
+        `('${userResult.rows[0].id}', '${roleId}')`
+      ).join(',');
+
+      await client.query(`
+        INSERT INTO user_roles (user_id, role_id)
+        VALUES ${roleValues}
+      `);
+    }
+
+    await client.query('COMMIT');
+
     await AuditService.log({
       userId: req.user.userId,
       actionType: 'USER_CREATE',
       entityType: 'USER',
-      entityId: rows[0].id,
-      newValues: {
-        email,
-        role_id,
-        first_name,
-        last_name,
-        phone,
-        is_active
-      },
+      entityId: userResult.rows[0].id,
+      newValues: { email, firstName, lastName, phone, roles },
       ipAddress: req.ip
     });
-    
+
     res.status(201).json({
       success: true,
-      user: rows[0]
+      user: {
+        ...userResult.rows[0],
+        roles: roles || []
+      }
     });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Error creating user:', error);
-    // Логуємо помилку
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ERROR',
-      entityType: 'USER',
-      ipAddress: req.ip,
-      newValues: { error: error.message }
-    });
     res.status(500).json({
       success: false,
       message: 'Server error while creating user'
     });
+  } finally {
+    client.release();
   }
 });
 
 // Update user
-router.put('/:id', authenticate, isAdmin, async (req, res) => {
+router.put('/:id', authenticate, checkPermission('users.update'), async (req, res) => {
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
+
     const { id } = req.params;
-    const { email, role_id, first_name, last_name, phone, is_active } = req.body;
+    const { email, firstName, lastName, phone, roles, isActive } = req.body;
     
-    // Отримуємо старі дані для логування
-    const oldUserData = await pool.query(
-      'SELECT email, role_id, first_name, last_name, phone, is_active FROM users WHERE id = $1',
+    const oldUserData = await client.query(
+      `SELECT u.*, array_agg(r.id) as roles
+       FROM users u
+       LEFT JOIN user_roles ur ON u.id = ur.user_id
+       LEFT JOIN roles r ON ur.role_id = r.id
+       WHERE u.id = $1
+       GROUP BY u.id`,
       [id]
     );
 
-    // Check if email already exists for other users
-    const existingUser = await pool.query(
-      'SELECT id FROM users WHERE email = $1 AND id != $2',
-      [email, id]
-    );
-    if (existingUser.rows.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email already exists'
-      });
-    }
-    
-    // Check if role exists
-    if (role_id) {
-      const roleExists = await pool.query('SELECT id FROM roles WHERE id = $1', [role_id]);
-      if (roleExists.rows.length === 0) {
+    if (email) {
+      const existingUser = await client.query(
+        'SELECT id FROM users WHERE email = $1 AND id != $2',
+        [email, id]
+      );
+      if (existingUser.rows.length > 0) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid role'
+          message: 'Email already exists'
         });
       }
     }
-    
-    const { rows } = await pool.query(
+
+    const userResult = await client.query(
       `UPDATE users 
-       SET email = $1,
-           role_id = $2,
-           first_name = $3,
-           last_name = $4,
-           phone = $5,
-           is_active = $6,
+       SET email = COALESCE($1, email),
+           first_name = COALESCE($2, first_name),
+           last_name = COALESCE($3, last_name),
+           phone = COALESCE($4, phone),
+           is_active = COALESCE($5, is_active),
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $7
-       RETURNING id, email, role_id, first_name, last_name, phone, is_active`,
-      [email, role_id, first_name, last_name, phone, is_active, id]
+       WHERE id = $6
+       RETURNING *`,
+      [email, firstName, lastName, phone, isActive, id]
     );
-    
-    if (rows.length === 0) {
+
+    if (userResult.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
 
-    // Логуємо оновлення користувача
+    // Оновлюємо ролі
+    if (roles) {
+      await client.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
+      
+      if (roles.length > 0) {
+        const roleValues = roles.map(roleId => 
+          `('${id}', '${roleId}')`
+        ).join(',');
+
+        await client.query(`
+          INSERT INTO user_roles (user_id, role_id)
+          VALUES ${roleValues}
+        `);
+      }
+    }
+
+    await client.query('COMMIT');
+
     await AuditService.log({
       userId: req.user.userId,
       actionType: 'USER_UPDATE',
       entityType: 'USER',
       entityId: id,
       oldValues: oldUserData.rows[0],
-      newValues: {
-        email,
-        role_id,
-        first_name,
-        last_name,
-        phone,
-        is_active
-      },
+      newValues: { email, firstName, lastName, phone, roles, isActive },
       ipAddress: req.ip
     });
-    
+
     res.json({
       success: true,
-      user: rows[0]
+      user: {
+        ...userResult.rows[0],
+        roles: roles || oldUserData.rows[0].roles
+      }
     });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Error updating user:', error);
-    // Логуємо помилку
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ERROR',
-      entityType: 'USER',
-      entityId: req.params.id,
-      ipAddress: req.ip,
-      newValues: { error: error.message }
-    });
     res.status(500).json({
       success: false,
       message: 'Server error while updating user'
     });
-  }
-});
-
-// Admin change user password
-router.put('/:id/password', authenticate, isAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { password } = req.body;
-    
-    if (!password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Password is required'
-      });
-    }
-
-    // Отримуємо інформацію про користувача перед зміною пароля
-    const userInfo = await pool.query(
-      'SELECT email, first_name, last_name FROM users WHERE id = $1',
-      [id]
-    );
-
-    if (userInfo.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    // Hash new password
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
-
-    const { rows } = await pool.query(
-      `UPDATE users 
-       SET password = $1,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2
-       RETURNING id`,
-      [hashedPassword, id]
-    );
-
-    // Логуємо зміну пароля адміністратором
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ADMIN_PASSWORD_CHANGE',
-      entityType: 'USER',
-      entityId: id,
-      newValues: {
-        user_email: userInfo.rows[0].email,
-        user_name: `${userInfo.rows[0].first_name} ${userInfo.rows[0].last_name}`,
-        changed_by_admin: true
-      },
-      ipAddress: req.ip
-    });
-
-    res.json({
-      success: true,
-      message: 'Password updated successfully'
-    });
-  } catch (error) {
-    console.error('Error changing user password:', error);
-    // Логуємо помилку
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ERROR',
-      entityType: 'USER',
-      entityId: req.params.id,
-      ipAddress: req.ip,
-      newValues: { error: error.message }
-    });
-    res.status(500).json({
-      success: false,
-      message: 'Server error while changing user password'
-    });
-  }
-});
-
-// Toggle user status
-router.put('/:id/status', authenticate, isAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { is_active } = req.body;
-
-    // Отримуємо старий статус для логування
-    const oldStatus = await pool.query(
-      'SELECT is_active FROM users WHERE id = $1',
-      [id]
-    );
-    
-    const { rows } = await pool.query(
-      `UPDATE users 
-       SET is_active = $1,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2
-       RETURNING id, is_active`,
-      [is_active, id]
-    );
-    
-    if (rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    // Логуємо зміну статусу
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'STATUS_CHANGE',
-      entityType: 'USER',
-      entityId: id,
-      oldValues: { is_active: oldStatus.rows[0].is_active },
-      newValues: { is_active },
-      ipAddress: req.ip
-    });
-    
-    res.json({
-      success: true,
-      user: rows[0]
-    });
-  } catch (error) {
-    console.error('Error updating user status:', error);
-    // Логуємо помилку
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ERROR',
-      entityType: 'USER',
-      entityId: req.params.id,
-      ipAddress: req.ip,
-      newValues: { error: error.message }
-    });
-    res.status(500).json({
-      success: false,
-      message: 'Server error while updating user status'
-    });
+  } finally {
+    client.release();
   }
 });
 
 // Delete user
-router.delete('/:id', authenticate, isAdmin, async (req, res) => {
+router.delete('/:id', authenticate, checkPermission('users.delete'), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -677,12 +299,11 @@ router.delete('/:id', authenticate, isAdmin, async (req, res) => {
       });
     }
 
-    // Отримуємо дані користувача перед видаленням для логування
     const userData = await pool.query(
       'SELECT * FROM users WHERE id = $1',
       [id]
     );
-    
+
     const { rows } = await pool.query(
       'DELETE FROM users WHERE id = $1 RETURNING id',
       [id]
@@ -695,7 +316,6 @@ router.delete('/:id', authenticate, isAdmin, async (req, res) => {
       });
     }
 
-    // Логуємо видалення користувача
     await AuditService.log({
       userId: req.user.userId,
       actionType: 'USER_DELETE',
@@ -711,18 +331,54 @@ router.delete('/:id', authenticate, isAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('Error deleting user:', error);
-    // Логуємо помилку
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ERROR',
-      entityType: 'USER',
-      entityId: req.params.id,
-      ipAddress: req.ip,
-      newValues: { error: error.message }
-    });
     res.status(500).json({
       success: false,
       message: 'Server error while deleting user'
+    });
+  }
+});
+
+// Avatar upload
+router.post('/avatar', authenticate, upload.single('avatar'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'No file uploaded' 
+      });
+    }
+
+    const avatarUrl = path.relative(process.env.UPLOAD_DIR, req.file.path);
+    
+    const oldUser = await pool.query(
+      'SELECT avatar_url FROM users WHERE id = $1',
+      [req.user.userId]
+    );
+
+    await pool.query(
+      'UPDATE users SET avatar_url = $1 WHERE id = $2',
+      [avatarUrl, req.user.userId]
+    );
+
+    await AuditService.log({
+      userId: req.user.userId,
+      actionType: 'AVATAR_UPDATE',
+      entityType: 'USER',
+      entityId: req.user.userId,
+      oldValues: { avatar_url: oldUser.rows[0]?.avatar_url },
+      newValues: { avatar_url: avatarUrl },
+      ipAddress: req.ip
+    });
+
+    res.json({ 
+      success: true,
+      avatar: `/uploads/${avatarUrl}`
+    });
+  } catch (error) {
+    console.error('Error uploading avatar:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error while uploading avatar' 
     });
   }
 });

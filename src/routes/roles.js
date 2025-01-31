@@ -1,15 +1,12 @@
 const express = require('express');
 const { pool } = require('../database');
-const jwt = require('jsonwebtoken');
-const { AuditService, auditLogTypes } = require('../services/auditService');
+const { AuditService } = require('../services/auditService');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
-const isAdmin = require('../middleware/isAdmin');
-
-
+const checkPermission = require('../middleware/checkPermission');
 
 // Get all roles with pagination, sorting and search
-router.get('/', authenticate, isAdmin, async (req, res) => {
+router.get('/', authenticate, checkPermission('roles.read'), async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const perPage = parseInt(req.query.perPage) || 10;
@@ -34,10 +31,19 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
     
     // Get roles
     const rolesQuery = `
-      SELECT id, name, description, created_at, updated_at
-      FROM roles
+      SELECT 
+        r.id, 
+        r.name, 
+        r.description, 
+        r.created_at, 
+        r.updated_at,
+        array_agg(p.code) as permissions
+      FROM roles r
+      LEFT JOIN role_permissions rp ON r.id = rp.role_id
+      LEFT JOIN permissions p ON rp.permission_id = p.id
       ${searchCondition}
-      ORDER BY ${sortBy} ${orderDirection}
+      GROUP BY r.id
+      ORDER BY r.${sortBy} ${orderDirection}
       LIMIT $1 OFFSET $2
     `;
     
@@ -51,13 +57,17 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
       pool.query(rolesQuery, params)
     ]);
 
+    const roles = rolesResult.rows.map(role => ({
+      ...role,
+      permissions: role.permissions.filter(Boolean)
+    }));
+
     res.json({
-      roles: rolesResult.rows,
+      roles,
       total: parseInt(countResult.rows[0].count)
     });
   } catch (error) {
     console.error('Error fetching roles:', error);
-    // Логуємо помилку
     await AuditService.log({
       userId: req.user.userId,
       actionType: 'ERROR',
@@ -73,9 +83,9 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
 });
 
 // Create new role
-router.post('/', authenticate, isAdmin, async (req, res) => {
+router.post('/', authenticate, checkPermission('roles.create'), async (req, res) => {
   try {
-    const { name, description } = req.body;
+    const { name, description, permissions } = req.body;
     
     const existingRole = await pool.query('SELECT id FROM roles WHERE name = $1', [name]);
     if (existingRole.rows.length > 0) {
@@ -85,30 +95,57 @@ router.post('/', authenticate, isAdmin, async (req, res) => {
       });
     }
     
-    const { rows } = await pool.query(
-      `INSERT INTO roles (name, description, created_at, updated_at)
-       VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-       RETURNING id, name, description, created_at, updated_at`,
-      [name, description]
-    );
+    // Start transaction
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      // Create role
+      const roleResult = await client.query(
+        `INSERT INTO roles (name, description, created_at, updated_at)
+         VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         RETURNING id, name, description, created_at, updated_at`,
+        [name, description]
+      );
 
-    // Логуємо створення ролі
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ROLE_CREATE',
-      entityType: 'ROLE',
-      entityId: rows[0].id,
-      newValues: { name, description },
-      ipAddress: req.ip
-    });
-    
-    res.status(201).json({
-      success: true,
-      role: rows[0]
-    });
+      // Add permissions
+      if (permissions && permissions.length > 0) {
+        const permissionValues = permissions.map((permId) => 
+          `('${roleResult.rows[0].id}', '${permId}')`
+        ).join(',');
+
+        await client.query(`
+          INSERT INTO role_permissions (role_id, permission_id)
+          VALUES ${permissionValues}
+        `);
+      }
+
+      await client.query('COMMIT');
+      
+      await AuditService.log({
+        userId: req.user.userId,
+        actionType: 'ROLE_CREATE',
+        entityType: 'ROLE',
+        entityId: roleResult.rows[0].id,
+        newValues: { name, description, permissions },
+        ipAddress: req.ip
+      });
+
+      res.status(201).json({
+        success: true,
+        role: {
+          ...roleResult.rows[0],
+          permissions: permissions || []
+        }
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   } catch (error) {
     console.error('Error creating role:', error);
-    // Логуємо помилку
     await AuditService.log({
       userId: req.user.userId,
       actionType: 'ERROR',
@@ -124,14 +161,18 @@ router.post('/', authenticate, isAdmin, async (req, res) => {
 });
 
 // Update role
-router.put('/:id', authenticate, isAdmin, async (req, res) => {
+router.put('/:id', authenticate, checkPermission('roles.update'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description } = req.body;
+    const { name, description, permissions } = req.body;
     
-    // Отримуємо старі дані для логування
     const oldRoleData = await pool.query(
-      'SELECT name, description FROM roles WHERE id = $1',
+      `SELECT r.*, array_agg(p.id) as permissions
+       FROM roles r
+       LEFT JOIN role_permissions rp ON r.id = rp.role_id
+       LEFT JOIN permissions p ON rp.permission_id = p.id
+       WHERE r.id = $1
+       GROUP BY r.id`,
       [id]
     );
     
@@ -146,41 +187,71 @@ router.put('/:id', authenticate, isAdmin, async (req, res) => {
       });
     }
     
-    const { rows } = await pool.query(
-      `UPDATE roles 
-       SET name = $1,
-           description = $2,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $3
-       RETURNING id, name, description, created_at, updated_at`,
-      [name, description, id]
-    );
-    
-    if (rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Role not found'
-      });
-    }
+    // Start transaction
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      // Update role
+      const roleResult = await client.query(
+        `UPDATE roles 
+         SET name = $1,
+             description = $2,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $3
+         RETURNING id, name, description, created_at, updated_at`,
+        [name, description, id]
+      );
 
-    // Логуємо оновлення ролі
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ROLE_UPDATE',
-      entityType: 'ROLE',
-      entityId: id,
-      oldValues: oldRoleData.rows[0],
-      newValues: { name, description },
-      ipAddress: req.ip
-    });
-    
-    res.json({
-      success: true,
-      role: rows[0]
-    });
+      if (roleResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          success: false,
+          message: 'Role not found'
+        });
+      }
+
+      // Update permissions
+      await client.query('DELETE FROM role_permissions WHERE role_id = $1', [id]);
+      
+      if (permissions && permissions.length > 0) {
+        const permissionValues = permissions.map((permId) => 
+          `('${id}', '${permId}')`
+        ).join(',');
+
+        await client.query(`
+          INSERT INTO role_permissions (role_id, permission_id)
+          VALUES ${permissionValues}
+        `);
+      }
+
+      await client.query('COMMIT');
+
+      await AuditService.log({
+        userId: req.user.userId,
+        actionType: 'ROLE_UPDATE',
+        entityType: 'ROLE',
+        entityId: id,
+        oldValues: oldRoleData.rows[0],
+        newValues: { name, description, permissions },
+        ipAddress: req.ip
+      });
+
+      res.json({
+        success: true,
+        role: {
+          ...roleResult.rows[0],
+          permissions: permissions || []
+        }
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   } catch (error) {
     console.error('Error updating role:', error);
-    // Логуємо помилку
     await AuditService.log({
       userId: req.user.userId,
       actionType: 'ERROR',
@@ -197,23 +268,28 @@ router.put('/:id', authenticate, isAdmin, async (req, res) => {
 });
 
 // Delete role
-router.delete('/:id', authenticate, isAdmin, async (req, res) => {
+router.delete('/:id', authenticate, checkPermission('roles.delete'), async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Отримуємо дані ролі перед видаленням для логування
     const roleData = await pool.query(
       'SELECT * FROM roles WHERE id = $1',
       [id]
     );
     
+    if (roleData.rows[0]?.is_system) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete system role'
+      });
+    }
+
     const usersWithRole = await pool.query(
-      'SELECT COUNT(*) FROM users WHERE role_id = $1',
+      'SELECT COUNT(*) FROM user_roles WHERE role_id = $1',
       [id]
     );
     
     if (parseInt(usersWithRole.rows[0].count) > 0) {
-      // Логуємо спробу видалення використовуваної ролі
       await AuditService.log({
         userId: req.user.userId,
         actionType: 'ROLE_DELETE_ATTEMPT',
@@ -241,7 +317,6 @@ router.delete('/:id', authenticate, isAdmin, async (req, res) => {
       });
     }
 
-    // Логуємо успішне видалення ролі
     await AuditService.log({
       userId: req.user.userId,
       actionType: 'ROLE_DELETE',
@@ -257,7 +332,6 @@ router.delete('/:id', authenticate, isAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('Error deleting role:', error);
-    // Логуємо помилку
     await AuditService.log({
       userId: req.user.userId,
       actionType: 'ERROR',

@@ -35,6 +35,13 @@ router.post('/register', async (req, res) => {
 
     const user = userResult.rows[0];
 
+    // Призначення ролі за замовчуванням (якщо потрібно)
+    await pool.query(
+      `INSERT INTO user_roles (user_id, role_id)
+       SELECT $1, id FROM roles WHERE name = 'user'`,
+      [user.id]
+    );
+
     // Логування реєстрації
     await AuditService.log({
       userId: user.id,
@@ -60,7 +67,7 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Знаходимо користувача разом з його ролями
+    // Знаходимо користувача разом з його ролями та правами
     const result = await pool.query(
       `SELECT 
         u.*,
@@ -120,12 +127,12 @@ router.post('/login', async (req, res) => {
       [user.id]
     );
 
-    // Створення токена
+    // Створення токена з правами
     const token = jwt.sign(
       { 
         userId: user.id,
         email: user.email,
-        permissions: user.permissions
+        permissions: user.permissions.filter(Boolean)
       },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
@@ -151,8 +158,8 @@ router.post('/login', async (req, res) => {
         phone: user.phone,
         avatarUrl: user.avatar_url,
         isActive: user.is_active,
-        roles: user.roles.filter(Boolean), // Видаляємо null значення
-        permissions: user.permissions.filter(Boolean) // Видаляємо null значення
+        roles: user.roles.filter(Boolean),
+        permissions: user.permissions.filter(Boolean)
       }
     });
   } catch (err) {

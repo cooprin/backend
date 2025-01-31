@@ -1,12 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
-const isAdmin = require('../middleware/isAdmin');
+const checkPermission = require('../middleware/checkPermission');
 const { pool } = require('../database');
 
 // Get audit logs
-// Get audit logs
-router.get('/', authenticate, isAdmin, async (req, res) => {
+router.get('/', authenticate, checkPermission('audit.read'), async (req, res) => {
     try {
         let { 
             page = 1, 
@@ -20,19 +19,13 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
             search 
         } = req.query;
 
-        // Перевіряємо чи perPage === 'All' і встановлюємо відповідне значення
         if (perPage === 'All') {
-            perPage = null; // або можна встановити дуже велике число, наприклад 999999
+            perPage = null;
         } else {
             perPage = parseInt(perPage);
         }
         
         page = parseInt(page);
-
-        console.log('Query params:', { 
-            page, perPage, sortBy, descending, 
-            actionType, entityType, dateFrom, dateTo, search 
-        });
 
         const offset = (page - 1) * (perPage || 0);
         const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
@@ -102,14 +95,10 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
             ORDER BY al.${sortBy} ${orderDirection}
         `;
 
-        // Додаємо LIMIT та OFFSET тільки якщо perPage не null
         if (perPage) {
             logsQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
             params.push(perPage, offset);
         }
-
-        console.log('Executing queries with params:', params);
-        console.log('Logs query:', logsQuery);
 
         const [countResult, logsResult] = await Promise.all([
             pool.query(countQuery, conditions.length ? params.slice(0, paramIndex - 1) : []),
@@ -121,11 +110,6 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
             created_at: log.created_at.toISOString()
         }));
 
-        console.log('Successfully fetched logs:', {
-            count: logs.length,
-            total: parseInt(countResult.rows[0].count)
-        });
-
         res.json({
             success: true,
             logs,
@@ -133,11 +117,6 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
         });
     } catch (error) {
         console.error('Error fetching audit logs:', error);
-        console.error('Error details:', {
-            message: error.message,
-            stack: error.stack,
-            query: error.query
-        });
         res.status(500).json({
             success: false,
             message: 'Server error while fetching audit logs'
@@ -146,7 +125,7 @@ router.get('/', authenticate, isAdmin, async (req, res) => {
 });
 
 // Get unique action and entity types
-router.get('/types', authenticate, isAdmin, async (req, res) => {
+router.get('/types', authenticate, checkPermission('audit.read'), async (req, res) => {
     try {
         const actionTypesQuery = `
             SELECT DISTINCT action_type 
@@ -167,11 +146,6 @@ router.get('/types', authenticate, isAdmin, async (req, res) => {
             pool.query(entityTypesQuery)
         ]);
 
-        console.log('Found types:', {
-            actionTypes: actionTypes.rows,
-            entityTypes: entityTypes.rows
-        });
-
         res.json({
             success: true,
             actionTypes: actionTypes.rows.map(row => row.action_type),
@@ -179,10 +153,6 @@ router.get('/types', authenticate, isAdmin, async (req, res) => {
         });
     } catch (error) {
         console.error('Error fetching log types:', error);
-        console.error('Error details:', {
-            message: error.message,
-            stack: error.stack
-        });
         res.status(500).json({
             success: false,
             message: 'Server error while fetching log types'
