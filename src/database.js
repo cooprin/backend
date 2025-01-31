@@ -1,3 +1,4 @@
+// database.js
 const { Pool } = require('pg');
 
 const pool = new Pool({
@@ -8,30 +9,31 @@ const pool = new Pool({
   port: process.env.DB_PORT,
 });
 
-const createTables = `
-  CREATE TABLE IF NOT EXISTS users (
-    id SERIAL PRIMARY KEY,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password VARCHAR(255) NOT NULL,
-    full_name VARCHAR(255),
-    role VARCHAR(50) DEFAULT 'user',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  );
-`;
+// Функція для перевірки підключення з повторними спробами
+const connectWithRetry = async () => {
+  const maxRetries = 5;
+  let retries = 0;
 
-async function setupDatabase() {
-  try {
-    const client = await pool.connect();
-    await client.query(createTables);
-    client.release();
-    console.log('Database setup completed');
-  } catch (err) {
-    console.error('Database setup error:', err);
-    throw err;
+  while (retries < maxRetries) {
+    try {
+      const client = await pool.connect();
+      console.log('Successfully connected to database');
+      client.release();
+      return;
+    } catch (err) {
+      retries += 1;
+      console.log(`Failed to connect to database (attempt ${retries}/${maxRetries}):`, err.message);
+      // Чекаємо 5 секунд перед наступною спробою
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
   }
-}
+  
+  // Якщо всі спроби невдалі
+  throw new Error('Failed to connect to database after multiple attempts');
+};
 
+// Експортуємо pool та функцію підключення
 module.exports = {
   pool,
-  setupDatabase
+  connectWithRetry
 };
