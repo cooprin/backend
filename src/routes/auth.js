@@ -6,13 +6,12 @@ const { pool } = require('../database');
 const { AuditService } = require('../services/auditService');
 const authenticate = require('../middleware/auth');
 
-
 // Register
 router.post('/register', async (req, res) => {
   try {
     const { email, password, firstName, lastName, phone } = req.body;
     
-    // Check if user exists
+    // Перевірка існування користувача
     const userCheck = await pool.query(
       'SELECT * FROM users WHERE email = $1',
       [email]
@@ -22,31 +21,33 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ message: 'User already exists!' });
     }
 
-    // Hash password
+    // Хешування пароля
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create user
-    const result = await pool.query(
+    // Створення користувача
+    const userResult = await pool.query(
       `INSERT INTO users (email, password, first_name, last_name, phone) 
        VALUES ($1, $2, $3, $4, $5) 
        RETURNING id, email, first_name, last_name, phone`,
       [email, hashedPassword, firstName, lastName, phone]
     );
 
-    // Логуємо реєстрацію
+    const user = userResult.rows[0];
+
+    // Логування реєстрації
     await AuditService.log({
-      userId: result.rows[0].id,
+      userId: user.id,
       actionType: 'USER_REGISTER',
       entityType: 'USER',
-      entityId: result.rows[0].id,
+      entityId: user.id,
       newValues: { email, firstName, lastName, phone },
       ipAddress: req.ip
     });
 
     res.status(201).json({
       message: 'User registered successfully',
-      user: result.rows[0]
+      user
     });
   } catch (err) {
     console.error(err);
@@ -59,14 +60,23 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Find user
+    // Знаходимо користувача разом з його ролями
     const result = await pool.query(
-      'SELECT * FROM users WHERE email = $1',
+      `SELECT 
+        u.*,
+        array_agg(DISTINCT r.name) as roles,
+        array_agg(DISTINCT p.code) as permissions
+       FROM users u
+       LEFT JOIN user_roles ur ON u.id = ur.user_id
+       LEFT JOIN roles r ON ur.role_id = r.id
+       LEFT JOIN role_permissions rp ON r.id = rp.role_id
+       LEFT JOIN permissions p ON rp.permission_id = p.id
+       WHERE u.email = $1
+       GROUP BY u.id`,
       [email]
     );
 
     if (result.rows.length === 0) {
-      // Логуємо невдалу спробу входу
       await AuditService.log({
         actionType: 'LOGIN_FAILED',
         entityType: 'USER',
@@ -90,10 +100,9 @@ router.post('/login', async (req, res) => {
       return res.status(403).json({ message: 'Account is deactivated' });
     }
 
-    // Check password
+    // Перевірка пароля
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
-      // Логуємо невдалу спробу входу
       await AuditService.log({
         userId: user.id,
         actionType: 'LOGIN_FAILED',
@@ -105,24 +114,24 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Update last login
+    // Оновлення часу останнього входу
     await pool.query(
       'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
       [user.id]
     );
 
-    // Create token
+    // Створення токена
     const token = jwt.sign(
       { 
         userId: user.id,
         email: user.email,
-        roleId: user.role_id 
+        permissions: user.permissions
       },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
 
-    // Логуємо успішний вхід
+    // Логування успішного входу
     await AuditService.log({
       userId: user.id,
       actionType: 'LOGIN_SUCCESS',
@@ -141,8 +150,9 @@ router.post('/login', async (req, res) => {
         lastName: user.last_name,
         phone: user.phone,
         avatarUrl: user.avatar_url,
-        roleId: user.role_id,
-        isActive: user.is_active
+        isActive: user.is_active,
+        roles: user.roles.filter(Boolean), // Видаляємо null значення
+        permissions: user.permissions.filter(Boolean) // Видаляємо null значення
       }
     });
   } catch (err) {
@@ -156,20 +166,23 @@ router.get('/me', authenticate, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT 
-        users.id, 
-        users.email, 
-        users.first_name, 
-        users.last_name, 
-        users.phone, 
-        users.avatar_url, 
-        users.role_id, 
-        users.is_active, 
-        users.last_login,
-        roles.name as role_name,
-        roles.description as role_description
-       FROM users 
-       LEFT JOIN roles ON users.role_id = roles.id 
-       WHERE users.id = $1`,
+        u.id, 
+        u.email, 
+        u.first_name, 
+        u.last_name, 
+        u.phone, 
+        u.avatar_url, 
+        u.is_active, 
+        u.last_login,
+        array_agg(DISTINCT r.name) as roles,
+        array_agg(DISTINCT p.code) as permissions
+       FROM users u 
+       LEFT JOIN user_roles ur ON u.id = ur.user_id
+       LEFT JOIN roles r ON ur.role_id = r.id
+       LEFT JOIN role_permissions rp ON r.id = rp.role_id
+       LEFT JOIN permissions p ON rp.permission_id = p.id
+       WHERE u.id = $1
+       GROUP BY u.id`,
       [req.user.userId]
     );
 
@@ -182,7 +195,11 @@ router.get('/me', authenticate, async (req, res) => {
       userData.avatar_url = `/uploads/${userData.avatar_url}`;
     }
 
-    res.json(userData);
+    res.json({
+      ...userData,
+      roles: userData.roles.filter(Boolean),
+      permissions: userData.permissions.filter(Boolean)
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
