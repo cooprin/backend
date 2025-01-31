@@ -23,13 +23,36 @@ app.use('/user', userRoutes);
 app.use('/roles', rolesRouter);
 app.use('/audit-logs', auditRoutes);
 
-// Database setup
-setupDatabase().then(() => {
-  // Start server
-  app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
+// Health check endpoint
+app.get('/health', async (req, res) => {
+  try {
+    const client = await pool.connect();
+    await client.query('SELECT 1');
+    client.release();
+    res.json({ status: 'healthy' });
+  } catch (error) {
+    res.status(500).json({ status: 'unhealthy', error: error.message });
+  }
+});
+
+// Database setup and server start
+setupDatabase()
+  .then(() => {
+    app.listen(port, () => {
+      console.log(`Server running on port ${port}`);
+    });
+  })
+  .catch(err => {
+    console.error('Failed to setup database:', err);
+    process.exit(1);
   });
-}).catch(err => {
-  console.error('Failed to setup database:', err);
+
+// Error handling
+process.on('unhandledRejection', (error) => {
+  console.error('Unhandled rejection:', error);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception:', error);
   process.exit(1);
 });

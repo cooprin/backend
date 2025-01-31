@@ -1,4 +1,3 @@
-// database.js
 const { Pool } = require('pg');
 
 const pool = new Pool({
@@ -32,8 +31,20 @@ const connectWithRetry = async () => {
   throw new Error('Failed to connect to database after multiple attempts');
 };
 
-// Експортуємо pool та функцію підключення
+// Додаємо функцію setupDatabase
+const setupDatabase = async () => {
+  try {
+    await connectWithRetry();
+    console.log('Database setup completed');
+  } catch (error) {
+    console.error('Database setup failed:', error);
+    throw error;
+  }
+};
+
+// Експортуємо pool та обидві функції
 module.exports = {
   pool,
-  connectWithRetry
+  connectWithRetry,
+  setupDatabase
 };
