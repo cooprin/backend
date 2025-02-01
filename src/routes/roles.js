@@ -3,7 +3,7 @@ const { pool } = require('../database');
 const { AuditService } = require('../services/auditService');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
-const checkPermission = require('../middleware/checkPermission');
+const { checkPermission, checkMultiplePermissions } = require('../middleware/checkPermission');
 
 // Get available permissions
 router.get('/permissions', authenticate, checkPermission('roles.read'), async (req, res) => {
