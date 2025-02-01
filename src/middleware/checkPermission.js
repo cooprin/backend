@@ -1,20 +1,16 @@
-const { pool } = require('../database');
-
 const checkPermission = (permissionCode) => {
   return async (req, res, next) => {
     try {
-      const result = await pool.query(`
-        SELECT EXISTS (
-          SELECT 1
-          FROM user_roles ur
-          JOIN role_permissions rp ON ur.role_id = rp.role_id
-          JOIN permissions p ON rp.permission_id = p.id
-          WHERE ur.user_id = $1 AND p.code = $2
-        ) as has_permission`,
-        [req.user.userId, permissionCode]
-      );
+      // Перевіряємо наявність користувача та його прав
+      if (!req.user || !req.user.permissions) {
+        return res.status(403).json({
+          success: false,
+          message: 'No permissions found'
+        });
+      }
 
-      if (!result.rows[0].has_permission) {
+      // Перевіряємо наявність конкретного права
+      if (!req.user.permissions.includes(permissionCode)) {
         return res.status(403).json({
           success: false,
           message: 'Access denied. Required permission: ' + permissionCode
@@ -32,4 +28,40 @@ const checkPermission = (permissionCode) => {
   };
 };
 
-module.exports = checkPermission;
+// Додамо також функцію для перевірки декількох прав
+const checkMultiplePermissions = (permissionCodes) => {
+  return async (req, res, next) => {
+    try {
+      if (!req.user || !req.user.permissions) {
+        return res.status(403).json({
+          success: false,
+          message: 'No permissions found'
+        });
+      }
+
+      const hasAllPermissions = permissionCodes.every(code => 
+        req.user.permissions.includes(code)
+      );
+
+      if (!hasAllPermissions) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. Required permissions: ' + permissionCodes.join(', ')
+        });
+      }
+
+      next();
+    } catch (error) {
+      console.error('Error checking permissions:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Server error while checking permissions'
+      });
+    }
+  };
+};
+
+module.exports = {
+  checkPermission,
+  checkMultiplePermissions
+};

@@ -7,7 +7,8 @@ const bcrypt = require('bcrypt');
 const { AuditService } = require('../services/auditService');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
-const checkPermission = require('../middleware/checkPermission');
+const { checkPermission, checkMultiplePermissions } = require('../middlewares/checkPermission');
+
 
 // Налаштування multer
 const storage = multer.diskStorage({
