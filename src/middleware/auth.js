@@ -1,5 +1,4 @@
 const jwt = require('jsonwebtoken');
-const { PermissionService } = require('../services/permissionService');
 
 const authenticate = async (req, res, next) => {
   try {
@@ -9,11 +8,11 @@ const authenticate = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    
-    // Отримуємо актуальні права користувача
-    const permissions = await PermissionService.getUserPermissions(decoded.userId);
-    req.user.permissions = permissions;
+    req.user = {
+      userId: decoded.userId,
+      email: decoded.email,
+      roles: decoded.roles
+    };
     
     next();
   } catch (error) {
