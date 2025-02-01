@@ -199,7 +199,7 @@ router.get('/me', authenticate, async (req, res) => {
 
     const userData = result.rows[0];
     if (userData.avatar_url) {
-      userData.avatar_url = `/uploads/${userData.avatar_url}`;
+      userData.avatar_url = `${userData.avatar_url}`;
     }
 
     res.json({
