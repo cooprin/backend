@@ -8,11 +8,24 @@ const authenticate = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Додаємо детальне логування
+    console.log('Decoded token data:', {
+      userId: decoded.userId,
+      email: decoded.email,
+      permissions: decoded.permissions,
+      iat: new Date(decoded.iat * 1000).toISOString(), // час створення токену
+      exp: new Date(decoded.exp * 1000).toISOString(), // час закінчення токену
+      fullDecoded: decoded // весь розшифрований об'єкт
+    });
+    
     req.user = {
       userId: decoded.userId,
       email: decoded.email,
-      roles: decoded.roles
+      permissions: decoded.permissions
     };
+
+
     
     next();
   } catch (error) {
