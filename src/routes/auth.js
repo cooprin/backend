@@ -156,7 +156,7 @@ router.post('/login', async (req, res) => {
         firstName: user.first_name,
         lastName: user.last_name,
         phone: user.phone,
-        avatarUrl: user.avatar_url,
+        avatar_url: user.avatar_url,
         isActive: user.is_active,
         roles: user.roles.filter(Boolean),
         permissions: user.permissions.filter(Boolean)
