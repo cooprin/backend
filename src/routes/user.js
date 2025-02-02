@@ -295,7 +295,7 @@ router.delete('/:id', authenticate, checkPermission('users.delete'), async (req,
 
     // Перевіряємо наявність записів в аудиті
     const auditRecords = await client.query(
-      'SELECT COUNT(*) FROM audit_log WHERE entity_type = $1 AND entity_id = $2',
+      'SELECT COUNT(*) FROM audit_logs WHERE entity_type = $1 AND entity_id = $2',
       ['USER', id]
     );
 
@@ -313,13 +313,13 @@ router.delete('/:id', authenticate, checkPermission('users.delete'), async (req,
     if (force) {
       // Видаляємо записи аудиту для цього користувача
       await client.query(
-        'DELETE FROM audit_log WHERE entity_type = $1 AND entity_id = $2',
+        'DELETE FROM audit_logs WHERE entity_type = $1 AND entity_id = $2',
         ['USER', id]
       );
       
       // Видаляємо записи аудиту, де цей користувач був ініціатором
       await client.query(
-        'DELETE FROM audit_log WHERE user_id = $1',
+        'DELETE FROM audit_logs WHERE user_id = $1',
         [id]
       );
     }
