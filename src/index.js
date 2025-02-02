@@ -5,6 +5,7 @@ const userRoutes = require('./routes/user');
 const rolesRouter = require('./routes/roles');
 const { setupDatabase } = require('./database');
 const auditRoutes = require('./routes/audit');
+const profileRoutes = require('./routes/profile');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -21,6 +22,7 @@ app.use(express.json());
 app.use('/auth', authRoutes);
 app.use('/user', userRoutes);
 app.use('/roles', rolesRouter);
+app.use('/profile', profileRoutes);
 app.use('/audit-logs', auditRoutes);
 
 // Health check endpoint
