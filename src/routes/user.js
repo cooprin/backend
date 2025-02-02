@@ -391,4 +391,149 @@ router.post('/avatar', authenticate, upload.single('avatar'), async (req, res) =
  }
 });
 
+//Для профайлу
+
+// Profile update endpoint
+router.put('/update-profile', authenticate, async (req, res) => {
+  try {
+    const { first_name, last_name, phone } = req.body;
+    const userId = req.user.userId;
+
+    // Отримуємо старі дані для логування
+    const oldUserData = await pool.query(
+      'SELECT first_name, last_name, phone FROM users WHERE id = $1',
+      [userId]
+    );
+
+    const { rows } = await pool.query(
+      `UPDATE users 
+       SET first_name = COALESCE($1, first_name),
+           last_name = COALESCE($2, last_name),
+           phone = COALESCE($3, phone),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $4
+       RETURNING id, email, first_name, last_name, phone, avatar_url, role_id`,
+      [first_name, last_name, phone, userId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    // Логуємо оновлення профілю
+    await AuditService.log({
+      userId: req.user.userId,
+      actionType: 'PROFILE_UPDATE',
+      entityType: 'USER',
+      entityId: userId,
+      oldValues: oldUserData.rows[0],
+      newValues: { first_name, last_name, phone },
+      ipAddress: req.ip
+    });
+
+    const userData = rows[0];
+   
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: userData
+    });
+  } catch (error) {
+    console.error('Error updating profile:', error);
+    // Логуємо помилку
+    await AuditService.log({
+      userId: req.user.userId,
+      actionType: 'ERROR',
+      entityType: 'USER',
+      entityId: req.user.userId,
+      ipAddress: req.ip,
+      newValues: { error: error.message }
+    });
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error while updating profile' 
+    });
+  }
+});
+
+// Change password endpoint
+router.put('/change-password', authenticate, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+    const userId = req.user.userId;
+
+    // Get current user's password hash
+    const { rows } = await pool.query(
+      'SELECT password FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Verify current password
+    const isValidPassword = await bcrypt.compare(current_password, rows[0].password);
+    if (!isValidPassword) {
+      // Логуємо невдалу спробу зміни пароля
+      await AuditService.log({
+        userId: req.user.userId,
+        actionType: 'PASSWORD_CHANGE_FAILED',
+        entityType: 'USER',
+        entityId: userId,
+        ipAddress: req.ip
+      });
+      return res.status(400).json({
+        success: false,
+        message: 'Current password is incorrect'
+      });
+    }
+
+    // Hash new password
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(new_password, saltRounds);
+
+    // Update password
+    await pool.query(
+      'UPDATE users SET password = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [hashedPassword, userId]
+    );
+
+    // Логуємо успішну зміну пароля
+    await AuditService.log({
+      userId: req.user.userId,
+      actionType: 'PASSWORD_CHANGE',
+      entityType: 'USER',
+      entityId: userId,
+      ipAddress: req.ip
+    });
+
+    res.json({
+      success: true,
+      message: 'Password updated successfully'
+    });
+  } catch (error) {
+    console.error('Error changing password:', error);
+    // Логуємо помилку
+    await AuditService.log({
+      userId: req.user.userId,
+      actionType: 'ERROR',
+      entityType: 'USER',
+      entityId: req.user.userId,
+      ipAddress: req.ip,
+      newValues: { error: error.message }
+    });
+    res.status(500).json({
+      success: false,
+      message: 'Server error while changing password'
+    });
+  }
+});
+
 module.exports = router;
