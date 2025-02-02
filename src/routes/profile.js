@@ -65,7 +65,7 @@ const storage = multer.diskStorage({
               phone = COALESCE($3, phone),
               updated_at = CURRENT_TIMESTAMP
           WHERE id = $4
-          RETURNING id, email, first_name, last_name, phone, avatar_url, role_id`,
+          RETURNING id, email, first_name, last_name, phone`,
          [first_name, last_name, phone, userId]
        );
    
