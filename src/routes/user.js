@@ -105,7 +105,7 @@ router.post('/', authenticate, checkPermission('users.create'), async (req, res)
  try {
    await client.query('BEGIN');
 
-   const { email, password, first_name, last_name, phone, role_id } = req.body;
+   const { email, password, first_name, last_name, phone, is_active, role_id } = req.body;
    
    const existingUser = await client.query(
      'SELECT id FROM users WHERE email = $1',
@@ -129,7 +129,7 @@ router.post('/', authenticate, checkPermission('users.create'), async (req, res)
      )
      VALUES ($1, $2, $3, $4, $5, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
      RETURNING *`,
-     [email, hashedPassword, first_name, last_name, phone]
+     [email, hashedPassword, first_name, last_name, phone, is_active]
    );
 
    // Додаємо роль
@@ -147,7 +147,7 @@ router.post('/', authenticate, checkPermission('users.create'), async (req, res)
      actionType: 'USER_CREATE',
      entityType: 'USER',
      entityId: userResult.rows[0].id,
-     newValues: { email, first_name, last_name, phone, role_id },
+     newValues: { email, first_name, last_name, phone, is_active, role_id },
      ipAddress: req.ip
    });
 
@@ -311,7 +311,140 @@ router.delete('/:id', authenticate, checkPermission('users.delete'), async (req,
    });
  }
 });
+// Change password
+router.put('/:id/password', authenticate, checkPermission('users.update'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    const { id } = req.params;
+    const { password } = req.body;
+    
+    // Get old user data for audit
+    const oldUserData = await client.query(
+      'SELECT * FROM users WHERE id = $1',
+      [id]
+    );
 
+    if (oldUserData.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+    
+    // Update password
+    await client.query(
+      `UPDATE users 
+       SET password = $1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2`,
+      [hashedPassword, id]
+    );
+
+    await client.query('COMMIT');
+
+    // Log password change in audit
+    await AuditService.log({
+      userId: req.user.userId,
+      actionType: 'USER_PASSWORD_CHANGE',
+      entityType: 'USER',
+      entityId: id,
+      oldValues: { password: '[REDACTED]' },
+      newValues: { password: '[REDACTED]' },
+      ipAddress: req.ip
+    });
+
+    res.json({
+      success: true,
+      message: 'Password updated successfully'
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error updating password:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while updating password'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// Toggle user status (activate/deactivate)
+router.put('/:id/status', authenticate, checkPermission('users.update'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    const { id } = req.params;
+    const { is_active } = req.body;
+
+    // Prevent self-deactivation
+    if (id === req.user.userId && !is_active) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot deactivate your own account'
+      });
+    }
+    
+    // Get old user data for audit
+    const oldUserData = await client.query(
+      'SELECT * FROM users WHERE id = $1',
+      [id]
+    );
+
+    if (oldUserData.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Update user status
+    const userResult = await client.query(
+      `UPDATE users 
+       SET is_active = $1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+       RETURNING *`,
+      [is_active, id]
+    );
+
+    await client.query('COMMIT');
+
+    // Log status change in audit
+    await AuditService.log({
+      userId: req.user.userId,
+      actionType: is_active ? 'USER_ACTIVATE' : 'USER_DEACTIVATE',
+      entityType: 'USER',
+      entityId: id,
+      oldValues: { is_active: oldUserData.rows[0].is_active },
+      newValues: { is_active },
+      ipAddress: req.ip
+    });
+
+    res.json({
+      success: true,
+      user: userResult.rows[0]
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error updating user status:', error);
+    res.status(500).json({
+      success: false, 
+      message: 'Server error while updating user status'
+    });
+  } finally {
+    client.release();
+  }
+});
 
 
 
