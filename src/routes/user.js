@@ -105,7 +105,7 @@ router.post('/', authenticate, checkPermission('users.create'), async (req, res)
  try {
    await client.query('BEGIN');
 
-   const { email, password, firstName, lastName, phone, role_id } = req.body;
+   const { email, password, first_name, last_name, phone, role_id } = req.body;
    
    const existingUser = await client.query(
      'SELECT id FROM users WHERE email = $1',
@@ -129,7 +129,7 @@ router.post('/', authenticate, checkPermission('users.create'), async (req, res)
      )
      VALUES ($1, $2, $3, $4, $5, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
      RETURNING *`,
-     [email, hashedPassword, firstName, lastName, phone]
+     [email, hashedPassword, first_name, last_name, phone]
    );
 
    // Додаємо роль
@@ -147,7 +147,7 @@ router.post('/', authenticate, checkPermission('users.create'), async (req, res)
      actionType: 'USER_CREATE',
      entityType: 'USER',
      entityId: userResult.rows[0].id,
-     newValues: { email, firstName, lastName, phone, role_id },
+     newValues: { email, first_name, last_name, phone, role_id },
      ipAddress: req.ip
    });
 
@@ -174,7 +174,7 @@ router.put('/:id', authenticate, checkPermission('users.update'), async (req, re
    await client.query('BEGIN');
 
    const { id } = req.params;
-   const { email, firstName, lastName, phone, role_id, is_active } = req.body;
+   const { email, first_name, last_name, phone, role_id, is_active } = req.body;
    
    const oldUserData = await client.query(
      'SELECT * FROM users WHERE id = $1',
@@ -204,7 +204,7 @@ router.put('/:id', authenticate, checkPermission('users.update'), async (req, re
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $6
       RETURNING *`,
-     [email, firstName, lastName, phone, is_active, id]
+     [email, first_name, last_name, phone, is_active, id]
    );
 
    if (userResult.rows.length === 0) {
@@ -232,7 +232,7 @@ router.put('/:id', authenticate, checkPermission('users.update'), async (req, re
      entityType: 'USER',
      entityId: id,
      oldValues: oldUserData.rows[0],
-     newValues: { email, firstName, lastName, phone, role_id, is_active },
+     newValues: { email, first_name, last_name, phone, role_id, is_active },
      ipAddress: req.ip
    });
 

@@ -9,7 +9,7 @@ const authenticate = require('../middleware/auth');
 // Register
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, firstName, lastName, phone } = req.body;
+    const { email, password, first_name, last_name, phone } = req.body;
     
     // Перевірка існування користувача
     const userCheck = await pool.query(
@@ -30,7 +30,7 @@ router.post('/register', async (req, res) => {
       `INSERT INTO users (email, password, first_name, last_name, phone) 
        VALUES ($1, $2, $3, $4, $5) 
        RETURNING id, email, first_name, last_name, phone`,
-      [email, hashedPassword, firstName, lastName, phone]
+      [email, hashedPassword, first_name, last_name, phone]
     );
 
     const user = userResult.rows[0];
@@ -48,7 +48,7 @@ router.post('/register', async (req, res) => {
       actionType: 'USER_REGISTER',
       entityType: 'USER',
       entityId: user.id,
-      newValues: { email, firstName, lastName, phone },
+      newValues: { email, first_name, last_name, phone },
       ipAddress: req.ip
     });
 
@@ -153,8 +153,8 @@ router.post('/login', async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name,
+        first_name: user.first_name,
+        last_name: user.last_name,
         phone: user.phone,
         avatar_url: user.avatar_url,
         isActive: user.is_active,
