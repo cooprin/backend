@@ -263,53 +263,73 @@ router.put('/:id', authenticate, checkPermission('users.update'), async (req, re
 
 // Delete user
 router.delete('/:id', authenticate, checkPermission('users.delete'), async (req, res) => {
- try {
-   const { id } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    const { id } = req.params;
 
-   if (id === req.user.userId) {
-     return res.status(400).json({
-       success: false,
-       message: 'Cannot delete your own account'
-     });
-   }
+    // Перевірка на видалення власного акаунту
+    if (id === req.user.userId) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete your own account'
+      });
+    }
 
-   const userData = await pool.query(
-     'SELECT * FROM users WHERE id = $1',
-     [id]
-   );
+    // Отримуємо дані користувача для аудиту
+    const userData = await client.query(
+      'SELECT * FROM users WHERE id = $1',
+      [id]
+    );
 
-   const { rows } = await pool.query(
-     'DELETE FROM users WHERE id = $1 RETURNING id',
-     [id]
-   );
+    if (userData.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Видаляємо зв'язки з ролями
+    await client.query(
+      'DELETE FROM user_roles WHERE user_id = $1',
+      [id]
+    );
+
+    // Видаляємо користувача
+    const { rows } = await client.query(
+      'DELETE FROM users WHERE id = $1 RETURNING id',
+      [id]
+    );
+
+    await client.query('COMMIT');
+
+    // Логуємо видалення в аудит
+    await AuditService.log({
+      userId: req.user.userId,
+      actionType: 'USER_DELETE',
+      entityType: 'USER',
+      entityId: id,
+      oldValues: userData.rows[0],
+      ipAddress: req.ip
+    });
    
-   if (rows.length === 0) {
-     return res.status(404).json({
-       success: false,
-       message: 'User not found'
-     });
-   }
-
-   await AuditService.log({
-     userId: req.user.userId,
-     actionType: 'USER_DELETE',
-     entityType: 'USER',
-     entityId: id,
-     oldValues: userData.rows[0],
-     ipAddress: req.ip
-   });
-   
-   res.json({
-     success: true,
-     message: 'User deleted successfully'
-   });
- } catch (error) {
-   console.error('Error deleting user:', error);
-   res.status(500).json({
-     success: false,
-     message: 'Server error while deleting user'
-   });
- }
+    res.json({
+      success: true,
+      message: 'User deleted successfully'
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error deleting user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while deleting user'
+    });
+  } finally {
+    client.release();
+  }
 });
 // Change password
 router.put('/:id/password', authenticate, checkPermission('users.update'), async (req, res) => {
