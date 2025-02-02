@@ -268,6 +268,7 @@ router.delete('/:id', authenticate, checkPermission('users.delete'), async (req,
     await client.query('BEGIN');
     
     const { id } = req.params;
+    const { force } = req.query;
 
     // Перевірка на видалення власного акаунту
     if (id === req.user.userId) {
@@ -292,6 +293,37 @@ router.delete('/:id', authenticate, checkPermission('users.delete'), async (req,
       });
     }
 
+    // Перевіряємо наявність записів в аудиті
+    const auditRecords = await client.query(
+      'SELECT COUNT(*) FROM audit_log WHERE entity_type = $1 AND entity_id = $2',
+      ['USER', id]
+    );
+
+    if (auditRecords.rows[0].count > 0 && !force) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        message: 'User has audit records',
+        hasAuditRecords: true,
+        recordsCount: parseInt(auditRecords.rows[0].count)
+      });
+    }
+
+    // Якщо force=true або немає записів аудиту, видаляємо все
+    if (force) {
+      // Видаляємо записи аудиту для цього користувача
+      await client.query(
+        'DELETE FROM audit_log WHERE entity_type = $1 AND entity_id = $2',
+        ['USER', id]
+      );
+      
+      // Видаляємо записи аудиту, де цей користувач був ініціатором
+      await client.query(
+        'DELETE FROM audit_log WHERE user_id = $1',
+        [id]
+      );
+    }
+
     // Видаляємо зв'язки з ролями
     await client.query(
       'DELETE FROM user_roles WHERE user_id = $1',
@@ -309,11 +341,12 @@ router.delete('/:id', authenticate, checkPermission('users.delete'), async (req,
     // Логуємо видалення в аудит
     await AuditService.log({
       userId: req.user.userId,
-      actionType: 'USER_DELETE',
+      actionType: force ? 'USER_DELETE_WITH_AUDIT' : 'USER_DELETE',
       entityType: 'USER',
       entityId: id,
       oldValues: userData.rows[0],
-      ipAddress: req.ip
+      ipAddress: req.ip,
+      details: force ? `Deleted with ${auditRecords.rows[0].count} audit records` : null
     });
    
     res.json({
