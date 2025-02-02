@@ -127,7 +127,7 @@ router.post('/', authenticate, checkPermission('users.create'), async (req, res)
        email, password, first_name, last_name, phone, is_active, 
        created_at, updated_at
      )
-     VALUES ($1, $2, $3, $4, $5, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+     VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
      RETURNING *`,
      [email, hashedPassword, first_name, last_name, phone, is_active]
    );
