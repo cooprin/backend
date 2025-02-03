@@ -228,5 +228,96 @@ router.delete('/:id', authenticate, checkPermission('permissions.delete'), async
     });
   }
 });
+// Create permission group
+router.post('/groups', authenticate, checkPermission('permissions.manage'), async (req, res) => {
+  const client = await pool.connect()
+  try {
+    const { name, description } = req.body
+    
+    await client.query('BEGIN')
+
+    const result = await client.query(
+      `INSERT INTO permission_groups (name, description)
+       VALUES ($1, $2)
+       RETURNING *`,
+      [name, description]
+    )
+
+    await AuditService.log({
+      userId: req.user.userId,
+      actionType: 'PERMISSION_GROUP_CREATE',
+      entityType: 'PERMISSION_GROUP',
+      entityId: result.rows[0].id,
+      newValues: { name, description },
+      ipAddress: req.ip
+    })
+
+    await client.query('COMMIT')
+
+    res.status(201).json({
+      success: true,
+      group: result.rows[0]
+    })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    res.status(500).json({
+      success: false,
+      message: 'Server error while creating permission group'
+    })
+  } finally {
+    client.release()
+  }
+})
+
+// Update permission group
+router.put('/groups/:id', authenticate, checkPermission('permissions.manage'), async (req, res) => {
+  const client = await pool.connect()
+  try {
+    const { id } = req.params
+    const { name, description } = req.body
+
+    const oldData = await client.query(
+      'SELECT * FROM permission_groups WHERE id = $1',
+      [id]
+    )
+
+    await client.query('BEGIN')
+
+    const result = await client.query(
+      `UPDATE permission_groups 
+       SET name = $1, 
+           description = $2,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3
+       RETURNING *`,
+      [name, description, id]
+    )
+
+    await AuditService.log({
+      userId: req.user.userId,
+      actionType: 'PERMISSION_GROUP_UPDATE',
+      entityType: 'PERMISSION_GROUP',
+      entityId: id,
+      oldValues: oldData.rows[0],
+      newValues: { name, description },
+      ipAddress: req.ip
+    })
+
+    await client.query('COMMIT')
+
+    res.json({
+      success: true,
+      group: result.rows[0]
+    })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    res.status(500).json({
+      success: false,
+      message: 'Server error while updating permission group'
+    })
+  } finally {
+    client.release()
+  }
+})
 
 module.exports = router;
