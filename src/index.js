@@ -7,6 +7,7 @@ const { setupDatabase } = require('./database');
 const auditRoutes = require('./routes/audit');
 const profileRoutes = require('./routes/profile');
 const permissionsRouter = require('./routes/permissions');
+const resourcesRouter = require('./routes/resources');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -26,6 +27,7 @@ app.use('/roles', rolesRouter);
 app.use('/profile', profileRoutes);
 app.use('/audit-logs', auditRoutes);
 app.use('/permissions', permissionsRouter);
+app.use('/resources', resourcesRouter);
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
