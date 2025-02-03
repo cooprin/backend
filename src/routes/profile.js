@@ -189,50 +189,71 @@ const storage = multer.diskStorage({
      }
    });
    
-   // Avatar upload
+  // Avatar upload
 router.post('/avatar', authenticate, upload.single('avatar'), async (req, res) => {
-    try {
+  const client = await pool.connect();
+  try {
       if (!req.file) {
-        return res.status(400).json({ 
-          success: false,
-          message: 'No file uploaded' 
-        });
+          return res.status(400).json({ 
+              success: false,
+              message: 'No file uploaded' 
+          });
       }
-   
+
+      await client.query('BEGIN');
+
+      // Отримуємо інформацію про старий аватар
+      const oldUser = await client.query(
+          'SELECT avatar_url FROM users WHERE id = $1',
+          [req.user.userId]
+      );
+
+      // Якщо є старий аватар - видаляємо його
+      if (oldUser.rows[0]?.avatar_url) {
+          const oldAvatarPath = path.join(process.env.UPLOAD_DIR, oldUser.rows[0].avatar_url);
+          try {
+              await fs.unlink(oldAvatarPath);
+          } catch (err) {
+              console.error('Error deleting old avatar:', err);
+              // Продовжуємо виконання навіть якщо старий файл не вдалося видалити
+          }
+      }
+
       const avatarUrl = path.relative(process.env.UPLOAD_DIR, req.file.path);
       
-      const oldUser = await pool.query(
-        'SELECT avatar_url FROM users WHERE id = $1',
-        [req.user.userId]
+      // Оновлюємо URL аватара в базі даних
+      await client.query(
+          'UPDATE users SET avatar_url = $1 WHERE id = $2',
+          [avatarUrl, req.user.userId]
       );
-   
-      await pool.query(
-        'UPDATE users SET avatar_url = $1 WHERE id = $2',
-        [avatarUrl, req.user.userId]
-      );
-   
+
       await AuditService.log({
-        userId: req.user.userId,
-        actionType: 'AVATAR_UPDATE',
-        entityType: 'USER',
-        entityId: req.user.userId,
-        oldValues: { avatar_url: oldUser.rows[0]?.avatar_url },
-        newValues: { avatar_url: avatarUrl },
-        ipAddress: req.ip
+          userId: req.user.userId,
+          actionType: 'AVATAR_UPDATE',
+          entityType: 'USER',
+          entityId: req.user.userId,
+          oldValues: { avatar_url: oldUser.rows[0]?.avatar_url },
+          newValues: { avatar_url: avatarUrl },
+          ipAddress: req.ip
       });
-   
+
+      await client.query('COMMIT');
+
       res.json({ 
-        success: true,
-        avatar: `/uploads/${avatarUrl}`
+          success: true,
+          avatar: `/uploads/${avatarUrl}`
       });
-    } catch (error) {
+  } catch (error) {
+      await client.query('ROLLBACK');
       console.error('Error uploading avatar:', error);
       res.status(500).json({ 
-        success: false,
-        message: 'Server error while uploading avatar' 
+          success: false,
+          message: 'Server error while uploading avatar' 
       });
-    }
-   });
+  } finally {
+      client.release();
+  }
+});
    module.exports = router;   
    
    //
