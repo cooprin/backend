@@ -7,57 +7,79 @@ const { AuditService } = require('../services/auditService');
 
 // Get all resources with pagination
 router.get('/', authenticate, checkPermission('resources.read'), async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const perPage = parseInt(req.query.perPage) || 10;
-    const offset = (page - 1) * perPage;
-    const search = req.query.search || '';
-    const sortBy = req.query.sortBy || 'name';
-    const descending = req.query.descending === 'true';
-    
-    const orderDirection = descending ? 'DESC' : 'ASC';
-    
-    const searchCondition = search 
-      ? 'WHERE name ILIKE $3 OR code ILIKE $3'
-      : '';
-    
-    const countQuery = `
-      SELECT COUNT(*) 
-      FROM resources
-      ${searchCondition}
-    `;
-    
-    const resourcesQuery = `
-      SELECT *
-      FROM resources
-      ${searchCondition}
-      ORDER BY ${sortBy} ${orderDirection}
-      LIMIT $1 OFFSET $2
-    `;
-    
-    const params = [perPage, offset];
-    if (search) {
-      params.push(`%${search}%`);
+    try {
+      let { 
+        page = 1, 
+        perPage = 10,
+        sortBy = 'name',
+        descending = false,
+        search = '' 
+      } = req.query;
+  
+      // Обробка perPage=All
+      if (perPage === 'All') {
+        perPage = null;
+      } else {
+        perPage = parseInt(perPage);
+      }
+      
+      page = parseInt(page);
+      const offset = (page - 1) * (perPage || 0);
+      const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
+  
+      // Валідація sortBy
+      const allowedSortColumns = ['name', 'code', 'type', 'created_at', 'updated_at'];
+      if (!allowedSortColumns.includes(sortBy)) {
+        sortBy = 'name';
+      }
+      
+      const searchCondition = search 
+        ? 'WHERE name ILIKE $1 OR code ILIKE $1 OR type ILIKE $1'
+        : '';
+      
+      const countQuery = `
+        SELECT COUNT(*) 
+        FROM resources
+        ${searchCondition}
+      `;
+      
+      let resourcesQuery = `
+        SELECT 
+          r.*,
+          (SELECT COUNT(*) FROM resource_actions ra WHERE ra.resource_id = r.id) as actions_count
+        FROM resources r
+        ${searchCondition}
+        ORDER BY ${sortBy} ${orderDirection}
+      `;
+  
+      const queryParams = search ? [`%${search}%`] : [];
+      
+      if (perPage) {
+        resourcesQuery += ' LIMIT $' + (queryParams.length + 1) + ' OFFSET $' + (queryParams.length + 2);
+        queryParams.push(perPage, offset);
+      }
+      
+      const [countResult, resourcesResult] = await Promise.all([
+        pool.query(countQuery, search ? [`%${search}%`] : []),
+        pool.query(resourcesQuery, queryParams)
+      ]);
+  
+      res.json({
+        success: true,
+        resources: resourcesResult.rows.map(resource => ({
+          ...resource,
+          metadata: resource.metadata || {}
+        })),
+        total: parseInt(countResult.rows[0].count)
+      });
+    } catch (error) {
+      console.error('Error fetching resources:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Server error while fetching resources'
+      });
     }
-    
-    const [countResult, resourcesResult] = await Promise.all([
-      pool.query(countQuery, search ? [`%${search}%`] : []),
-      pool.query(resourcesQuery, params)
-    ]);
-
-    res.json({
-      resources: resourcesResult.rows,
-      total: parseInt(countResult.rows[0].count)
-    });
-  } catch (error) {
-    console.error('Error fetching resources:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching resources'
-    });
-  }
-});
-
+  });
 // Get resource actions
 router.get('/:id/actions', authenticate, checkPermission('resources.read'), async (req, res) => {
   try {
