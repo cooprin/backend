@@ -75,7 +75,6 @@ router.get('/', authenticate, checkPermission('roles.read'), async (req, res) =>
       search = '' 
     } = req.query;
     
-    // Обробка perPage=All
     if (perPage === 'All') {
       perPage = null;
     } else {
@@ -89,6 +88,11 @@ router.get('/', authenticate, checkPermission('roles.read'), async (req, res) =>
     const searchCondition = search 
       ? `WHERE r.name ILIKE $1 OR r.description ILIKE $1`
       : '';
+    
+    let params = [];
+    if (search) {
+      params.push(`%${search}%`);
+    }
     
     let rolesQuery = `
       SELECT 
@@ -107,19 +111,18 @@ router.get('/', authenticate, checkPermission('roles.read'), async (req, res) =>
       ${searchCondition}
       GROUP BY r.id
       ORDER BY r.${sortBy} ${orderDirection}
-      ${perPage ? 'LIMIT $2 OFFSET $3' : ''}
     `;
+    
+    if (perPage) {
+      rolesQuery += ' LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
+      params.push(perPage, offset);
+    }
     
     const countQuery = `
       SELECT COUNT(*)
       FROM roles r
       ${searchCondition}
     `;
-    
-    let params = search ? [`%${search}%`] : [];
-    if (perPage) {
-      params.push(perPage, offset);
-    }
     
     const [countResult, rolesResult] = await Promise.all([
       pool.query(countQuery, search ? [`%${search}%`] : []),

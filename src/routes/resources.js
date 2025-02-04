@@ -31,6 +31,11 @@ router.get('/', authenticate, checkPermission('resources.read'), async (req, res
         ? 'WHERE name ILIKE $1 OR code ILIKE $1 OR type ILIKE $1'
         : '';
       
+      let params = [];
+      if (search) {
+        params.push(`%${search}%`);
+      }
+      
       let resourcesQuery = `
         SELECT 
           r.*,
@@ -38,19 +43,18 @@ router.get('/', authenticate, checkPermission('resources.read'), async (req, res
         FROM resources r
         ${searchCondition}
         ORDER BY ${sortBy} ${orderDirection}
-        ${perPage ? 'LIMIT $2 OFFSET $3' : ''}
       `;
+      
+      if (perPage) {
+        resourcesQuery += ' LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
+        params.push(perPage, offset);
+      }
       
       const countQuery = `
         SELECT COUNT(*) 
         FROM resources
         ${searchCondition}
       `;
-      
-      let params = search ? [`%${search}%`] : [];
-      if (perPage) {
-        params.push(perPage, offset);
-      }
       
       const [countResult, resourcesResult] = await Promise.all([
         pool.query(countQuery, search ? [`%${search}%`] : []),
