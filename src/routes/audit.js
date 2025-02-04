@@ -19,22 +19,16 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
             search 
         } = req.query;
 
-        // Handle perPage=All case
         if (perPage === 'All') {
             perPage = null;
         } else {
             perPage = parseInt(perPage);
-            page = parseInt(page);
         }
+        
+        page = parseInt(page);
 
-        const offset = perPage ? (page - 1) * perPage : 0;
+        const offset = (page - 1) * (perPage || 0);
         const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
-
-        // Validate sortBy to prevent SQL injection
-        const allowedSortColumns = ['created_at', 'action_type', 'entity_type', 'user_email'];
-        if (!allowedSortColumns.includes(sortBy)) {
-            sortBy = 'created_at';
-        }
 
         let conditions = [];
         let params = [];
@@ -87,14 +81,14 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
             SELECT 
                 al.id,
                 al.user_id,
-                COALESCE(al.action_type, '') as action_type,
-                COALESCE(al.entity_type, '') as entity_type,
+                al.action_type,
+                al.entity_type,
                 al.entity_id,
                 al.old_values,
                 al.new_values,
                 al.ip_address,
                 al.created_at,
-                COALESCE(u.email, 'System') as user_email
+                u.email as user_email
             FROM audit_logs al
             LEFT JOIN users u ON al.user_id = u.id
             ${whereClause}
@@ -113,9 +107,7 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
 
         const logs = logsResult.rows.map(log => ({
             ...log,
-            created_at: log.created_at.toISOString(),
-            old_values: log.old_values || {},
-            new_values: log.new_values || {}
+            created_at: log.created_at.toISOString()
         }));
 
         res.json({
@@ -139,7 +131,6 @@ router.get('/types', authenticate, checkPermission('audit.read'), async (req, re
             SELECT DISTINCT action_type 
             FROM audit_logs 
             WHERE action_type IS NOT NULL
-            AND action_type != ''
             ORDER BY action_type
         `;
 
@@ -147,7 +138,6 @@ router.get('/types', authenticate, checkPermission('audit.read'), async (req, re
             SELECT DISTINCT entity_type 
             FROM audit_logs 
             WHERE entity_type IS NOT NULL
-            AND entity_type != ''
             ORDER BY entity_type
         `;
 
@@ -158,8 +148,8 @@ router.get('/types', authenticate, checkPermission('audit.read'), async (req, re
 
         res.json({
             success: true,
-            actionTypes: actionTypes.rows.map(row => row.action_type).filter(Boolean),
-            entityTypes: entityTypes.rows.map(row => row.entity_type).filter(Boolean)
+            actionTypes: actionTypes.rows.map(row => row.action_type),
+            entityTypes: entityTypes.rows.map(row => row.entity_type)
         });
     } catch (error) {
         console.error('Error fetching log types:', error);
