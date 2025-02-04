@@ -21,27 +21,15 @@ router.get('/', authenticate, checkPermission('resources.read'), async (req, res
         perPage = null;
       } else {
         perPage = parseInt(perPage);
+        page = parseInt(page);
       }
       
-      page = parseInt(page);
-      const offset = (page - 1) * (perPage || 0);
+      const offset = perPage ? (page - 1) * perPage : 0;
       const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
-  
-      // Валідація sortBy
-      const allowedSortColumns = ['name', 'code', 'type', 'created_at', 'updated_at'];
-      if (!allowedSortColumns.includes(sortBy)) {
-        sortBy = 'name';
-      }
       
       const searchCondition = search 
         ? 'WHERE name ILIKE $1 OR code ILIKE $1 OR type ILIKE $1'
         : '';
-      
-      const countQuery = `
-        SELECT COUNT(*) 
-        FROM resources
-        ${searchCondition}
-      `;
       
       let resourcesQuery = `
         SELECT 
@@ -50,18 +38,23 @@ router.get('/', authenticate, checkPermission('resources.read'), async (req, res
         FROM resources r
         ${searchCondition}
         ORDER BY ${sortBy} ${orderDirection}
+        ${perPage ? 'LIMIT $2 OFFSET $3' : ''}
       `;
-  
-      const queryParams = search ? [`%${search}%`] : [];
       
+      const countQuery = `
+        SELECT COUNT(*) 
+        FROM resources
+        ${searchCondition}
+      `;
+      
+      let params = search ? [`%${search}%`] : [];
       if (perPage) {
-        resourcesQuery += ' LIMIT $' + (queryParams.length + 1) + ' OFFSET $' + (queryParams.length + 2);
-        queryParams.push(perPage, offset);
+        params.push(perPage, offset);
       }
       
       const [countResult, resourcesResult] = await Promise.all([
         pool.query(countQuery, search ? [`%${search}%`] : []),
-        pool.query(resourcesQuery, queryParams)
+        pool.query(resourcesQuery, params)
       ]);
   
       res.json({

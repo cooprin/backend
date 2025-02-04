@@ -80,27 +80,15 @@ router.get('/', authenticate, checkPermission('roles.read'), async (req, res) =>
       perPage = null;
     } else {
       perPage = parseInt(perPage);
+      page = parseInt(page);
     }
     
-    page = parseInt(page);
-    const offset = (page - 1) * (perPage || 0);
+    const offset = perPage ? (page - 1) * perPage : 0;
     const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
-    
-    // Валідація sortBy
-    const allowedSortColumns = ['name', 'description', 'created_at', 'updated_at'];
-    if (!allowedSortColumns.includes(sortBy)) {
-      sortBy = 'name';
-    }
     
     const searchCondition = search 
       ? `WHERE r.name ILIKE $1 OR r.description ILIKE $1`
       : '';
-    
-    const countQuery = `
-      SELECT COUNT(*)
-      FROM roles r
-      ${searchCondition}
-    `;
     
     let rolesQuery = `
       SELECT 
@@ -110,7 +98,7 @@ router.get('/', authenticate, checkPermission('roles.read'), async (req, res) =>
         r.is_system, 
         r.created_at, 
         r.updated_at,
-        array_remove(array_agg(DISTINCT p.code), null) as permission_codes,
+        array_agg(DISTINCT p.code) as permission_codes,
         COUNT(DISTINCT ur.user_id) as users_count
       FROM roles r
       LEFT JOIN role_permissions rp ON r.id = rp.role_id
@@ -119,39 +107,35 @@ router.get('/', authenticate, checkPermission('roles.read'), async (req, res) =>
       ${searchCondition}
       GROUP BY r.id
       ORDER BY r.${sortBy} ${orderDirection}
+      ${perPage ? 'LIMIT $2 OFFSET $3' : ''}
     `;
-
-    const queryParams = search ? [`%${search}%`] : [];
     
+    const countQuery = `
+      SELECT COUNT(*)
+      FROM roles r
+      ${searchCondition}
+    `;
+    
+    let params = search ? [`%${search}%`] : [];
     if (perPage) {
-      rolesQuery += ` LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
-      queryParams.push(perPage, offset);
+      params.push(perPage, offset);
     }
     
     const [countResult, rolesResult] = await Promise.all([
       pool.query(countQuery, search ? [`%${search}%`] : []),
-      pool.query(rolesQuery, queryParams)
+      pool.query(rolesQuery, params)
     ]);
-
-    const roles = rolesResult.rows.map(role => ({
-      ...role,
-      permission_codes: role.permission_codes.filter(Boolean)
-    }));
 
     res.json({
       success: true,
-      roles,
+      roles: rolesResult.rows.map(role => ({
+        ...role,
+        permission_codes: role.permission_codes.filter(Boolean)
+      })),
       total: parseInt(countResult.rows[0].count)
     });
   } catch (error) {
     console.error('Error fetching roles:', error);
-    await AuditService.log({
-      userId: req.user.userId,
-      actionType: 'ERROR',
-      entityType: 'ROLE',
-      ipAddress: req.ip,
-      newValues: { error: error.message }
-    });
     res.status(500).json({
       success: false,
       message: 'Server error while fetching roles'
