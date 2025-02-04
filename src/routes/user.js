@@ -22,7 +22,6 @@ router.get('/', authenticate, checkPermission('users.read'), async (req, res) =>
       descending = false 
     } = req.query;
 
-    // Обробка perPage=All
     if (perPage === 'All') {
       perPage = null;
     } else {
@@ -33,9 +32,17 @@ router.get('/', authenticate, checkPermission('users.read'), async (req, res) =>
     const offset = perPage ? (page - 1) * perPage : 0;
     const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
     
-    const searchCondition = search 
-      ? `WHERE u.first_name ILIKE $3 OR u.last_name ILIKE $3 OR u.email ILIKE $3`
-      : '';
+    let conditions = [];
+    let params = [];
+    let paramIndex = 1;
+
+    if (search) {
+      conditions.push(`(u.first_name ILIKE $${paramIndex} OR u.last_name ILIKE $${paramIndex} OR u.email ILIKE $${paramIndex})`);
+      params.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
     
     const usersQuery = `
       SELECT 
@@ -48,28 +55,24 @@ router.get('/', authenticate, checkPermission('users.read'), async (req, res) =>
       FROM users u
       LEFT JOIN user_roles ur ON u.id = ur.user_id
       LEFT JOIN roles r ON ur.role_id = r.id
-      ${searchCondition}
+      ${whereClause}
       GROUP BY u.id
       ORDER BY u.${sortBy} ${orderDirection}
-      ${perPage ? 'LIMIT $1 OFFSET $2' : ''}
     `;
+    
+    if (perPage) {
+      usersQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      params.push(perPage, offset);
+    }
     
     const countQuery = `
       SELECT COUNT(*) 
       FROM users u
-      ${searchCondition}
+      ${whereClause}
     `;
     
-    let params = [];
-    if (perPage) {
-      params = [perPage, offset];
-    }
-    if (search) {
-      params.push(`%${search}%`);
-    }
-    
     const [countResult, usersResult] = await Promise.all([
-      pool.query(countQuery, search ? [`%${search}%`] : []),
+      pool.query(countQuery, conditions.length ? [params[0]] : []),
       pool.query(usersQuery, params)
     ]);
     

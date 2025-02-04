@@ -10,26 +10,33 @@ router.get('/', authenticate, checkPermission('permissions.read'), async (req, r
   try {
     let { 
       page = 1, 
-      perPage = 10, 
-      search = '',
+      perPage = 10,
       sortBy = 'name',
-      descending = false 
+      descending = false,
+      search = '' 
     } = req.query;
 
-    // Обробка perPage=All
     if (perPage === 'All') {
       perPage = null;
     } else {
       perPage = parseInt(perPage);
       page = parseInt(page);
     }
-
+    
     const offset = perPage ? (page - 1) * perPage : 0;
     const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
     
-    const searchCondition = search 
-      ? `WHERE (p.name ILIKE $3 OR p.code ILIKE $3)`
-      : '';
+    let conditions = [];
+    let params = [];
+    let paramIndex = 1;
+
+    if (search) {
+      conditions.push(`(p.name ILIKE $${paramIndex} OR p.code ILIKE $${paramIndex})`);
+      params.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
     
     let permissionsQuery = `
       SELECT 
@@ -42,27 +49,23 @@ router.get('/', authenticate, checkPermission('permissions.read'), async (req, r
         p.updated_at
       FROM permissions p
       LEFT JOIN permission_groups pg ON p.group_id = pg.id
-      ${searchCondition}
+      ${whereClause}
       ORDER BY p.${sortBy} ${orderDirection}
-      ${perPage ? 'LIMIT $1 OFFSET $2' : ''}
     `;
     
-    let params = [];
     if (perPage) {
-      params = [perPage, offset];
-    }
-    if (search) {
-      params.push(`%${search}%`);
+      permissionsQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      params.push(perPage, offset);
     }
     
     const countQuery = `
       SELECT COUNT(*) 
       FROM permissions p
-      ${searchCondition}
+      ${whereClause}
     `;
     
     const [countResult, permissionsResult] = await Promise.all([
-      pool.query(countQuery, search ? [`%${search}%`] : []),
+      pool.query(countQuery, conditions.length ? [params[0]] : []),
       pool.query(permissionsQuery, params)
     ]);
 

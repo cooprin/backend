@@ -85,14 +85,17 @@ router.get('/', authenticate, checkPermission('roles.read'), async (req, res) =>
     const offset = perPage ? (page - 1) * perPage : 0;
     const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
     
-    const searchCondition = search 
-      ? `WHERE r.name ILIKE $1 OR r.description ILIKE $1`
-      : '';
-    
+    let conditions = [];
     let params = [];
+    let paramIndex = 1;
+
     if (search) {
+      conditions.push(`(r.name ILIKE $${paramIndex} OR r.description ILIKE $${paramIndex})`);
       params.push(`%${search}%`);
+      paramIndex++;
     }
+
+    const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
     
     let rolesQuery = `
       SELECT 
@@ -108,24 +111,24 @@ router.get('/', authenticate, checkPermission('roles.read'), async (req, res) =>
       LEFT JOIN role_permissions rp ON r.id = rp.role_id
       LEFT JOIN permissions p ON rp.permission_id = p.id
       LEFT JOIN user_roles ur ON r.id = ur.role_id
-      ${searchCondition}
+      ${whereClause}
       GROUP BY r.id
       ORDER BY r.${sortBy} ${orderDirection}
     `;
     
     if (perPage) {
-      rolesQuery += ' LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
+      rolesQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
       params.push(perPage, offset);
     }
     
     const countQuery = `
       SELECT COUNT(*)
       FROM roles r
-      ${searchCondition}
+      ${whereClause}
     `;
     
     const [countResult, rolesResult] = await Promise.all([
-      pool.query(countQuery, search ? [`%${search}%`] : []),
+      pool.query(countQuery, conditions.length ? [params[0]] : []),
       pool.query(rolesQuery, params)
     ]);
 

@@ -16,7 +16,6 @@ router.get('/', authenticate, checkPermission('resources.read'), async (req, res
         search = '' 
       } = req.query;
   
-      // Обробка perPage=All
       if (perPage === 'All') {
         perPage = null;
       } else {
@@ -27,37 +26,40 @@ router.get('/', authenticate, checkPermission('resources.read'), async (req, res
       const offset = perPage ? (page - 1) * perPage : 0;
       const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
       
-      const searchCondition = search 
-        ? 'WHERE name ILIKE $1 OR code ILIKE $1 OR type ILIKE $1'
-        : '';
-      
+      let conditions = [];
       let params = [];
+      let paramIndex = 1;
+  
       if (search) {
+        conditions.push(`(r.name ILIKE $${paramIndex} OR r.code ILIKE $${paramIndex} OR r.type ILIKE $${paramIndex})`);
         params.push(`%${search}%`);
+        paramIndex++;
       }
+  
+      const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
       
       let resourcesQuery = `
         SELECT 
           r.*,
           (SELECT COUNT(*) FROM resource_actions ra WHERE ra.resource_id = r.id) as actions_count
         FROM resources r
-        ${searchCondition}
-        ORDER BY ${sortBy} ${orderDirection}
+        ${whereClause}
+        ORDER BY r.${sortBy} ${orderDirection}
       `;
       
       if (perPage) {
-        resourcesQuery += ' LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
+        resourcesQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
         params.push(perPage, offset);
       }
       
       const countQuery = `
         SELECT COUNT(*) 
-        FROM resources
-        ${searchCondition}
+        FROM resources r
+        ${whereClause}
       `;
       
       const [countResult, resourcesResult] = await Promise.all([
-        pool.query(countQuery, search ? [`%${search}%`] : []),
+        pool.query(countQuery, conditions.length ? [params[0]] : []),
         pool.query(resourcesQuery, params)
       ]);
   
