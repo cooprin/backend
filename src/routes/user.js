@@ -32,19 +32,19 @@ router.get('/', authenticate, checkPermission('users.read'), async (req, res) =>
     const offset = perPage ? (page - 1) * perPage : 0;
     const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
     
-    let conditions = [];
     let params = [];
     let paramIndex = 1;
+    
+    const searchCondition = search 
+      ? `WHERE u.first_name ILIKE $${paramIndex} OR u.last_name ILIKE $${paramIndex} OR u.email ILIKE $${paramIndex}`
+      : '';
 
     if (search) {
-      conditions.push(`(u.first_name ILIKE $${paramIndex} OR u.last_name ILIKE $${paramIndex} OR u.email ILIKE $${paramIndex})`);
       params.push(`%${search}%`);
       paramIndex++;
     }
-
-    const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
     
-    const usersQuery = `
+    let usersQuery = `
       SELECT 
         u.*,
         array_agg(DISTINCT r.name) as roles,
@@ -55,7 +55,7 @@ router.get('/', authenticate, checkPermission('users.read'), async (req, res) =>
       FROM users u
       LEFT JOIN user_roles ur ON u.id = ur.user_id
       LEFT JOIN roles r ON ur.role_id = r.id
-      ${whereClause}
+      ${searchCondition}
       GROUP BY u.id
       ORDER BY u.${sortBy} ${orderDirection}
     `;
@@ -68,11 +68,11 @@ router.get('/', authenticate, checkPermission('users.read'), async (req, res) =>
     const countQuery = `
       SELECT COUNT(*) 
       FROM users u
-      ${whereClause}
+      ${searchCondition}
     `;
     
     const [countResult, usersResult] = await Promise.all([
-      pool.query(countQuery, conditions.length ? [params[0]] : []),
+      pool.query(countQuery, search ? params.slice(0, 1) : []),
       pool.query(usersQuery, params)
     ]);
     
@@ -95,7 +95,6 @@ router.get('/', authenticate, checkPermission('users.read'), async (req, res) =>
     });
   }
 });
-
 // Get roles
 router.get('/roles', authenticate, async (req, res) => {
  try {

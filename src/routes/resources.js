@@ -36,7 +36,7 @@ router.get('/', authenticate, checkPermission('resources.read'), async (req, res
         paramIndex++;
       }
   
-      const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+      const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
       
       let resourcesQuery = `
         SELECT 
@@ -59,7 +59,7 @@ router.get('/', authenticate, checkPermission('resources.read'), async (req, res
       `;
       
       const [countResult, resourcesResult] = await Promise.all([
-        pool.query(countQuery, conditions.length ? [params[0]] : []),
+        pool.query(countQuery, search ? [params[0]] : []),
         pool.query(resourcesQuery, params)
       ]);
   
