@@ -16,11 +16,10 @@ router.get('/', authenticate, checkPermission('users.read'), async (req, res) =>
   try {
     let { 
       page = 1, 
-      perPage = 10,
-      sortBy = 'last_name',
-      descending = false,
+      perPage = 10, 
       search = '',
-      roleId 
+      sortBy = 'last_name',
+      descending = false 
     } = req.query;
 
     // Обробка perPage=All
@@ -28,80 +27,58 @@ router.get('/', authenticate, checkPermission('users.read'), async (req, res) =>
       perPage = null;
     } else {
       perPage = parseInt(perPage);
+      page = parseInt(page);
     }
     
-    page = parseInt(page);
-    const offset = (page - 1) * (perPage || 0);
+    const offset = perPage ? (page - 1) * perPage : 0;
     const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
-
-    // Валідація sortBy
-    const allowedSortColumns = ['first_name', 'last_name', 'email', 'created_at', 'updated_at'];
-    if (!allowedSortColumns.includes(sortBy)) {
-      sortBy = 'last_name';
-    }
-
-    let conditions = [];
-    let params = [];
-    let paramIndex = 1;
-
-    if (search) {
-      conditions.push(`(
-        u.first_name ILIKE $${paramIndex} OR 
-        u.last_name ILIKE $${paramIndex} OR 
-        u.email ILIKE $${paramIndex}
-      )`);
-      params.push(`%${search}%`);
-      paramIndex++;
-    }
-
-    if (roleId) {
-      conditions.push(`EXISTS (
-        SELECT 1 FROM user_roles ur 
-        WHERE ur.user_id = u.id 
-        AND ur.role_id = $${paramIndex}
-      )`);
-      params.push(roleId);
-      paramIndex++;
-    }
-
-    const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-
+    
+    const searchCondition = search 
+      ? `WHERE u.first_name ILIKE $3 OR u.last_name ILIKE $3 OR u.email ILIKE $3`
+      : '';
+    
     const usersQuery = `
       SELECT 
         u.*,
-        array_remove(array_agg(DISTINCT r.name), null) as roles,
-        array_remove(array_agg(DISTINCT r.id), null) as role_ids
+        array_agg(DISTINCT r.name) as roles,
+        (SELECT name FROM roles r2 
+         JOIN user_roles ur2 ON r2.id = ur2.role_id 
+         WHERE ur2.user_id = u.id 
+         LIMIT 1) as role_name
       FROM users u
       LEFT JOIN user_roles ur ON u.id = ur.user_id
       LEFT JOIN roles r ON ur.role_id = r.id
-      ${whereClause}
+      ${searchCondition}
       GROUP BY u.id
       ORDER BY u.${sortBy} ${orderDirection}
+      ${perPage ? 'LIMIT $1 OFFSET $2' : ''}
     `;
-
+    
     const countQuery = `
-      SELECT COUNT(DISTINCT u.id)
+      SELECT COUNT(*) 
       FROM users u
-      ${whereClause}
+      ${searchCondition}
     `;
-
+    
+    let params = [];
     if (perPage) {
-      params.push(perPage, offset);
-      usersQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      params = [perPage, offset];
     }
-
+    if (search) {
+      params.push(`%${search}%`);
+    }
+    
     const [countResult, usersResult] = await Promise.all([
-      pool.query(countQuery, params.slice(0, paramIndex - 1)),
+      pool.query(countQuery, search ? [`%${search}%`] : []),
       pool.query(usersQuery, params)
     ]);
-
+    
     const users = usersResult.rows.map(user => ({
       ...user,
-      password: undefined,
-      roles: user.roles || [],
-      role_ids: user.role_ids || []
+      avatar_url: user.avatar_url ? `/uploads/avatars/${user.id}/${user.avatar_url}` : null,
+      roles: user.roles.filter(Boolean)
     }));
-
+    
     res.json({
       success: true,
       users,
