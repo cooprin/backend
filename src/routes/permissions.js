@@ -8,26 +8,20 @@ const { AuditService } = require('../services/auditService');
 // Get all permissions with pagination
 router.get('/', authenticate, checkPermission('permissions.read'), async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const perPage = parseInt(req.query.perPage) || 10;
-    const offset = (page - 1) * perPage;
-    const search = req.query.search || '';
-    const sortBy = req.query.sortBy || 'name';
-    const descending = req.query.descending === 'true';
+    let { page = 1, perPage = 10, sortBy = 'name', descending = false, search = '' } = req.query;
     
-    const orderDirection = descending ? 'DESC' : 'ASC';
+    // Convert perPage to number or null for 'All'
+    if (perPage === 'All') {
+      perPage = null;
+    } else {
+      perPage = parseInt(perPage);
+      page = parseInt(page);
+    }
     
-    const searchCondition = search 
-      ? `WHERE p.name ILIKE $3 OR p.code ILIKE $3`
-      : '';
+    const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
     
-    const countQuery = `
-      SELECT COUNT(*) 
-      FROM permissions p
-      ${searchCondition}
-    `;
-    
-    const permissionsQuery = `
+    // Base query without LIMIT/OFFSET
+    let permissionsQuery = `
       SELECT 
         p.id,
         p.name,
@@ -38,15 +32,36 @@ router.get('/', authenticate, checkPermission('permissions.read'), async (req, r
         p.updated_at
       FROM permissions p
       LEFT JOIN permission_groups pg ON p.group_id = pg.id
-      ${searchCondition}
-      ORDER BY p.${sortBy} ${orderDirection}
-      LIMIT $1 OFFSET $2
     `;
     
-    const params = [perPage, offset];
+    const params = [];
+    let paramCounter = 1;
+    
+    // Add search condition if search parameter exists
     if (search) {
+      permissionsQuery += `
+        WHERE (p.name ILIKE $${paramCounter} OR p.code ILIKE $${paramCounter})
+      `;
       params.push(`%${search}%`);
+      paramCounter++;
     }
+    
+    // Add ordering
+    permissionsQuery += ` ORDER BY p.${sortBy} ${orderDirection}`;
+    
+    // Add pagination if perPage is not null
+    if (perPage !== null) {
+      const offset = (page - 1) * perPage;
+      permissionsQuery += ` LIMIT $${paramCounter} OFFSET $${paramCounter + 1}`;
+      params.push(perPage, offset);
+    }
+    
+    // Count total records (without pagination)
+    const countQuery = `
+      SELECT COUNT(*) 
+      FROM permissions p
+      ${search ? 'WHERE (p.name ILIKE $1 OR p.code ILIKE $1)' : ''}
+    `;
     
     const [countResult, permissionsResult] = await Promise.all([
       pool.query(countQuery, search ? [`%${search}%`] : []),
@@ -54,6 +69,7 @@ router.get('/', authenticate, checkPermission('permissions.read'), async (req, r
     ]);
 
     res.json({
+      success: true,
       permissions: permissionsResult.rows,
       total: parseInt(countResult.rows[0].count)
     });
