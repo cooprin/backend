@@ -8,26 +8,30 @@ const { AuditService } = require('../services/auditService');
 // Get all permissions with pagination
 router.get('/', authenticate, checkPermission('permissions.read'), async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const perPage = parseInt(req.query.perPage) || 10;
-    const offset = (page - 1) * perPage;
-    const search = req.query.search || '';
-    const sortBy = req.query.sortBy || 'name';
-    const descending = req.query.descending === 'true';
-    
-    const orderDirection = descending ? 'DESC' : 'ASC';
+    let { 
+      page = 1, 
+      perPage = 10, 
+      search = '',
+      sortBy = 'name',
+      descending = false 
+    } = req.query;
+
+    // Обробка perPage=All
+    if (perPage === 'All') {
+      perPage = null;
+    } else {
+      perPage = parseInt(perPage);
+      page = parseInt(page);
+    }
+
+    const offset = perPage ? (page - 1) * perPage : 0;
+    const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
     
     const searchCondition = search 
-      ? `WHERE p.name ILIKE $3 OR p.code ILIKE $3`
+      ? `WHERE (p.name ILIKE $3 OR p.code ILIKE $3)`
       : '';
     
-    const countQuery = `
-      SELECT COUNT(*) 
-      FROM permissions p
-      ${searchCondition}
-    `;
-    
-    const permissionsQuery = `
+    let permissionsQuery = `
       SELECT 
         p.id,
         p.name,
@@ -40,13 +44,22 @@ router.get('/', authenticate, checkPermission('permissions.read'), async (req, r
       LEFT JOIN permission_groups pg ON p.group_id = pg.id
       ${searchCondition}
       ORDER BY p.${sortBy} ${orderDirection}
-      LIMIT $1 OFFSET $2
+      ${perPage ? 'LIMIT $1 OFFSET $2' : ''}
     `;
     
-    const params = [perPage, offset];
+    let params = [];
+    if (perPage) {
+      params = [perPage, offset];
+    }
     if (search) {
       params.push(`%${search}%`);
     }
+    
+    const countQuery = `
+      SELECT COUNT(*) 
+      FROM permissions p
+      ${searchCondition}
+    `;
     
     const [countResult, permissionsResult] = await Promise.all([
       pool.query(countQuery, search ? [`%${search}%`] : []),
@@ -54,6 +67,7 @@ router.get('/', authenticate, checkPermission('permissions.read'), async (req, r
     ]);
 
     res.json({
+      success: true,
       permissions: permissionsResult.rows,
       total: parseInt(countResult.rows[0].count)
     });
