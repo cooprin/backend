@@ -41,8 +41,8 @@ router.get('/', authenticate, checkPermission('resources.read'), async (req, res
       let resourcesQuery = `
         SELECT 
           r.*,
-          (SELECT COUNT(*) FROM resource_actions ra WHERE ra.resource_id = r.id) as actions_count
-        FROM resources r
+          (SELECT COUNT(*) FROM core.resource_actions ra WHERE ra.resource_id = r.id) as actions_count
+        FROM core.resources r
         ${whereClause}
         ORDER BY r.${sortBy} ${orderDirection}
       `;
@@ -54,7 +54,7 @@ router.get('/', authenticate, checkPermission('resources.read'), async (req, res
       
       const countQuery = `
         SELECT COUNT(*) 
-        FROM resources r
+        FROM core.resources r
         ${whereClause}
       `;
       
@@ -91,8 +91,8 @@ router.get('/:id/actions', authenticate, checkPermission('resources.read'), asyn
         a.code,
         a.description,
         ra.is_default
-      FROM actions a
-      LEFT JOIN resource_actions ra ON a.id = ra.action_id AND ra.resource_id = $1
+      FROM core.actions a
+      LEFT JOIN core.resource_actions ra ON a.id = ra.action_id AND ra.resource_id = $1
       ORDER BY a.name
     `, [id]);
     
@@ -119,7 +119,7 @@ router.post('/', authenticate, checkPermission('resources.create'), async (req, 
 
     // Перевірка на унікальність коду
     const existing = await client.query(
-      'SELECT id FROM resources WHERE code = $1',
+      'SELECT id FROM core.resources WHERE code = $1',
       [code]
     );
 
@@ -131,7 +131,7 @@ router.post('/', authenticate, checkPermission('resources.create'), async (req, 
     }
 
     const result = await client.query(
-      `INSERT INTO resources (name, code, type, metadata)
+      `INSERT INTO core.resources (name, code, type, metadata)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
       [name, code, type, metadata]
@@ -172,7 +172,7 @@ router.put('/:id', authenticate, checkPermission('resources.update'), async (req
     const { name, metadata = {} } = req.body;
 
     const oldData = await client.query(
-      'SELECT * FROM resources WHERE id = $1',
+      'SELECT * FROM core.resources WHERE id = $1',
       [id]
     );
 
@@ -186,7 +186,7 @@ router.put('/:id', authenticate, checkPermission('resources.update'), async (req
     await client.query('BEGIN');
 
     const result = await client.query(
-      `UPDATE resources 
+      `UPDATE core.resources 
        SET name = $1, 
            metadata = $2,
            updated_at = CURRENT_TIMESTAMP
@@ -234,7 +234,7 @@ router.put('/:id/actions', authenticate, checkPermission('resources.manage'), as
 
     // Видаляємо старі зв'язки
     await client.query(
-      'DELETE FROM resource_actions WHERE resource_id = $1',
+      'DELETE FROM core.resource_actions WHERE resource_id = $1',
       [id]
     );
 
@@ -245,7 +245,7 @@ router.put('/:id/actions', authenticate, checkPermission('resources.manage'), as
       ).join(',');
 
       await client.query(`
-        INSERT INTO resource_actions (resource_id, action_id, is_default)
+        INSERT INTO core.resource_actions (resource_id, action_id, is_default)
         VALUES ${values}
       `);
     }
@@ -284,7 +284,7 @@ router.delete('/:id', authenticate, checkPermission('resources.delete'), async (
     const { id } = req.params;
 
     const resourceData = await client.query(
-      'SELECT * FROM resources WHERE id = $1',
+      'SELECT * FROM core.resources WHERE id = $1',
       [id]
     );
 
@@ -297,7 +297,7 @@ router.delete('/:id', authenticate, checkPermission('resources.delete'), async (
 
     await client.query('BEGIN');
 
-    await client.query('DELETE FROM resources WHERE id = $1', [id]);
+    await client.query('DELETE FROM core.resources WHERE id = $1', [id]);
 
     await AuditService.log({
       userId: req.user.userId,

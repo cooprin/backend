@@ -52,9 +52,9 @@ router.get('/', authenticate, checkPermission('users.read'), async (req, res) =>
          JOIN user_roles ur2 ON r2.id = ur2.role_id 
          WHERE ur2.user_id = u.id 
          LIMIT 1) as role_name
-      FROM users u
-      LEFT JOIN user_roles ur ON u.id = ur.user_id
-      LEFT JOIN roles r ON ur.role_id = r.id
+      FROM auth.users u
+      LEFT JOIN auth.user_roles ur ON u.id = ur.user_id
+      LEFT JOIN auth.roles r ON ur.role_id = r.id
       ${searchCondition}
       GROUP BY u.id
       ORDER BY u.${sortBy} ${orderDirection}
@@ -67,7 +67,7 @@ router.get('/', authenticate, checkPermission('users.read'), async (req, res) =>
     
     const countQuery = `
       SELECT COUNT(*) 
-      FROM users u
+      FROM auth.users u
       ${searchCondition}
     `;
     
@@ -99,7 +99,7 @@ router.get('/', authenticate, checkPermission('users.read'), async (req, res) =>
 router.get('/roles', authenticate, async (req, res) => {
  try {
    const { rows } = await pool.query(
-     'SELECT id, name, description FROM roles ORDER BY name'
+     'SELECT id, name, description FROM auth.roles ORDER BY name'
    );
    
    res.json({
@@ -124,7 +124,7 @@ router.post('/', authenticate, checkPermission('users.create'), async (req, res)
    const { email, password, first_name, last_name, phone, is_active, role_id } = req.body;
    
    const existingUser = await client.query(
-     'SELECT id FROM users WHERE email = $1',
+     'SELECT id FROM auth.users WHERE email = $1',
      [email]
    );
    
@@ -139,7 +139,7 @@ router.post('/', authenticate, checkPermission('users.create'), async (req, res)
    const hashedPassword = await bcrypt.hash(password, salt);
    
    const userResult = await client.query(
-     `INSERT INTO users (
+     `INSERT INTO auth.users (
        email, password, first_name, last_name, phone, is_active, 
        created_at, updated_at
      )
@@ -151,7 +151,7 @@ router.post('/', authenticate, checkPermission('users.create'), async (req, res)
    // Додаємо роль
    if (role_id) {
      await client.query(
-       `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)`,
+       `INSERT INTO auth.user_roles (user_id, role_id) VALUES ($1, $2)`,
        [userResult.rows[0].id, role_id]
      );
    }
@@ -193,13 +193,13 @@ router.put('/:id', authenticate, checkPermission('users.update'), async (req, re
    const { email, first_name, last_name, phone, role_id, is_active } = req.body;
    
    const oldUserData = await client.query(
-     'SELECT * FROM users WHERE id = $1',
+     'SELECT * FROM auth.users WHERE id = $1',
      [id]
    );
 
    if (email) {
      const existingUser = await client.query(
-       'SELECT id FROM users WHERE email = $1 AND id != $2',
+       'SELECT id FROM auth.users WHERE email = $1 AND id != $2',
        [email, id]
      );
      if (existingUser.rows.length > 0) {
@@ -211,7 +211,7 @@ router.put('/:id', authenticate, checkPermission('users.update'), async (req, re
    }
 
    const userResult = await client.query(
-     `UPDATE users 
+     `UPDATE auth.users 
       SET email = COALESCE($1, email),
           first_name = COALESCE($2, first_name),
           last_name = COALESCE($3, last_name),
@@ -233,9 +233,9 @@ router.put('/:id', authenticate, checkPermission('users.update'), async (req, re
 
    // Оновлюємо роль
    if (role_id) {
-     await client.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
+     await client.query('DELETE FROM auth.user_roles WHERE user_id = $1', [id]);
      await client.query(
-       'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)',
+       'INSERT INTO auth.user_roles (user_id, role_id) VALUES ($1, $2)',
        [id, role_id]
      );
    }
@@ -255,9 +255,9 @@ router.put('/:id', authenticate, checkPermission('users.update'), async (req, re
    // Отримуємо оновлені дані користувача з роллю
    const updatedUser = await pool.query(`
      SELECT u.*, r.name as role_name
-     FROM users u
-     LEFT JOIN user_roles ur ON u.id = ur.user_id
-     LEFT JOIN roles r ON ur.role_id = r.id
+     FROM auth.users u
+     LEFT JOIN auth.user_roles ur ON u.id = ur.user_id
+     LEFT JOIN auth.roles r ON ur.role_id = r.id
      WHERE u.id = $1
    `, [id]);
 
@@ -297,7 +297,7 @@ router.delete('/:id', authenticate, checkPermission('users.delete'), async (req,
 
     // Отримуємо дані користувача для аудиту
     const userData = await client.query(
-      'SELECT * FROM users WHERE id = $1',
+      'SELECT * FROM auth.users WHERE id = $1',
       [id]
     );
 
@@ -311,7 +311,7 @@ router.delete('/:id', authenticate, checkPermission('users.delete'), async (req,
 
     // Перевіряємо наявність записів в аудиті
     const auditRecords = await client.query(
-      'SELECT COUNT(*) FROM audit_logs WHERE entity_type = $1 AND entity_id = $2',
+      'SELECT COUNT(*) FROM audit.audit_logs WHERE entity_type = $1 AND entity_id = $2',
       ['USER', id]
     );
 
@@ -329,26 +329,26 @@ router.delete('/:id', authenticate, checkPermission('users.delete'), async (req,
     if (force) {
       // Видаляємо записи аудиту для цього користувача
       await client.query(
-        'DELETE FROM audit_logs WHERE entity_type = $1 AND entity_id = $2',
+        'DELETE FROM audit.audit_logs WHERE entity_type = $1 AND entity_id = $2',
         ['USER', id]
       );
       
       // Видаляємо записи аудиту, де цей користувач був ініціатором
       await client.query(
-        'DELETE FROM audit_logs WHERE user_id = $1',
+        'DELETE FROM audit.audit_logs WHERE user_id = $1',
         [id]
       );
     }
 
     // Видаляємо зв'язки з ролями
     await client.query(
-      'DELETE FROM user_roles WHERE user_id = $1',
+      'DELETE FROM  auth.user_roles WHERE user_id = $1',
       [id]
     );
 
     // Видаляємо користувача
     const { rows } = await client.query(
-      'DELETE FROM users WHERE id = $1 RETURNING id',
+      'DELETE FROM  auth.users WHERE id = $1 RETURNING id',
       [id]
     );
 
@@ -391,7 +391,7 @@ router.put('/:id/password', authenticate, checkPermission('users.update'), async
     
     // Get old user data for audit
     const oldUserData = await client.query(
-      'SELECT * FROM users WHERE id = $1',
+      'SELECT * FROM  auth.users WHERE id = $1',
       [id]
     );
 
@@ -409,7 +409,7 @@ router.put('/:id/password', authenticate, checkPermission('users.update'), async
     
     // Update password
     await client.query(
-      `UPDATE users 
+      `UPDATE  auth.users 
        SET password = $1,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $2`,
@@ -464,7 +464,7 @@ router.put('/:id/status', authenticate, checkPermission('users.update'), async (
     
     // Get old user data for audit
     const oldUserData = await client.query(
-      'SELECT * FROM users WHERE id = $1',
+      'SELECT * FROM  auth.users WHERE id = $1',
       [id]
     );
 
@@ -478,7 +478,7 @@ router.put('/:id/status', authenticate, checkPermission('users.update'), async (
 
     // Update user status
     const userResult = await client.query(
-      `UPDATE users 
+      `UPDATE  auth.users 
        SET is_active = $1,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $2

@@ -14,8 +14,8 @@ router.get('/permissions', authenticate, checkPermission('roles.read'), async (r
        p.name,
        p.code,
        pg.name as group
-     FROM permissions p
-     LEFT JOIN permission_groups pg ON p.group_id = pg.id
+     FROM auth.permissions p
+     LEFT JOIN auth.permission_groups pg ON p.group_id = pg.id
      ORDER BY pg.name, p.name
    `;
    
@@ -44,8 +44,8 @@ router.get('/:id/permissions', authenticate, checkPermission('roles.read'), asyn
        p.id,
        p.name,
        p.code
-     FROM permissions p
-     JOIN role_permissions rp ON p.id = rp.permission_id
+     FROM auth.permissions p
+     JOIN auth.role_permissions rp ON p.id = rp.permission_id
      WHERE rp.role_id = $1
    `;
    
@@ -107,10 +107,10 @@ router.get('/', authenticate, checkPermission('roles.read'), async (req, res) =>
         r.updated_at,
         array_agg(DISTINCT p.code) as permission_codes,
         COUNT(DISTINCT ur.user_id) as users_count
-      FROM roles r
-      LEFT JOIN role_permissions rp ON r.id = rp.role_id
-      LEFT JOIN permissions p ON rp.permission_id = p.id
-      LEFT JOIN user_roles ur ON r.id = ur.role_id
+      FROM auth.roles r
+      LEFT JOIN auth.role_permissions rp ON r.id = rp.role_id
+      LEFT JOIN auth.permissions p ON rp.permission_id = p.id
+      LEFT JOIN auth.user_roles ur ON r.id = ur.role_id
       ${whereClause}
       GROUP BY r.id
       ORDER BY r.${sortBy} ${orderDirection}
@@ -123,7 +123,7 @@ router.get('/', authenticate, checkPermission('roles.read'), async (req, res) =>
     
     const countQuery = `
       SELECT COUNT(*)
-      FROM roles r
+      FROM auth.roles r
       ${whereClause}
     `;
     
@@ -157,7 +157,7 @@ router.post('/', authenticate, checkPermission('roles.create'), async (req, res)
    
    // Перевірка існування ролі
    const existingRole = await client.query(
-     'SELECT id FROM roles WHERE name = $1',
+     'SELECT id FROM auth.roles WHERE name = $1',
      [name]
    );
    
@@ -172,7 +172,7 @@ router.post('/', authenticate, checkPermission('roles.create'), async (req, res)
    
    // Створення ролі
    const roleResult = await client.query(
-     `INSERT INTO roles (name, description, created_at, updated_at)
+     `INSERT INTO auth.roles (name, description, created_at, updated_at)
       VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       RETURNING id, name, description, created_at, updated_at, is_system`,
      [name, description]
@@ -185,7 +185,7 @@ router.post('/', authenticate, checkPermission('roles.create'), async (req, res)
      ).join(',');
 
      await client.query(`
-       INSERT INTO role_permissions (role_id, permission_id)
+       INSERT INTO auth.role_permissions (role_id, permission_id)
        VALUES ${permissionValues}
      `);
    }
@@ -206,9 +206,9 @@ router.post('/', authenticate, checkPermission('roles.create'), async (req, res)
      SELECT 
        r.*,
        array_agg(DISTINCT p.code) as permission_codes
-     FROM roles r
-     LEFT JOIN role_permissions rp ON r.id = rp.role_id
-     LEFT JOIN permissions p ON rp.permission_id = p.id
+     FROM auth.roles r
+     LEFT JOIN auth.role_permissions rp ON r.id = rp.role_id
+     LEFT JOIN auth.permissions p ON rp.permission_id = p.id
      WHERE r.id = $1
      GROUP BY r.id
    `, [roleResult.rows[0].id]);
@@ -249,9 +249,9 @@ router.put('/:id', authenticate, checkPermission('roles.update'), async (req, re
    // Отримуємо поточні дані ролі
    const currentRole = await client.query(
      `SELECT r.*, array_agg(p.id) as permission_ids
-      FROM roles r
-      LEFT JOIN role_permissions rp ON r.id = rp.role_id
-      LEFT JOIN permissions p ON rp.permission_id = p.id
+      FROM auth.roles r
+      LEFT JOIN auth.role_permissions rp ON r.id = rp.role_id
+      LEFT JOIN auth.permissions p ON rp.permission_id = p.id
       WHERE r.id = $1
       GROUP BY r.id`,
      [id]
@@ -274,7 +274,7 @@ router.put('/:id', authenticate, checkPermission('roles.update'), async (req, re
    // Перевірка унікальності імені
    if (name !== currentRole.rows[0].name) {
      const existingRole = await client.query(
-       'SELECT id FROM roles WHERE name = $1 AND id != $2',
+       'SELECT id FROM auth.roles WHERE name = $1 AND id != $2',
        [name, id]
      );
      if (existingRole.rows.length > 0) {
@@ -289,7 +289,7 @@ router.put('/:id', authenticate, checkPermission('roles.update'), async (req, re
    
    // Оновлення ролі
    const roleResult = await client.query(
-     `UPDATE roles 
+     `UPDATE auth.roles 
       SET name = $1,
           description = $2,
           updated_at = CURRENT_TIMESTAMP
@@ -299,7 +299,7 @@ router.put('/:id', authenticate, checkPermission('roles.update'), async (req, re
    );
 
    // Оновлення прав
-   await client.query('DELETE FROM role_permissions WHERE role_id = $1', [id]);
+   await client.query('DELETE FROM auth.role_permissions WHERE role_id = $1', [id]);
    
    if (permissions && permissions.length > 0) {
      const permissionValues = permissions.map(permId => 
@@ -307,7 +307,7 @@ router.put('/:id', authenticate, checkPermission('roles.update'), async (req, re
      ).join(',');
 
      await client.query(`
-       INSERT INTO role_permissions (role_id, permission_id)
+       INSERT INTO auth.role_permissions (role_id, permission_id)
        VALUES ${permissionValues}
      `);
    }
@@ -333,9 +333,9 @@ router.put('/:id', authenticate, checkPermission('roles.update'), async (req, re
      SELECT 
        r.*,
        array_agg(DISTINCT p.code) as permission_codes
-     FROM roles r
-     LEFT JOIN role_permissions rp ON r.id = rp.role_id
-     LEFT JOIN permissions p ON rp.permission_id = p.id
+     FROM auth.roles r
+     LEFT JOIN auth.role_permissions rp ON r.id = rp.role_id
+     LEFT JOIN auth.permissions p ON rp.permission_id = p.id
      WHERE r.id = $1
      GROUP BY r.id
    `, [id]);
@@ -373,7 +373,7 @@ router.delete('/:id', authenticate, checkPermission('roles.delete'), async (req,
    const { id } = req.params;
 
    const roleData = await pool.query(
-     'SELECT * FROM roles WHERE id = $1',
+     'SELECT * FROM auth.roles WHERE id = $1',
      [id]
    );
 
@@ -392,7 +392,7 @@ router.delete('/:id', authenticate, checkPermission('roles.delete'), async (req,
    }
 
    const usersWithRole = await pool.query(
-     'SELECT COUNT(*) FROM user_roles WHERE role_id = $1',
+     'SELECT COUNT(*) FROM auth.user_roles WHERE role_id = $1',
      [id]
    );
    
@@ -413,7 +413,7 @@ router.delete('/:id', authenticate, checkPermission('roles.delete'), async (req,
    }
    
    const { rows } = await pool.query(
-     'DELETE FROM roles WHERE id = $1 RETURNING id',
+     'DELETE FROM auth.roles WHERE id = $1 RETURNING id',
      [id]
    );
    

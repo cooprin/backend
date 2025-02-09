@@ -30,7 +30,7 @@ class AuditService {
     static async log({ userId, actionType, entityType, entityId, oldValues = null, newValues = null, ipAddress }) {
         try {
             const { rows } = await pool.query(
-                `INSERT INTO audit_logs 
+                `INSERT INTO audit.audit_logs 
                 (user_id, action_type, entity_type, entity_id, old_values, new_values, ip_address)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                 RETURNING id`,

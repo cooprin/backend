@@ -54,12 +54,12 @@ const storage = multer.diskStorage({
    
        // Отримуємо старі дані для логування
        const oldUserData = await pool.query(
-         'SELECT first_name, last_name, phone FROM users WHERE id = $1',
+         'SELECT first_name, last_name, phone FROM auth.users WHERE id = $1',
          [userId]
        );
    
        const { rows } = await pool.query(
-         `UPDATE users 
+         `UPDATE auth.users 
           SET first_name = COALESCE($1, first_name),
               last_name = COALESCE($2, last_name),
               phone = COALESCE($3, phone),
@@ -120,7 +120,7 @@ const storage = multer.diskStorage({
    
        // Get current user's password hash
        const { rows } = await pool.query(
-         'SELECT password FROM users WHERE id = $1',
+         'SELECT password FROM auth.users WHERE id = $1',
          [userId]
        );
    
@@ -154,7 +154,7 @@ const storage = multer.diskStorage({
    
        // Update password
        await pool.query(
-         'UPDATE users SET password = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+         'UPDATE auth.users SET password = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
          [hashedPassword, userId]
        );
    
@@ -204,7 +204,7 @@ router.post('/avatar', authenticate, upload.single('avatar'), async (req, res) =
 
       // Отримуємо інформацію про старий аватар
       const oldUser = await client.query(
-          'SELECT avatar_url FROM users WHERE id = $1',
+          'SELECT avatar_url FROM auth.users WHERE id = $1',
           [req.user.userId]
       );
 
@@ -223,7 +223,7 @@ router.post('/avatar', authenticate, upload.single('avatar'), async (req, res) =
       
       // Оновлюємо URL аватара в базі даних
       await client.query(
-          'UPDATE users SET avatar_url = $1 WHERE id = $2',
+          'UPDATE auth.users SET avatar_url = $1 WHERE id = $2',
           [avatarUrl, req.user.userId]
       );
 

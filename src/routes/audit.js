@@ -72,8 +72,8 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
 
         const countQuery = `
             SELECT COUNT(*)
-            FROM audit_logs al
-            LEFT JOIN users u ON al.user_id = u.id
+            FROM audit.audit_logs al
+            LEFT JOIN auth.users u ON al.user_id = u.id
             ${whereClause}
         `;
 
@@ -89,8 +89,8 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
                 al.ip_address,
                 al.created_at,
                 u.email as user_email
-            FROM audit_logs al
-            LEFT JOIN users u ON al.user_id = u.id
+            FROM audit.audit_logs al
+            LEFT JOIN auth.users u ON al.user_id = u.id
             ${whereClause}
             ORDER BY al.${sortBy} ${orderDirection}
         `;
@@ -129,14 +129,14 @@ router.get('/types', authenticate, checkPermission('audit.read'), async (req, re
     try {
         const actionTypesQuery = `
             SELECT DISTINCT action_type 
-            FROM audit_logs 
+            FROM audit.audit_logs 
             WHERE action_type IS NOT NULL
             ORDER BY action_type
         `;
 
         const entityTypesQuery = `
             SELECT DISTINCT entity_type 
-            FROM audit_logs 
+            FROM audit.audit_logs 
             WHERE entity_type IS NOT NULL
             ORDER BY entity_type
         `;

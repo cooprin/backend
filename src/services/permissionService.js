@@ -5,9 +5,9 @@ class PermissionService {
   static async getUserPermissions(userId) {
     const query = `
       SELECT DISTINCT p.code
-      FROM permissions p
-      JOIN role_permissions rp ON p.id = rp.permission_id
-      JOIN user_roles ur ON rp.role_id = ur.role_id
+      FROM auth.permissions p
+      JOIN auth.role_permissions rp ON p.id = rp.permission_id
+      JOIN auth.user_roles ur ON rp.role_id = ur.role_id
       WHERE ur.user_id = $1
     `;
     
@@ -20,9 +20,9 @@ class PermissionService {
     const query = `
       SELECT EXISTS (
         SELECT 1
-        FROM permissions p
-        JOIN role_permissions rp ON p.id = rp.permission_id
-        JOIN user_roles ur ON rp.role_id = ur.role_id
+        FROM auth.permissions p
+        JOIN auth.role_permissions rp ON p.id = rp.permission_id
+        JOIN auth.user_roles ur ON rp.role_id = ur.role_id
         WHERE ur.user_id = $1 AND p.code = $2
       ) as has_permission
     `;

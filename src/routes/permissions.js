@@ -47,8 +47,8 @@ router.get('/', authenticate, checkPermission('permissions.read'), async (req, r
         pg.name as group_name,
         p.created_at,
         p.updated_at
-      FROM permissions p
-      LEFT JOIN permission_groups pg ON p.group_id = pg.id
+      FROM auth.permissions p
+      LEFT JOIN auth.permission_groups pg ON p.group_id = pg.id
       ${whereClause}
       ORDER BY p.${sortBy} ${orderDirection}
     `;
@@ -60,7 +60,7 @@ router.get('/', authenticate, checkPermission('permissions.read'), async (req, r
     
     const countQuery = `
       SELECT COUNT(*) 
-      FROM permissions p
+      FROM auth.permissions p
       ${whereClause}
     `;
     
@@ -87,7 +87,7 @@ router.get('/', authenticate, checkPermission('permissions.read'), async (req, r
 router.get('/groups', authenticate, checkPermission('permissions.read'), async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, name FROM permission_groups ORDER BY name'
+      'SELECT id, name FROM auth.permission_groups ORDER BY name'
     );
     
     res.json({
@@ -112,7 +112,7 @@ router.post('/', authenticate, checkPermission('permissions.create'), async (req
     await client.query('BEGIN');
 
     const result = await client.query(
-      `INSERT INTO permissions (name, code, group_id, created_at, updated_at)
+      `INSERT INTO auth.permissions (name, code, group_id, created_at, updated_at)
        VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
        RETURNING *`,
       [name, code, group_id]
@@ -153,7 +153,7 @@ router.put('/:id', authenticate, checkPermission('permissions.update'), async (r
     const { name, code, group_id } = req.body;
 
     const oldData = await client.query(
-      'SELECT * FROM permissions WHERE id = $1',
+      'SELECT * FROM auth.permissions WHERE id = $1',
       [id]
     );
 
@@ -167,7 +167,7 @@ router.put('/:id', authenticate, checkPermission('permissions.update'), async (r
     await client.query('BEGIN');
 
     const result = await client.query(
-      `UPDATE permissions 
+      `UPDATE auth.permissions 
        SET name = $1, 
            code = $2, 
            group_id = $3,
@@ -211,7 +211,7 @@ router.delete('/:id', authenticate, checkPermission('permissions.delete'), async
     const { id } = req.params;
 
     const permissionData = await pool.query(
-      'SELECT * FROM permissions WHERE id = $1',
+      'SELECT * FROM auth.permissions WHERE id = $1',
       [id]
     );
 
@@ -222,7 +222,7 @@ router.delete('/:id', authenticate, checkPermission('permissions.delete'), async
       });
     }
 
-    await pool.query('DELETE FROM permissions WHERE id = $1', [id]);
+    await pool.query('DELETE FROM auth.permissions WHERE id = $1', [id]);
 
     await AuditService.log({
       userId: req.user.userId,
@@ -254,7 +254,7 @@ router.post('/groups', authenticate, checkPermission('permissions.manage'), asyn
     await client.query('BEGIN')
 
     const result = await client.query(
-      `INSERT INTO permission_groups (name, description)
+      `INSERT INTO auth.permission_groups (name, description)
        VALUES ($1, $2)
        RETURNING *`,
       [name, description]
@@ -294,14 +294,14 @@ router.put('/groups/:id', authenticate, checkPermission('permissions.manage'), a
     const { name, description } = req.body
 
     const oldData = await client.query(
-      'SELECT * FROM permission_groups WHERE id = $1',
+      'SELECT * FROM auth.permission_groups WHERE id = $1',
       [id]
     )
 
     await client.query('BEGIN')
 
     const result = await client.query(
-      `UPDATE permission_groups 
+      `UPDATE auth.permission_groups 
        SET name = $1, 
            description = $2,
            updated_at = CURRENT_TIMESTAMP

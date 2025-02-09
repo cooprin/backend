@@ -13,7 +13,7 @@ router.post('/register', async (req, res) => {
     
     // Перевірка існування користувача
     const userCheck = await pool.query(
-      'SELECT * FROM users WHERE email = $1',
+      'SELECT * FROM auth.users WHERE email = $1',
       [email]
     );
 
@@ -27,7 +27,7 @@ router.post('/register', async (req, res) => {
 
     // Створення користувача
     const userResult = await pool.query(
-      `INSERT INTO users (email, password, first_name, last_name, phone) 
+      `INSERT INTO auth.users (email, password, first_name, last_name, phone) 
        VALUES ($1, $2, $3, $4, $5) 
        RETURNING id, email, first_name, last_name, phone`,
       [email, hashedPassword, first_name, last_name, phone]
@@ -37,7 +37,7 @@ router.post('/register', async (req, res) => {
 
     // Призначення ролі за замовчуванням (якщо потрібно)
     await pool.query(
-      `INSERT INTO user_roles (user_id, role_id)
+      `INSERT INTO auth.user_roles (user_id, role_id)
        SELECT $1, id FROM roles WHERE name = 'user'`,
       [user.id]
     );
@@ -73,11 +73,11 @@ router.post('/login', async (req, res) => {
         u.*,
         array_agg(DISTINCT r.name) as roles,
         array_agg(DISTINCT p.code) as permissions
-       FROM users u
-       LEFT JOIN user_roles ur ON u.id = ur.user_id
-       LEFT JOIN roles r ON ur.role_id = r.id
-       LEFT JOIN role_permissions rp ON r.id = rp.role_id
-       LEFT JOIN permissions p ON rp.permission_id = p.id
+       FROM auth.users u
+       LEFT JOIN auth.user_roles ur ON u.id = ur.user_id
+       LEFT JOIN auth.roles r ON ur.role_id = r.id
+       LEFT JOIN auth.role_permissions rp ON r.id = rp.role_id
+       LEFT JOIN auth.permissions p ON rp.permission_id = p.id
        WHERE u.email = $1
        GROUP BY u.id`,
       [email]
@@ -123,7 +123,7 @@ router.post('/login', async (req, res) => {
 
     // Оновлення часу останнього входу
     await pool.query(
-      'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
+      'UPDATE auth.users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
       [user.id]
     );
 
@@ -183,11 +183,11 @@ router.get('/me', authenticate, async (req, res) => {
         u.last_login,
         array_agg(DISTINCT r.name) as roles,
         array_agg(DISTINCT p.code) as permissions
-       FROM users u 
-       LEFT JOIN user_roles ur ON u.id = ur.user_id
-       LEFT JOIN roles r ON ur.role_id = r.id
-       LEFT JOIN role_permissions rp ON r.id = rp.role_id
-       LEFT JOIN permissions p ON rp.permission_id = p.id
+       FROM auth.users u 
+       LEFT JOIN auth.user_roles ur ON u.id = ur.user_id
+       LEFT JOIN auth.roles r ON ur.role_id = r.id
+       LEFT JOIN auth.role_permissions rp ON r.id = rp.role_id
+       LEFT JOIN auth.permissions p ON rp.permission_id = p.id
        WHERE u.id = $1
        GROUP BY u.id`,
       [req.user.userId]
