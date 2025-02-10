@@ -3,7 +3,7 @@ const router = express.Router();
 const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { checkPermission, checkMultiplePermissions } = require('../middleware/checkPermission');
-const { AuditService } = require('../services/auditService');
+const AuditService = require('../services/auditService');
 const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
 
 // Get all permissions with pagination

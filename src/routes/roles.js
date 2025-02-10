@@ -1,6 +1,6 @@
 const express = require('express');
 const { pool } = require('../database');
-const { AuditService } = require('../services/auditService');
+const AuditService = require('../services/auditService');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
 const { checkPermission, checkMultiplePermissions } = require('../middleware/checkPermission');

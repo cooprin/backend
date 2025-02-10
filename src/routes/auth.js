@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../database');
-const { AuditService } = require('../services/auditService');
+const AuditService = require('../services/auditService');
 const authenticate = require('../middleware/auth');
 const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
 
