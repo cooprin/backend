@@ -48,8 +48,8 @@ router.get('/', authenticate, checkPermission('users.read'), async (req, res) =>
       SELECT 
         u.*,
         array_agg(DISTINCT r.name) as roles,
-        (SELECT name FROM roles r2 
-         JOIN user_roles ur2 ON r2.id = ur2.role_id 
+        (SELECT name FROM auth.roles r2 
+         JOIN auth.user_roles ur2 ON r2.id = ur2.role_id 
          WHERE ur2.user_id = u.id 
          LIMIT 1) as role_name
       FROM auth.users u
