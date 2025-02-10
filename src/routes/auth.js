@@ -118,7 +118,7 @@ router.post('/login', async (req, res) => {
         actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
         entityType: ENTITY_TYPES.USER,
         entityId: user.id,
-        newValues: { email, reason: 'Account inactive' },
+        newValues: { email, reason: 'Invalid password' },
         ipAddress: req.ip,
         auditType: AUDIT_TYPES.BUSINESS
       });

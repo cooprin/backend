@@ -99,16 +99,6 @@ const storage = multer.diskStorage({
        });
      } catch (error) {
        console.error('Error updating profile:', error);
-       // Логуємо помилку
-       await AuditService.log({
-        userId: req.user.userId,
-        actionType: AUDIT_LOG_TYPES.SYSTEM.ERROR,
-        entityType: ENTITY_TYPES.USER,
-        entityId: req.user.userId,
-        ipAddress: req.ip,
-        newValues: { error: error.message },
-        auditType: AUDIT_TYPES.SYSTEM
-      });
        res.status(500).json({ 
          success: false,
          message: 'Server error while updating profile' 
@@ -179,16 +169,6 @@ const storage = multer.diskStorage({
        });
      } catch (error) {
        console.error('Error changing password:', error);
-       // Логуємо помилку
-       await AuditService.log({
-        userId: req.user.userId,
-        actionType: AUDIT_LOG_TYPES.SYSTEM.ERROR,
-        entityType: ENTITY_TYPES.USER,
-        entityId: req.user.userId,
-        ipAddress: req.ip,
-        newValues: { error: error.message },
-        auditType: AUDIT_TYPES.SYSTEM
-      });
        res.status(500).json({
          success: false,
          message: 'Server error while changing password'
