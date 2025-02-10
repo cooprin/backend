@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const { pool } = require('../database');
 const { AuditService } = require('../services/auditService');
 const authenticate = require('../middleware/auth');
-const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants');
+const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
 
 // Register
 router.post('/register', async (req, res) => {
