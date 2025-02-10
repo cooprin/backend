@@ -8,7 +8,7 @@ const { AuditService } = require('../services/auditService');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
 const { checkPermission, checkMultiplePermissions } = require('../middleware/checkPermission');
-
+const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants');
 
 
 // Get all users
@@ -159,13 +159,14 @@ router.post('/', authenticate, checkPermission('users.create'), async (req, res)
    await client.query('COMMIT');
 
    await AuditService.log({
-     userId: req.user.userId,
-     actionType: 'USER_CREATE',
-     entityType: 'USER',
-     entityId: userResult.rows[0].id,
-     newValues: { email, first_name, last_name, phone, is_active, role_id },
-     ipAddress: req.ip
-   });
+    userId: req.user.userId,
+    actionType: AUDIT_LOG_TYPES.USER.CREATE,
+    entityType: ENTITY_TYPES.USER,
+    entityId: userResult.rows[0].id,
+    newValues: { email, first_name, last_name, phone, is_active, role_id },
+    ipAddress: req.ip,
+    auditType: AUDIT_TYPES.BUSINESS
+  });
 
    res.status(201).json({
      success: true,
@@ -243,14 +244,15 @@ router.put('/:id', authenticate, checkPermission('users.update'), async (req, re
    await client.query('COMMIT');
 
    await AuditService.log({
-     userId: req.user.userId,
-     actionType: 'USER_UPDATE',
-     entityType: 'USER',
-     entityId: id,
-     oldValues: oldUserData.rows[0],
-     newValues: { email, first_name, last_name, phone, role_id, is_active },
-     ipAddress: req.ip
-   });
+    userId: req.user.userId,
+    actionType: AUDIT_LOG_TYPES.USER.UPDATE,
+    entityType: ENTITY_TYPES.USER,
+    entityId: id,
+    oldValues: oldUserData.rows[0],
+    newValues: { email, first_name, last_name, phone, role_id, is_active },
+    ipAddress: req.ip,
+    auditType: AUDIT_TYPES.BUSINESS
+  });
 
    // Отримуємо оновлені дані користувача з роллю
    const updatedUser = await pool.query(`
@@ -357,12 +359,13 @@ router.delete('/:id', authenticate, checkPermission('users.delete'), async (req,
     // Логуємо видалення в аудит
     await AuditService.log({
       userId: req.user.userId,
-      actionType: force ? 'USER_DELETE_WITH_AUDIT' : 'USER_DELETE',
-      entityType: 'USER',
+      actionType: force ? AUDIT_LOG_TYPES.USER.DELETE_WITH_AUDIT : AUDIT_LOG_TYPES.USER.DELETE,
+      entityType: ENTITY_TYPES.USER,
       entityId: id,
       oldValues: userData.rows[0],
       ipAddress: req.ip,
-      details: force ? `Deleted with ${auditRecords.rows[0].count} audit records` : null
+      details: force ? `Deleted with ${auditRecords.rows[0].count} audit records` : null,
+      auditType: AUDIT_TYPES.BUSINESS
     });
    
     res.json({
@@ -421,12 +424,13 @@ router.put('/:id/password', authenticate, checkPermission('users.update'), async
     // Log password change in audit
     await AuditService.log({
       userId: req.user.userId,
-      actionType: 'USER_PASSWORD_CHANGE',
-      entityType: 'USER',
+      actionType: AUDIT_LOG_TYPES.USER.PASSWORD_CHANGE,  // Змінюємо на коректну константу
+      entityType: ENTITY_TYPES.USER,
       entityId: id,
       oldValues: { password: '[REDACTED]' },
       newValues: { password: '[REDACTED]' },
-      ipAddress: req.ip
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS
     });
 
     res.json({
@@ -491,12 +495,13 @@ router.put('/:id/status', authenticate, checkPermission('users.update'), async (
     // Log status change in audit
     await AuditService.log({
       userId: req.user.userId,
-      actionType: is_active ? 'USER_ACTIVATE' : 'USER_DEACTIVATE',
-      entityType: 'USER',
+      actionType: is_active ? AUDIT_LOG_TYPES.USER.ACTIVATE : AUDIT_LOG_TYPES.USER.DEACTIVATE,
+      entityType: ENTITY_TYPES.USER,
       entityId: id,
       oldValues: { is_active: oldUserData.rows[0].is_active },
       newValues: { is_active },
-      ipAddress: req.ip
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS
     });
 
     res.json({

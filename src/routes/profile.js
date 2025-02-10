@@ -8,6 +8,8 @@ const { AuditService } = require('../services/auditService');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
 const { checkPermission, checkMultiplePermissions } = require('../middleware/checkPermission');
+const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants');
+
 // Налаштування multer
 const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
@@ -78,14 +80,15 @@ const storage = multer.diskStorage({
    
        // Логуємо оновлення профілю
        await AuditService.log({
-         userId: req.user.userId,
-         actionType: 'PROFILE_UPDATE',
-         entityType: 'USER',
-         entityId: userId,
-         oldValues: oldUserData.rows[0],
-         newValues: { first_name, last_name, phone },
-         ipAddress: req.ip
-       });
+        userId: req.user.userId,
+        actionType: AUDIT_LOG_TYPES.USER.PROFILE_UPDATE,
+        entityType: ENTITY_TYPES.USER,
+        entityId: userId,
+        oldValues: oldUserData.rows[0],
+        newValues: { first_name, last_name, phone },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS
+      });
    
        const userData = rows[0];
       
@@ -98,13 +101,14 @@ const storage = multer.diskStorage({
        console.error('Error updating profile:', error);
        // Логуємо помилку
        await AuditService.log({
-         userId: req.user.userId,
-         actionType: 'ERROR',
-         entityType: 'USER',
-         entityId: req.user.userId,
-         ipAddress: req.ip,
-         newValues: { error: error.message }
-       });
+        userId: req.user.userId,
+        actionType: AUDIT_LOG_TYPES.SYSTEM.ERROR,
+        entityType: ENTITY_TYPES.USER,
+        entityId: req.user.userId,
+        ipAddress: req.ip,
+        newValues: { error: error.message },
+        auditType: AUDIT_TYPES.SYSTEM
+      });
        res.status(500).json({ 
          success: false,
          message: 'Server error while updating profile' 
@@ -136,12 +140,13 @@ const storage = multer.diskStorage({
        if (!isValidPassword) {
          // Логуємо невдалу спробу зміни пароля
          await AuditService.log({
-           userId: req.user.userId,
-           actionType: 'PASSWORD_CHANGE_FAILED',
-           entityType: 'USER',
-           entityId: userId,
-           ipAddress: req.ip
-         });
+          userId: req.user.userId,
+          actionType: AUDIT_LOG_TYPES.USER.PASSWORD_CHANGE_FAILED,
+          entityType: ENTITY_TYPES.USER,
+          entityId: userId,
+          ipAddress: req.ip,
+          auditType: AUDIT_TYPES.BUSINESS
+        });
          return res.status(400).json({
            success: false,
            message: 'Current password is incorrect'
@@ -160,12 +165,13 @@ const storage = multer.diskStorage({
    
        // Логуємо успішну зміну пароля
        await AuditService.log({
-         userId: req.user.userId,
-         actionType: 'PASSWORD_CHANGE',
-         entityType: 'USER',
-         entityId: userId,
-         ipAddress: req.ip
-       });
+        userId: req.user.userId,
+        actionType: AUDIT_LOG_TYPES.USER.PASSWORD_CHANGE,
+        entityType: ENTITY_TYPES.USER,
+        entityId: userId,
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS
+      });
    
        res.json({
          success: true,
@@ -175,13 +181,14 @@ const storage = multer.diskStorage({
        console.error('Error changing password:', error);
        // Логуємо помилку
        await AuditService.log({
-         userId: req.user.userId,
-         actionType: 'ERROR',
-         entityType: 'USER',
-         entityId: req.user.userId,
-         ipAddress: req.ip,
-         newValues: { error: error.message }
-       });
+        userId: req.user.userId,
+        actionType: AUDIT_LOG_TYPES.SYSTEM.ERROR,
+        entityType: ENTITY_TYPES.USER,
+        entityId: req.user.userId,
+        ipAddress: req.ip,
+        newValues: { error: error.message },
+        auditType: AUDIT_TYPES.SYSTEM
+      });
        res.status(500).json({
          success: false,
          message: 'Server error while changing password'
@@ -228,13 +235,14 @@ router.post('/avatar', authenticate, upload.single('avatar'), async (req, res) =
       );
 
       await AuditService.log({
-          userId: req.user.userId,
-          actionType: 'AVATAR_UPDATE',
-          entityType: 'USER',
-          entityId: req.user.userId,
-          oldValues: { avatar_url: oldUser.rows[0]?.avatar_url },
-          newValues: { avatar_url: avatarUrl },
-          ipAddress: req.ip
+        userId: req.user.userId,
+        actionType: AUDIT_LOG_TYPES.USER.AVATAR_UPDATE,
+        entityType: ENTITY_TYPES.USER,
+        entityId: req.user.userId,
+        oldValues: { avatar_url: oldUser.rows[0]?.avatar_url },
+        newValues: { avatar_url: avatarUrl },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS
       });
 
       await client.query('COMMIT');

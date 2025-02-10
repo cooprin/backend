@@ -4,6 +4,7 @@ const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { checkPermission, checkMultiplePermissions } = require('../middleware/checkPermission');
 const { AuditService } = require('../services/auditService');
+const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants');
 
 // Get all permissions with pagination
 router.get('/', authenticate, checkPermission('permissions.read'), async (req, res) => {
@@ -120,11 +121,12 @@ router.post('/', authenticate, checkPermission('permissions.create'), async (req
 
     await AuditService.log({
       userId: req.user.userId,
-      actionType: 'PERMISSION_CREATE',
-      entityType: 'PERMISSION',
+      actionType: AUDIT_LOG_TYPES.PERMISSION.CREATE,
+      entityType: ENTITY_TYPES.PERMISSION,
       entityId: result.rows[0].id,
       newValues: { name, code, group_id },
-      ipAddress: req.ip
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS
     });
 
     await client.query('COMMIT');
@@ -179,12 +181,13 @@ router.put('/:id', authenticate, checkPermission('permissions.update'), async (r
 
     await AuditService.log({
       userId: req.user.userId,
-      actionType: 'PERMISSION_UPDATE',
-      entityType: 'PERMISSION',
+      actionType: AUDIT_LOG_TYPES.PERMISSION.UPDATE,
+      entityType: ENTITY_TYPES.PERMISSION,
       entityId: id,
       oldValues: oldData.rows[0],
       newValues: { name, code, group_id },
-      ipAddress: req.ip
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS
     });
 
     await client.query('COMMIT');
@@ -226,11 +229,12 @@ router.delete('/:id', authenticate, checkPermission('permissions.delete'), async
 
     await AuditService.log({
       userId: req.user.userId,
-      actionType: 'PERMISSION_DELETE',
-      entityType: 'PERMISSION',
+      actionType: AUDIT_LOG_TYPES.PERMISSION.DELETE,
+      entityType: ENTITY_TYPES.PERMISSION,
       entityId: id,
       oldValues: permissionData.rows[0],
-      ipAddress: req.ip
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS
     });
 
     res.json({
@@ -262,12 +266,13 @@ router.post('/groups', authenticate, checkPermission('permissions.manage'), asyn
 
     await AuditService.log({
       userId: req.user.userId,
-      actionType: 'PERMISSION_GROUP_CREATE',
-      entityType: 'PERMISSION_GROUP',
+      actionType: AUDIT_LOG_TYPES.PERMISSION.GROUP_CREATE,
+      entityType: ENTITY_TYPES.PERMISSION_GROUP,  
       entityId: result.rows[0].id,
       newValues: { name, description },
-      ipAddress: req.ip
-    })
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS
+    });
 
     await client.query('COMMIT')
 
@@ -312,13 +317,14 @@ router.put('/groups/:id', authenticate, checkPermission('permissions.manage'), a
 
     await AuditService.log({
       userId: req.user.userId,
-      actionType: 'PERMISSION_GROUP_UPDATE',
-      entityType: 'PERMISSION_GROUP',
+      actionType: AUDIT_LOG_TYPES.PERMISSION.GROUP_UPDATE,
+      entityType: ENTITY_TYPES.PERMISSION_GROUP,
       entityId: id,
       oldValues: oldData.rows[0],
       newValues: { name, description },
-      ipAddress: req.ip
-    })
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS
+    });
 
     await client.query('COMMIT')
 

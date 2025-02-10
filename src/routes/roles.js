@@ -4,6 +4,7 @@ const { AuditService } = require('../services/auditService');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
 const { checkPermission, checkMultiplePermissions } = require('../middleware/checkPermission');
+const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants');
 
 // Get available permissions
 router.get('/permissions', authenticate, checkPermission('roles.read'), async (req, res) => {
@@ -193,13 +194,14 @@ router.post('/', authenticate, checkPermission('roles.create'), async (req, res)
    await client.query('COMMIT');
 
    await AuditService.log({
-     userId: req.user.userId,
-     actionType: 'ROLE_CREATE',
-     entityType: 'ROLE',
-     entityId: roleResult.rows[0].id,
-     newValues: { name, description, permissions },
-     ipAddress: req.ip
-   });
+    userId: req.user.userId,
+    actionType: AUDIT_LOG_TYPES.ROLE.CREATE,
+    entityType: ENTITY_TYPES.ROLE,
+    entityId: roleResult.rows[0].id,
+    newValues: { name, description, permissions },
+    ipAddress: req.ip,
+    auditType: AUDIT_TYPES.BUSINESS
+  });
 
    // Отримуємо оновлені дані ролі з правами
    const updatedRole = await pool.query(`
@@ -224,12 +226,14 @@ router.post('/', authenticate, checkPermission('roles.create'), async (req, res)
    await client.query('ROLLBACK');
    console.error('Error creating role:', error);
    await AuditService.log({
-     userId: req.user.userId,
-     actionType: 'ERROR',
-     entityType: 'ROLE',
-     ipAddress: req.ip,
-     newValues: { error: error.message }
-   });
+    userId: req.user.userId,
+    actionType: AUDIT_LOG_TYPES.SYSTEM.ERROR,
+    entityType: ENTITY_TYPES.ROLE,
+    entityId: req.params.id,
+    ipAddress: req.ip,
+    newValues: { error: error.message },
+    auditType: AUDIT_TYPES.SYSTEM
+  });
    res.status(500).json({
      success: false,
      message: 'Server error while creating role'
@@ -315,18 +319,19 @@ router.put('/:id', authenticate, checkPermission('roles.update'), async (req, re
    await client.query('COMMIT');
 
    await AuditService.log({
-     userId: req.user.userId,
-     actionType: 'ROLE_UPDATE',
-     entityType: 'ROLE',
-     entityId: id,
-     oldValues: {
-       name: currentRole.rows[0].name,
-       description: currentRole.rows[0].description,
-       permissions: currentRole.rows[0].permission_ids
-     },
-     newValues: { name, description, permissions },
-     ipAddress: req.ip
-   });
+    userId: req.user.userId,
+    actionType: AUDIT_LOG_TYPES.ROLE.UPDATE,
+    entityType: ENTITY_TYPES.ROLE,
+    entityId: id,
+    oldValues: {
+      name: currentRole.rows[0].name,
+      description: currentRole.rows[0].description,
+      permissions: currentRole.rows[0].permission_ids
+    },
+    newValues: { name, description, permissions },
+    ipAddress: req.ip,
+    auditType: AUDIT_TYPES.BUSINESS
+  });
 
    // Отримуємо оновлені дані ролі з правами
    const updatedRole = await pool.query(`
@@ -351,13 +356,14 @@ router.put('/:id', authenticate, checkPermission('roles.update'), async (req, re
    await client.query('ROLLBACK');
    console.error('Error updating role:', error);
    await AuditService.log({
-     userId: req.user.userId,
-     actionType: 'ERROR',
-     entityType: 'ROLE',
-     entityId: req.params.id,
-     ipAddress: req.ip,
-     newValues: { error: error.message }
-   });
+    userId: req.user.userId,
+    actionType: AUDIT_LOG_TYPES.SYSTEM.ERROR,
+    entityType: ENTITY_TYPES.ROLE,
+    entityId: req.params.id,
+    ipAddress: req.ip,
+    newValues: { error: error.message },
+    auditType: AUDIT_TYPES.SYSTEM
+  });
    res.status(500).json({
      success: false,
      message: 'Server error while updating role'
@@ -397,19 +403,20 @@ router.delete('/:id', authenticate, checkPermission('roles.delete'), async (req,
    );
    
    if (parseInt(usersWithRole.rows[0].count) > 0) {
-     await AuditService.log({
-       userId: req.user.userId,
-       actionType: 'ROLE_DELETE_ATTEMPT',
-       entityType: 'ROLE',
-       entityId: id,
-       oldValues: roleData.rows[0],
-       newValues: { error: 'Role is in use' },
-       ipAddress: req.ip
-     });
-     return res.status(400).json({
-       success: false,
-       message: 'Cannot delete role that is assigned to users'
-     });
+    await AuditService.log({
+      userId: req.user.userId,
+      actionType: AUDIT_LOG_TYPES.ROLE.DELETE_ATTEMPT,
+      entityType: ENTITY_TYPES.ROLE,
+      entityId: id,
+      oldValues: roleData.rows[0],
+      newValues: { error: 'Role is in use' },
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS
+    });
+    return res.status(400).json({
+      success: false,
+      message: 'Cannot delete role that is assigned to users'
+    });
    }
    
    const { rows } = await pool.query(
@@ -418,13 +425,14 @@ router.delete('/:id', authenticate, checkPermission('roles.delete'), async (req,
    );
    
    await AuditService.log({
-     userId: req.user.userId,
-     actionType: 'ROLE_DELETE',
-     entityType: 'ROLE',
-     entityId: id,
-     oldValues: roleData.rows[0],
-     ipAddress: req.ip
-   });
+    userId: req.user.userId,
+    actionType: AUDIT_LOG_TYPES.ROLE.DELETE,
+    entityType: ENTITY_TYPES.ROLE,
+    entityId: id,
+    oldValues: roleData.rows[0],
+    ipAddress: req.ip,
+    auditType: AUDIT_TYPES.BUSINESS
+  });
    
    res.json({
      success: true,
@@ -433,13 +441,14 @@ router.delete('/:id', authenticate, checkPermission('roles.delete'), async (req,
  } catch (error) {
    console.error('Error deleting role:', error);
    await AuditService.log({
-     userId: req.user.userId,
-     actionType: 'ERROR',
-     entityType: 'ROLE',
-     entityId: req.params.id,
-     ipAddress: req.ip,
-     newValues: { error: error.message }
-   });
+    userId: req.user.userId,
+    actionType: AUDIT_LOG_TYPES.SYSTEM.ERROR,
+    entityType: ENTITY_TYPES.ROLE,
+    entityId: req.params.id,
+    ipAddress: req.ip,
+    newValues: { error: error.message },
+    auditType: AUDIT_TYPES.SYSTEM
+  });
    res.status(500).json({
      success: false,
      message: 'Server error while deleting role'

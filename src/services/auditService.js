@@ -1,38 +1,22 @@
 const { pool } = require('../database');
+const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('./constants');
 
-/**
- * Сервіс для логування дій користувачів
- */
-const auditLogTypes = {
-    AUTH: {
-        LOGIN: 'LOGIN',
-        LOGOUT: 'LOGOUT',
-        LOGIN_FAILED: 'LOGIN_FAILED'
-    },
-    USER: {
-        CREATE: 'USER_CREATE',
-        UPDATE: 'USER_UPDATE',
-        DELETE: 'USER_DELETE',
-        STATUS_CHANGE: 'USER_STATUS_CHANGE',
-        PASSWORD_CHANGE: 'USER_PASSWORD_CHANGE'
-    },
-    ROLE: {
-        CREATE: 'ROLE_CREATE',
-        UPDATE: 'ROLE_UPDATE',
-        DELETE: 'ROLE_DELETE'
-    }
-};
 
 class AuditService {
-    /**
-     * Зберігає запис аудиту в базу даних
-     */
-    static async log({ userId, actionType, entityType, entityId, oldValues = null, newValues = null, ipAddress }) {
-        try {
+    static async log({ 
+        userId, 
+        actionType, 
+        entityType, 
+        entityId, 
+        oldValues = null, 
+        newValues = null, 
+        ipAddress,
+        auditType = AUDIT_TYPES.BUSINESS
+    }) { try {
             const { rows } = await pool.query(
-                `INSERT INTO audit.audit_logs 
-                (user_id, action_type, entity_type, entity_id, old_values, new_values, ip_address)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                `INSERT INTO audit.audit_logs
+                 (user_id, action_type, entity_type, entity_id, old_values, new_values, ip_address, audit_type)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 RETURNING id`,
                 [
                     userId,
@@ -41,7 +25,8 @@ class AuditService {
                     entityId,
                     oldValues ? JSON.stringify(oldValues) : null,
                     newValues ? JSON.stringify(newValues) : null,
-                    ipAddress
+                    ipAddress,
+                    auditType
                 ]
             );
 
@@ -49,40 +34,30 @@ class AuditService {
             return rows[0];
         } catch (error) {
             console.error('Error creating audit log:', error);
-            // Не кидаємо помилку далі, щоб не переривати основний процес
             return null;
         }
     }
 
-    /**
-     * Логує спробу входу (успішну чи ні)
-     */
     static async logAuth(success, userId, email, ipAddress) {
         return this.log({
             userId: userId || null,
-            actionType: success ? auditLogTypes.AUTH.LOGIN : auditLogTypes.AUTH.LOGIN_FAILED,
-            entityType: 'USER',
+            actionType: success ? AUDIT_LOG_TYPES.AUTH.LOGIN : AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
+            entityType: ENTITY_TYPES.USER,
             entityId: userId || null,
             newValues: { email },
-            ipAddress
+            ipAddress,
+            auditType: AUDIT_TYPES.BUSINESS
         });
     }
 
-    /**
-     * Логує вихід з системи
-     */
     static async logLogout(userId, ipAddress) {
         return this.log({
             userId,
-            actionType: auditLogTypes.AUTH.LOGOUT,
-            entityType: 'USER',
+            actionType: AUDIT_LOG_TYPES.AUTH.LOGOUT,
+            entityType: ENTITY_TYPES.USER,
             entityId: userId,
-            ipAddress
+            ipAddress,
+            auditType: AUDIT_TYPES.BUSINESS
         });
     }
 }
-
-module.exports = {
-    AuditService,
-    auditLogTypes
-};

@@ -4,6 +4,7 @@ const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { checkPermission } = require('../middleware/checkPermission');
 const { AuditService } = require('../services/auditService');
+const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants');
 
 // Get all resources with pagination
 router.get('/', authenticate, checkPermission('resources.read'), async (req, res) => {
@@ -139,11 +140,12 @@ router.post('/', authenticate, checkPermission('resources.create'), async (req, 
 
     await AuditService.log({
       userId: req.user.userId,
-      actionType: 'RESOURCE_CREATE',
-      entityType: 'RESOURCE',
+      actionType: AUDIT_LOG_TYPES.RESOURCE.CREATE,
+      entityType: ENTITY_TYPES.RESOURCE,
       entityId: result.rows[0].id,
       newValues: { name, code, type, metadata },
-      ipAddress: req.ip
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS
     });
 
     await client.query('COMMIT');
@@ -197,12 +199,13 @@ router.put('/:id', authenticate, checkPermission('resources.update'), async (req
 
     await AuditService.log({
       userId: req.user.userId,
-      actionType: 'RESOURCE_UPDATE',
-      entityType: 'RESOURCE',
+      actionType: AUDIT_LOG_TYPES.RESOURCE.UPDATE,
+      entityType: ENTITY_TYPES.RESOURCE,
       entityId: id,
       oldValues: oldData.rows[0],
       newValues: { name, metadata },
-      ipAddress: req.ip
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS
     });
 
     await client.query('COMMIT');
@@ -252,11 +255,12 @@ router.put('/:id/actions', authenticate, checkPermission('resources.manage'), as
 
     await AuditService.log({
       userId: req.user.userId,
-      actionType: 'RESOURCE_ACTIONS_UPDATE',
-      entityType: 'RESOURCE',
+      actionType: AUDIT_LOG_TYPES.RESOURCE.ACTIONS_UPDATE,
+      entityType: ENTITY_TYPES.RESOURCE,
       entityId: id,
       newValues: { actions },
-      ipAddress: req.ip
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS
     });
 
     await client.query('COMMIT');
@@ -301,11 +305,12 @@ router.delete('/:id', authenticate, checkPermission('resources.delete'), async (
 
     await AuditService.log({
       userId: req.user.userId,
-      actionType: 'RESOURCE_DELETE',
-      entityType: 'RESOURCE',
+      actionType: AUDIT_LOG_TYPES.RESOURCE.DELETE,
+      entityType: ENTITY_TYPES.RESOURCE,
       entityId: id,
       oldValues: resourceData.rows[0],
-      ipAddress: req.ip
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS
     });
 
     await client.query('COMMIT');

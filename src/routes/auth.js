@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const { pool } = require('../database');
 const { AuditService } = require('../services/auditService');
 const authenticate = require('../middleware/auth');
+const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants');
 
 // Register
 router.post('/register', async (req, res) => {
@@ -35,21 +36,22 @@ router.post('/register', async (req, res) => {
 
     const user = userResult.rows[0];
 
-    // Призначення ролі за замовчуванням (якщо потрібно)
+    // Призначення ролі за замовчуванням
     await pool.query(
       `INSERT INTO auth.user_roles (user_id, role_id)
-       SELECT $1, id FROM roles WHERE name = 'user'`,
+       SELECT $1, id FROM auth.roles WHERE name = 'user'`,
       [user.id]
     );
 
     // Логування реєстрації
     await AuditService.log({
       userId: user.id,
-      actionType: 'USER_REGISTER',
-      entityType: 'USER',
+      actionType: AUDIT_LOG_TYPES.USER.CREATE,
+      entityType: ENTITY_TYPES.USER,
       entityId: user.id,
       newValues: { email, first_name, last_name, phone },
-      ipAddress: req.ip
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS
     });
 
     res.status(201).json({
@@ -67,7 +69,6 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Знаходимо користувача разом з його ролями та правами
     const result = await pool.query(
       `SELECT 
         u.*,
@@ -85,10 +86,11 @@ router.post('/login', async (req, res) => {
 
     if (result.rows.length === 0) {
       await AuditService.log({
-        actionType: 'LOGIN_FAILED',
-        entityType: 'USER',
+        actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
+        entityType: ENTITY_TYPES.USER,
         newValues: { email },
-        ipAddress: req.ip
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS
       });
       return res.status(401).json({ message: 'Invalid credentials' });
     }
@@ -98,11 +100,12 @@ router.post('/login', async (req, res) => {
     if (!user.is_active) {
       await AuditService.log({
         userId: user.id,
-        actionType: 'LOGIN_FAILED',
-        entityType: 'USER',
+        actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
+        entityType: ENTITY_TYPES.USER,
         entityId: user.id,
         newValues: { email, reason: 'Account inactive' },
-        ipAddress: req.ip
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS
       });
       return res.status(403).json({ message: 'Account is deactivated' });
     }
@@ -112,11 +115,12 @@ router.post('/login', async (req, res) => {
     if (!validPassword) {
       await AuditService.log({
         userId: user.id,
-        actionType: 'LOGIN_FAILED',
-        entityType: 'USER',
+        actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
+        entityType: ENTITY_TYPES.USER,
         entityId: user.id,
-        newValues: { email },
-        ipAddress: req.ip
+        newValues: { email, reason: 'Account inactive' },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS
       });
       return res.status(401).json({ message: 'Invalid credentials' });
     }
@@ -141,11 +145,12 @@ router.post('/login', async (req, res) => {
     // Логування успішного входу
     await AuditService.log({
       userId: user.id,
-      actionType: 'LOGIN_SUCCESS',
-      entityType: 'USER',
+      actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_SUCCESS,
+      entityType: ENTITY_TYPES.USER,
       entityId: user.id,
       newValues: { email },
-      ipAddress: req.ip
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS
     });
 
     res.json({

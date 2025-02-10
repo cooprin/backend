@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
-const { checkPermission, checkMultiplePermissions } = require('../middleware/checkPermission');
+const { checkPermission } = require('../middleware/checkPermission');
 const { pool } = require('../database');
 
 // Get audit logs
@@ -14,6 +14,7 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
             descending = true,
             actionType,
             entityType,
+            auditType,  // Added audit type filter
             dateFrom,
             dateTo,
             search 
@@ -56,6 +57,12 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
             paramIndex++;
         }
 
+        if (auditType) {  // Added audit type filter
+            conditions.push(`al.audit_type = $${paramIndex}`);
+            params.push(auditType);
+            paramIndex++;
+        }
+
         if (dateFrom) {
             conditions.push(`al.created_at >= $${paramIndex}::timestamp`);
             params.push(dateFrom);
@@ -87,6 +94,7 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
                 al.old_values,
                 al.new_values,
                 al.ip_address,
+                al.audit_type,
                 al.created_at,
                 u.email as user_email
             FROM audit.audit_logs al
@@ -124,7 +132,7 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
     }
 });
 
-// Get unique action and entity types
+// Get unique types
 router.get('/types', authenticate, checkPermission('audit.read'), async (req, res) => {
     try {
         const actionTypesQuery = `
@@ -141,15 +149,24 @@ router.get('/types', authenticate, checkPermission('audit.read'), async (req, re
             ORDER BY entity_type
         `;
 
-        const [actionTypes, entityTypes] = await Promise.all([
+        const auditTypesQuery = `
+            SELECT DISTINCT audit_type 
+            FROM audit.audit_logs 
+            WHERE audit_type IS NOT NULL
+            ORDER BY audit_type
+        `;
+
+        const [actionTypes, entityTypes, auditTypes] = await Promise.all([
             pool.query(actionTypesQuery),
-            pool.query(entityTypesQuery)
+            pool.query(entityTypesQuery),
+            pool.query(auditTypesQuery)
         ]);
 
         res.json({
             success: true,
             actionTypes: actionTypes.rows.map(row => row.action_type),
-            entityTypes: entityTypes.rows.map(row => row.entity_type)
+            entityTypes: entityTypes.rows.map(row => row.entity_type),
+            auditTypes: auditTypes.rows.map(row => row.audit_type)
         });
     } catch (error) {
         console.error('Error fetching log types:', error);
