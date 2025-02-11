@@ -5,6 +5,7 @@ const authenticate = require('../middleware/auth');
 const { checkPermission } = require('../middleware/checkPermission');
 const { pool } = require('../database');
 const { ENTITY_TYPES, AUDIT_TYPES } = require('../constants/constants');
+const AuditService = require('../services/auditService');
 
 // Get audit logs with enhanced filtering
 router.get('/', authenticate, checkPermission('audit.read'), async (req, res) => {
