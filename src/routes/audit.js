@@ -108,11 +108,10 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
             paramIndex++;
         }
 
-        if (hasChanges !== null) {
-            conditions.push(hasChanges === 'true' ? 
-                'al.changes IS NOT NULL' : 
-                'al.changes IS NULL'
-            );
+        if (hasChanges === 'true') {
+            conditions.push('al.changes IS NOT NULL');
+        } else if (hasChanges === 'false') {
+            conditions.push('al.changes IS NULL');
         }
 
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
@@ -299,11 +298,10 @@ router.get('/export', authenticate, checkPermission('audit.read'), async (req, r
             paramIndex++;
         }
 
-        if (hasChanges !== null) {
-            conditions.push(hasChanges === 'true' ? 
-                'al.changes IS NOT NULL' : 
-                'al.changes IS NULL'
-            );
+        if (hasChanges === 'true') {
+            conditions.push('al.changes IS NOT NULL');
+        } else if (hasChanges === 'false') {
+            conditions.push('al.changes IS NULL');
         }
 
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
