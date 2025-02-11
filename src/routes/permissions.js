@@ -126,7 +126,7 @@ router.post('/', authenticate, checkPermission('permissions.create'), async (req
       entityId: result.rows[0].id,
       newValues: { name, code, group_id },
       ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,req
     });
 
     await client.query('COMMIT');
@@ -187,7 +187,8 @@ router.put('/:id', authenticate, checkPermission('permissions.update'), async (r
       oldValues: oldData.rows[0],
       newValues: { name, code, group_id },
       ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
     });
 
     await client.query('COMMIT');
@@ -234,7 +235,8 @@ router.delete('/:id', authenticate, checkPermission('permissions.delete'), async
       entityId: id,
       oldValues: permissionData.rows[0],
       ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
     });
 
     res.json({
@@ -271,7 +273,8 @@ router.post('/groups', authenticate, checkPermission('permissions.manage'), asyn
       entityId: result.rows[0].id,
       newValues: { name, description },
       ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
     });
 
     await client.query('COMMIT')
@@ -323,7 +326,8 @@ router.put('/groups/:id', authenticate, checkPermission('permissions.manage'), a
       oldValues: oldData.rows[0],
       newValues: { name, description },
       ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
     });
 
     await client.query('COMMIT')

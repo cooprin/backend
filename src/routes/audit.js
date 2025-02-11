@@ -224,7 +224,8 @@ router.get('/export', authenticate, checkPermission('audit.read'), async (req, r
             },
             tableSchema: 'audit',
             tableName: 'audit_logs',
-            auditType: AUDIT_TYPES.BUSINESS
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
         });
 
         let conditions = [];
@@ -416,7 +417,8 @@ router.get('/export', authenticate, checkPermission('audit.read'), async (req, r
             },
             tableSchema: 'audit',
             tableName: 'audit_logs',
-            auditType: AUDIT_TYPES.BUSINESS
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
         });
 
     } catch (error) {
@@ -433,7 +435,8 @@ router.get('/export', authenticate, checkPermission('audit.read'), async (req, r
             },
             tableSchema: 'audit',
             tableName: 'audit_logs',
-            auditType: AUDIT_TYPES.BUSINESS
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
         });
         console.error('Error exporting audit logs:', error);
         res.status(500).json({

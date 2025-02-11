@@ -200,7 +200,8 @@ router.post('/', authenticate, checkPermission('roles.create'), async (req, res)
     entityId: roleResult.rows[0].id,
     newValues: { name, description, permissions },
     ipAddress: req.ip,
-    auditType: AUDIT_TYPES.BUSINESS
+    auditType: AUDIT_TYPES.BUSINESS,
+    req
   });
 
    // Отримуємо оновлені дані ролі з правами
@@ -232,7 +233,8 @@ router.post('/', authenticate, checkPermission('roles.create'), async (req, res)
     entityId: req.params.id,
     ipAddress: req.ip,
     newValues: { error: error.message },
-    auditType: AUDIT_TYPES.SYSTEM
+    auditType: AUDIT_TYPES.SYSTEM,
+    req
   });
    res.status(500).json({
      success: false,
@@ -330,7 +332,8 @@ router.put('/:id', authenticate, checkPermission('roles.update'), async (req, re
     },
     newValues: { name, description, permissions },
     ipAddress: req.ip,
-    auditType: AUDIT_TYPES.BUSINESS
+    auditType: AUDIT_TYPES.BUSINESS,
+    req
   });
 
    // Отримуємо оновлені дані ролі з правами
@@ -362,7 +365,8 @@ router.put('/:id', authenticate, checkPermission('roles.update'), async (req, re
     entityId: req.params.id,
     ipAddress: req.ip,
     newValues: { error: error.message },
-    auditType: AUDIT_TYPES.SYSTEM
+    auditType: AUDIT_TYPES.SYSTEM,
+    req
   });
    res.status(500).json({
      success: false,
@@ -411,7 +415,8 @@ router.delete('/:id', authenticate, checkPermission('roles.delete'), async (req,
       oldValues: roleData.rows[0],
       newValues: { error: 'Role is in use' },
       ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
     });
     return res.status(400).json({
       success: false,
@@ -431,7 +436,8 @@ router.delete('/:id', authenticate, checkPermission('roles.delete'), async (req,
     entityId: id,
     oldValues: roleData.rows[0],
     ipAddress: req.ip,
-    auditType: AUDIT_TYPES.BUSINESS
+    auditType: AUDIT_TYPES.BUSINESS,
+    req
   });
    
    res.json({
@@ -447,7 +453,8 @@ router.delete('/:id', authenticate, checkPermission('roles.delete'), async (req,
     entityId: req.params.id,
     ipAddress: req.ip,
     newValues: { error: error.message },
-    auditType: AUDIT_TYPES.SYSTEM
+    auditType: AUDIT_TYPES.SYSTEM,
+    req
   });
    res.status(500).json({
      success: false,

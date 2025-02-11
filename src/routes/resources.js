@@ -145,7 +145,8 @@ router.post('/', authenticate, checkPermission('resources.create'), async (req, 
       entityId: result.rows[0].id,
       newValues: { name, code, type, metadata },
       ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
     });
 
     await client.query('COMMIT');
@@ -205,7 +206,8 @@ router.put('/:id', authenticate, checkPermission('resources.update'), async (req
       oldValues: oldData.rows[0],
       newValues: { name, metadata },
       ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
     });
 
     await client.query('COMMIT');
@@ -260,7 +262,8 @@ router.put('/:id/actions', authenticate, checkPermission('resources.manage'), as
       entityId: id,
       newValues: { actions },
       ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
     });
 
     await client.query('COMMIT');
@@ -310,7 +313,8 @@ router.delete('/:id', authenticate, checkPermission('resources.delete'), async (
       entityId: id,
       oldValues: resourceData.rows[0],
       ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
     });
 
     await client.query('COMMIT');

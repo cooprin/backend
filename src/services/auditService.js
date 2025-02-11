@@ -15,16 +15,32 @@ class AuditService {
         tableSchema = null,
         tableName = null,
         auditType = AUDIT_TYPES.BUSINESS,
-        details = null
+        details = null,
+        req = null  // Додаємо параметр req
     }) {
         try {
-            // Формуємо changes - порівнюємо old і new values
+            // Формуємо зміни
             const changes = oldValues && newValues ? 
                 this.calculateChanges(oldValues, newValues) : null;
 
+            // Формуємо інформацію про браузер з req, якщо вона не передана
+            let formattedBrowserInfo = browserInfo;
+            if (req && !browserInfo) {
+                formattedBrowserInfo = {
+                    userAgent: req.headers['user-agent'],
+                    platform: req.headers['sec-ch-ua-platform'],
+                    mobile: req.headers['sec-ch-ua-mobile'],
+                    language: req.headers['accept-language'],
+                    referer: req.headers['referer'],
+                    browser: getBrowserInfo(req.headers['user-agent'])
+                };
+            }
+
             // Перевіряємо та форматуємо browserInfo
-            const formattedBrowserInfo = browserInfo ? 
-                (typeof browserInfo === 'string' ? JSON.parse(browserInfo) : browserInfo) : 
+            formattedBrowserInfo = formattedBrowserInfo ? 
+                (typeof formattedBrowserInfo === 'string' ? 
+                    JSON.parse(formattedBrowserInfo) : 
+                    formattedBrowserInfo) : 
                 null;
 
             const { rows } = await pool.query(
@@ -39,13 +55,13 @@ class AuditService {
                     userId,
                     actionType,
                     entityType,
-                    entityId?.toString(), // Конвертуємо ID в string
+                    entityId?.toString(),
                     oldValues ? JSON.stringify(oldValues) : null,
                     newValues ? JSON.stringify(newValues) : null,
                     changes ? JSON.stringify(changes) : null,
-                    ipAddress,
-                    formattedBrowserInfo,
-                    userAgent,
+                    ipAddress || (req?.ip),
+                    formattedBrowserInfo ? JSON.stringify(formattedBrowserInfo) : null,
+                    userAgent || req?.headers['user-agent'],
                     tableSchema,
                     tableName,
                     auditType
@@ -60,7 +76,6 @@ class AuditService {
         }
     }
 
-    // Метод для розрахунку змін між старими та новими значеннями
     static calculateChanges(oldValues, newValues) {
         const changes = {};
         const allKeys = new Set([...Object.keys(oldValues || {}), ...Object.keys(newValues || {})]);
@@ -80,8 +95,7 @@ class AuditService {
         return Object.keys(changes).length > 0 ? changes : null;
     }
 
-    // Розширений метод для логування авторизації
-    static async logAuth(success, userId, email, ipAddress, browserInfo = null, userAgent = null) {
+    static async logAuth(success, userId, email, ipAddress, req = null) {
         return this.log({
             userId: userId || null,
             actionType: success ? AUDIT_LOG_TYPES.AUTH.LOGIN : AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
@@ -89,32 +103,28 @@ class AuditService {
             entityId: userId || null,
             newValues: { email },
             ipAddress,
-            browserInfo,
-            userAgent,
+            req,
             tableSchema: 'auth',
             tableName: 'users',
             auditType: AUDIT_TYPES.BUSINESS
         });
     }
 
-    // Розширений метод для логування виходу
-    static async logLogout(userId, ipAddress, browserInfo = null, userAgent = null) {
+    static async logLogout(userId, ipAddress, req = null) {
         return this.log({
             userId,
             actionType: AUDIT_LOG_TYPES.AUTH.LOGOUT,
             entityType: ENTITY_TYPES.USER,
             entityId: userId,
             ipAddress,
-            browserInfo,
-            userAgent,
+            req,
             tableSchema: 'auth',
             tableName: 'users',
             auditType: AUDIT_TYPES.BUSINESS
         });
     }
 
-    // Метод для логування системних помилок
-    static async logError(userId, error, entityType = null, entityId = null, details = null) {
+    static async logError(userId, error, entityType = null, entityId = null, details = null, req = null) {
         return this.log({
             userId,
             actionType: AUDIT_LOG_TYPES.SYSTEM.ERROR,
@@ -125,9 +135,38 @@ class AuditService {
                 stack: error.stack,
                 details
             },
+            req,
             auditType: AUDIT_TYPES.SYSTEM
         });
     }
+}
+
+// Допоміжна функція для отримання інформації про браузер
+function getBrowserInfo(userAgent) {
+    if (!userAgent) return { name: 'unknown', version: 'unknown' };
+
+    let name = 'unknown';
+    let version = 'unknown';
+
+    if (userAgent.includes('Firefox')) {
+        name = 'Firefox';
+        const match = userAgent.match(/Firefox\/([0-9.]+)/);
+        if (match) version = match[1];
+    } else if (userAgent.includes('Chrome')) {
+        name = 'Chrome';
+        const match = userAgent.match(/Chrome\/([0-9.]+)/);
+        if (match) version = match[1];
+    } else if (userAgent.includes('Safari')) {
+        name = 'Safari';
+        const match = userAgent.match(/Version\/([0-9.]+)/);
+        if (match) version = match[1];
+    } else if (userAgent.includes('Edge')) {
+        name = 'Edge';
+        const match = userAgent.match(/Edge\/([0-9.]+)/);
+        if (match) version = match[1];
+    }
+
+    return { name, version };
 }
 
 module.exports = AuditService;

@@ -87,7 +87,8 @@ const storage = multer.diskStorage({
         oldValues: oldUserData.rows[0],
         newValues: { first_name, last_name, phone },
         ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
       });
    
        const userData = rows[0];
@@ -135,7 +136,8 @@ const storage = multer.diskStorage({
           entityType: ENTITY_TYPES.USER,
           entityId: userId,
           ipAddress: req.ip,
-          auditType: AUDIT_TYPES.BUSINESS
+          auditType: AUDIT_TYPES.BUSINESS,
+          req
         });
          return res.status(400).json({
            success: false,
@@ -160,7 +162,8 @@ const storage = multer.diskStorage({
         entityType: ENTITY_TYPES.USER,
         entityId: userId,
         ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
       });
    
        res.json({
@@ -222,7 +225,8 @@ router.post('/avatar', authenticate, upload.single('avatar'), async (req, res) =
         oldValues: { avatar_url: oldUser.rows[0]?.avatar_url },
         newValues: { avatar_url: avatarUrl },
         ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
       });
 
       await client.query('COMMIT');

@@ -51,7 +51,8 @@ router.post('/register', async (req, res) => {
       entityId: user.id,
       newValues: { email, first_name, last_name, phone },
       ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
     });
 
     res.status(201).json({
@@ -90,7 +91,8 @@ router.post('/login', async (req, res) => {
         entityType: ENTITY_TYPES.USER,
         newValues: { email },
         ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
       });
       return res.status(401).json({ message: 'Invalid credentials' });
     }
@@ -105,7 +107,8 @@ router.post('/login', async (req, res) => {
         entityId: user.id,
         newValues: { email, reason: 'Account inactive' },
         ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
       });
       return res.status(403).json({ message: 'Account is deactivated' });
     }
@@ -120,7 +123,8 @@ router.post('/login', async (req, res) => {
         entityId: user.id,
         newValues: { email, reason: 'Invalid password' },
         ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
       });
       return res.status(401).json({ message: 'Invalid credentials' });
     }
@@ -150,7 +154,8 @@ router.post('/login', async (req, res) => {
       entityId: user.id,
       newValues: { email },
       ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
     });
 
     res.json({

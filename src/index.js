@@ -8,6 +8,7 @@ const auditRoutes = require('./routes/audit');
 const profileRoutes = require('./routes/profile');
 const permissionsRouter = require('./routes/permissions');
 const resourcesRouter = require('./routes/resources');
+const setBrowserInfo = require('./middleware/browserInfo');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -19,6 +20,7 @@ app.use(cors({
 }));
 app.use('/uploads', express.static(process.env.UPLOAD_DIR));
 app.use(express.json());
+app.use(setBrowserInfo); 
 
 // Routes
 app.use('/auth', authRoutes);

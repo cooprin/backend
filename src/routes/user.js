@@ -165,7 +165,8 @@ router.post('/', authenticate, checkPermission('users.create'), async (req, res)
     entityId: userResult.rows[0].id,
     newValues: { email, first_name, last_name, phone, is_active, role_id },
     ipAddress: req.ip,
-    auditType: AUDIT_TYPES.BUSINESS
+    auditType: AUDIT_TYPES.BUSINESS,
+    req
   });
 
    res.status(201).json({
@@ -251,7 +252,8 @@ router.put('/:id', authenticate, checkPermission('users.update'), async (req, re
     oldValues: oldUserData.rows[0],
     newValues: { email, first_name, last_name, phone, role_id, is_active },
     ipAddress: req.ip,
-    auditType: AUDIT_TYPES.BUSINESS
+    auditType: AUDIT_TYPES.BUSINESS,
+    req
   });
 
    // Отримуємо оновлені дані користувача з роллю
@@ -365,7 +367,8 @@ router.delete('/:id', authenticate, checkPermission('users.delete'), async (req,
       oldValues: userData.rows[0],
       ipAddress: req.ip,
       details: force ? `Deleted with ${auditRecords.rows[0].count} audit records` : null,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
     });
    
     res.json({
@@ -430,7 +433,8 @@ router.put('/:id/password', authenticate, checkPermission('users.update'), async
       oldValues: { password: '[REDACTED]' },
       newValues: { password: '[REDACTED]' },
       ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
     });
 
     res.json({
@@ -501,7 +505,8 @@ router.put('/:id/status', authenticate, checkPermission('users.update'), async (
       oldValues: { is_active: oldUserData.rows[0].is_active },
       newValues: { is_active },
       ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
     });
 
     res.json({
