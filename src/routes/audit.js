@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const ExcelJS = require('exceljs');
 const authenticate = require('../middleware/auth');
 const { checkPermission } = require('../middleware/checkPermission');
 const { pool } = require('../database');
@@ -23,7 +24,7 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
             ipAddress,
             tableSchema,
             tableName,
-            hasChanges = null
+            hasChanges
         } = req.query;
 
         if (perPage === 'All') {
@@ -40,7 +41,6 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
         let params = [];
         let paramIndex = 1;
 
-        // Розширений пошук
         if (search) {
             conditions.push(`(
                 COALESCE(u.email, '') ILIKE $${paramIndex} OR 
@@ -53,7 +53,6 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
             paramIndex++;
         }
 
-        // Додаткові фільтри
         if (actionType) {
             conditions.push(`al.action_type = $${paramIndex}`);
             params.push(actionType);
@@ -117,7 +116,6 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
 
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
-        // Оновлений SELECT з додатковими полями
         const baseQuery = `
             FROM audit.audit_logs al
             LEFT JOIN auth.users u ON al.user_id = u.id
@@ -177,7 +175,210 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
     }
 });
 
-// Get available audit types
+// Export to Excel
+router.get('/export', authenticate, checkPermission('audit.read'), async (req, res) => {
+    try {
+        const { 
+            actionType,
+            entityType,
+            auditType,
+            dateFrom,
+            dateTo,
+            search,
+            userId,
+            ipAddress,
+            tableSchema,
+            tableName,
+            hasChanges
+        } = req.query;
+
+        let conditions = [];
+        let params = [];
+        let paramIndex = 1;
+
+        // Додаємо умови фільтрації
+        if (search) {
+            conditions.push(`(
+                COALESCE(u.email, '') ILIKE $${paramIndex} OR 
+                COALESCE(al.action_type, '') ILIKE $${paramIndex} OR 
+                COALESCE(al.entity_type, '') ILIKE $${paramIndex} OR
+                COALESCE(al.table_name, '') ILIKE $${paramIndex} OR
+                COALESCE(al.ip_address::text, '') ILIKE $${paramIndex}
+            )`);
+            params.push(`%${search}%`);
+            paramIndex++;
+        }
+
+        if (actionType) {
+            conditions.push(`al.action_type = $${paramIndex}`);
+            params.push(actionType);
+            paramIndex++;
+        }
+
+        if (entityType) {
+            conditions.push(`al.entity_type = $${paramIndex}`);
+            params.push(entityType);
+            paramIndex++;
+        }
+
+        if (auditType) {
+            conditions.push(`al.audit_type = $${paramIndex}`);
+            params.push(auditType);
+            paramIndex++;
+        }
+
+        if (dateFrom) {
+            conditions.push(`al.created_at >= $${paramIndex}::timestamp`);
+            params.push(dateFrom);
+            paramIndex++;
+        }
+
+        if (dateTo) {
+            conditions.push(`al.created_at < ($${paramIndex}::timestamp + interval '1 day')`);
+            params.push(dateTo);
+            paramIndex++;
+        }
+
+        if (userId) {
+            conditions.push(`al.user_id = $${paramIndex}`);
+            params.push(userId);
+            paramIndex++;
+        }
+
+        if (ipAddress) {
+            conditions.push(`al.ip_address = $${paramIndex}::inet`);
+            params.push(ipAddress);
+            paramIndex++;
+        }
+
+        if (tableSchema) {
+            conditions.push(`al.table_schema = $${paramIndex}`);
+            params.push(tableSchema);
+            paramIndex++;
+        }
+
+        if (tableName) {
+            conditions.push(`al.table_name = $${paramIndex}`);
+            params.push(tableName);
+            paramIndex++;
+        }
+
+        if (hasChanges !== null) {
+            conditions.push(hasChanges === 'true' ? 
+                'al.changes IS NOT NULL' : 
+                'al.changes IS NULL'
+            );
+        }
+
+        const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+        const query = `
+            SELECT 
+                al.created_at,
+                u.email as user_email,
+                al.action_type,
+                al.entity_type,
+                al.entity_id,
+                al.table_schema,
+                al.table_name,
+                al.ip_address,
+                al.audit_type,
+                al.old_values,
+                al.new_values,
+                al.changes,
+                al.browser_info,
+                al.user_agent
+            FROM audit.audit_logs al
+            LEFT JOIN auth.users u ON al.user_id = u.id
+            ${whereClause}
+            ORDER BY al.created_at DESC
+        `;
+
+        const { rows } = await pool.query(query, params);
+
+        // Створюємо новий документ Excel
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Audit Logs');
+
+        // Встановлюємо заголовки
+        worksheet.columns = [
+            { header: 'Date', key: 'date', width: 20 },
+            { header: 'User', key: 'user', width: 30 },
+            { header: 'Action', key: 'action', width: 20 },
+            { header: 'Entity Type', key: 'entityType', width: 15 },
+            { header: 'Entity ID', key: 'entityId', width: 36 },
+            { header: 'Schema', key: 'schema', width: 15 },
+            { header: 'Table', key: 'table', width: 20 },
+            { header: 'IP Address', key: 'ip', width: 15 },
+            { header: 'Audit Type', key: 'auditType', width: 15 },
+            { header: 'Changes', key: 'changes', width: 50 },
+            { header: 'Browser Info', key: 'browserInfo', width: 30 },
+            { header: 'User Agent', key: 'userAgent', width: 50 }
+        ];
+
+        // Додаємо дані
+        rows.forEach(row => {
+            worksheet.addRow({
+                date: new Date(row.created_at).toLocaleString(),
+                user: row.user_email,
+                action: row.action_type,
+                entityType: row.entity_type,
+                entityId: row.entity_id,
+                schema: row.table_schema,
+                table: row.table_name,
+                ip: row.ip_address,
+                auditType: row.audit_type,
+                changes: row.changes ? JSON.stringify(row.changes, null, 2) : '',
+                browserInfo: row.browser_info ? JSON.stringify(row.browser_info, null, 2) : '',
+                userAgent: row.user_agent
+            });
+        });
+
+        // Стилізуємо заголовки
+        worksheet.getRow(1).font = { bold: true };
+        worksheet.getRow(1).fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFE0E0E0' }
+        };
+
+        // Встановлюємо автофільтр
+        worksheet.autoFilter = {
+            from: { row: 1, column: 1 },
+            to: { row: 1, column: worksheet.columns.length }
+        };
+
+        // Налаштовуємо форматування для довгих текстових полів
+        worksheet.columns.forEach(column => {
+            if (['changes', 'browserInfo', 'userAgent'].includes(column.key)) {
+                column.alignment = { wrapText: true, vertical: 'top' };
+            }
+        });
+
+        // Встановлюємо заголовки відповіді
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename=audit-logs-${new Date().toISOString().slice(0,10)}.xlsx`
+        );
+
+        // Відправляємо файл
+        await workbook.xlsx.write(res);
+        res.end();
+
+    } catch (error) {
+        console.error('Error exporting audit logs:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while exporting audit logs'
+        });
+    }
+});
+
+// Get types for filters
 router.get('/types', authenticate, checkPermission('audit.read'), async (req, res) => {
     try {
         const [actionTypes, entityTypes, auditTypes, schemas] = await Promise.all([
