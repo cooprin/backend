@@ -192,6 +192,33 @@ router.get('/export', authenticate, checkPermission('audit.read'), async (req, r
             hasChanges
         } = req.query;
 
+        // Логуємо початок експорту
+        await AuditService.log({
+            userId: req.user.userId,
+            actionType: AUDIT_LOG_TYPES.AUDIT.EXPORT,  
+            entityType: ENTITY_TYPES.AUDIT_LOG,        
+            ipAddress: req.ip,
+            browserInfo: req.headers['user-agent'],
+            newValues: {  
+                filters: {
+                    actionType,
+                    entityType,
+                    auditType,
+                    dateFrom,
+                    dateTo,
+                    search,
+                    userId,
+                    ipAddress,
+                    tableSchema,
+                    tableName,
+                    hasChanges
+                }
+            },
+            tableSchema: 'audit',
+            tableName: 'audit_logs',
+            auditType: AUDIT_TYPES.BUSINESS
+        });
+
         let conditions = [];
         let params = [];
         let paramIndex = 1;
@@ -368,8 +395,36 @@ router.get('/export', authenticate, checkPermission('audit.read'), async (req, r
         // Відправляємо файл
         await workbook.xlsx.write(res);
         res.end();
+        await AuditService.log({
+            userId: req.user.userId,
+            actionType: AUDIT_LOG_TYPES.AUDIT.EXPORT_SUCCESS,
+            entityType: ENTITY_TYPES.AUDIT_LOG,
+            ipAddress: req.ip,
+            browserInfo: req.headers['user-agent'],
+            newValues: { 
+                recordsCount: rows.length,
+                exportDate: new Date().toISOString()
+            },
+            tableSchema: 'audit',
+            tableName: 'audit_logs',
+            auditType: AUDIT_TYPES.BUSINESS
+        });
 
     } catch (error) {
+        await AuditService.log({
+            userId: req.user.userId,
+            actionType: AUDIT_LOG_TYPES.AUDIT.EXPORT_ERROR,
+            entityType: ENTITY_TYPES.AUDIT_LOG,
+            ipAddress: req.ip,
+            browserInfo: req.headers['user-agent'],
+            newValues: { 
+                error: error.message,
+                stackTrace: error.stack
+            },
+            tableSchema: 'audit',
+            tableName: 'audit_logs',
+            auditType: AUDIT_TYPES.BUSINESS
+        });
         console.error('Error exporting audit logs:', error);
         res.status(500).json({
             success: false,
