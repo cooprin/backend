@@ -193,14 +193,21 @@ router.get('/export', authenticate, checkPermission('audit.read'), async (req, r
             hasChanges
         } = req.query;
 
+        const browserInfo = {
+            userAgent: req.headers['user-agent'],
+            platform: req.headers['sec-ch-ua-platform'],
+            mobile: req.headers['sec-ch-ua-mobile']
+        };
+
         // Логуємо початок експорту
         await AuditService.log({
             userId: req.user.userId,
-            actionType: AUDIT_LOG_TYPES.AUDIT.EXPORT,  
-            entityType: ENTITY_TYPES.AUDIT_LOG,        
+            actionType: AUDIT_LOG_TYPES.AUDIT.EXPORT,
+            entityType: ENTITY_TYPES.AUDIT_LOG,
             ipAddress: req.ip,
-            browserInfo: req.headers['user-agent'],
-            newValues: {  
+            browserInfo, // Передаємо об'єкт
+            userAgent: req.headers['user-agent'],
+            newValues: {
                 filters: {
                     actionType,
                     entityType,
@@ -401,7 +408,8 @@ router.get('/export', authenticate, checkPermission('audit.read'), async (req, r
             actionType: AUDIT_LOG_TYPES.AUDIT.EXPORT_SUCCESS,
             entityType: ENTITY_TYPES.AUDIT_LOG,
             ipAddress: req.ip,
-            browserInfo: req.headers['user-agent'],
+            browserInfo, // Передаємо об'єкт
+            userAgent: req.headers['user-agent'],
             newValues: { 
                 recordsCount: rows.length,
                 exportDate: new Date().toISOString()
@@ -417,7 +425,8 @@ router.get('/export', authenticate, checkPermission('audit.read'), async (req, r
             actionType: AUDIT_LOG_TYPES.AUDIT.EXPORT_ERROR,
             entityType: ENTITY_TYPES.AUDIT_LOG,
             ipAddress: req.ip,
-            browserInfo: req.headers['user-agent'],
+            browserInfo, // Передаємо об'єкт
+            userAgent: req.headers['user-agent'],
             newValues: { 
                 error: error.message,
                 stackTrace: error.stack
