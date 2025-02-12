@@ -6,6 +6,13 @@ const ENTITY_TYPES = {
     RESOURCE: 'RESOURCE',
     RESOURCE_ACTION: 'RESOURCE_ACTION',
     AUDIT_LOG: 'AUDIT_LOG',
+    // Додаємо нові типи
+    MANUFACTURER: 'MANUFACTURER',
+    SUPPLIER: 'SUPPLIER',
+    MODEL: 'MODEL',
+    PRODUCT: 'PRODUCT',
+    WAREHOUSE: 'WAREHOUSE',
+    STOCK: 'STOCK'
 };
 
 const AUDIT_TYPES = {
@@ -59,11 +66,67 @@ const AUDIT_LOG_TYPES = {
         EXPORT: 'AUDIT_EXPORT',
         EXPORT_SUCCESS: 'AUDIT_EXPORT_SUCCESS',
         EXPORT_ERROR: 'AUDIT_EXPORT_ERROR'
+    },
+    // Додаємо нові типи для продуктів
+    PRODUCT: {
+        CREATE: 'PRODUCT_CREATE',
+        UPDATE: 'PRODUCT_UPDATE',
+        DELETE: 'PRODUCT_DELETE',
+        STATUS_CHANGE: 'PRODUCT_STATUS_CHANGE',
+        MANUFACTURER_CREATE: 'MANUFACTURER_CREATE',
+        MANUFACTURER_UPDATE: 'MANUFACTURER_UPDATE',
+        MANUFACTURER_DELETE: 'MANUFACTURER_DELETE',
+        SUPPLIER_CREATE: 'SUPPLIER_CREATE',
+        SUPPLIER_UPDATE: 'SUPPLIER_UPDATE',
+        SUPPLIER_DELETE: 'SUPPLIER_DELETE',
+        MODEL_CREATE: 'MODEL_CREATE',
+        MODEL_UPDATE: 'MODEL_UPDATE',
+        MODEL_DELETE: 'MODEL_DELETE'
+    },
+    // Додаємо нові типи для складів
+    WAREHOUSE: {
+        CREATE: 'WAREHOUSE_CREATE',
+        UPDATE: 'WAREHOUSE_UPDATE',
+        DELETE: 'WAREHOUSE_DELETE'
+    },
+    // Додаємо нові типи для складських операцій
+    STOCK: {
+        TRANSFER: 'STOCK_TRANSFER',
+        INCREASE: 'STOCK_INCREASE',
+        DECREASE: 'STOCK_DECREASE',
+        INSTALL: 'STOCK_INSTALL',
+        UNINSTALL: 'STOCK_UNINSTALL',
+        REPAIR_SEND: 'STOCK_REPAIR_SEND',
+        REPAIR_RETURN: 'STOCK_REPAIR_RETURN',
+        WRITE_OFF: 'STOCK_WRITE_OFF',
+        WARRANTY_CHANGE: 'STOCK_WARRANTY_CHANGE'
     }
+};
+
+// Додаємо нові константи
+const PRODUCT_STATUS = {
+    IN_STOCK: 'in_stock',
+    INSTALLED: 'installed',
+    IN_REPAIR: 'in_repair',
+    WRITTEN_OFF: 'written_off'
+};
+
+const STOCK_MOVEMENT_TYPES = {
+    TRANSFER: 'transfer',
+    INSTALL: 'install',
+    UNINSTALL: 'uninstall',
+    REPAIR_SEND: 'repair_send',
+    REPAIR_RETURN: 'repair_return',
+    WRITE_OFF: 'write_off',
+    WARRANTY_CHANGE: 'warranty_change',
+    STOCK_IN: 'stock_in',
+    STOCK_OUT: 'stock_out'
 };
 
 module.exports = {
     ENTITY_TYPES,
     AUDIT_TYPES,
-    AUDIT_LOG_TYPES
+    AUDIT_LOG_TYPES,
+    PRODUCT_STATUS,
+    STOCK_MOVEMENT_TYPES
 };

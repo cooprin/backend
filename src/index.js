@@ -9,6 +9,12 @@ const profileRoutes = require('./routes/profile');
 const permissionsRouter = require('./routes/permissions');
 const resourcesRouter = require('./routes/resources');
 const setBrowserInfo = require('./middleware/browserInfo');
+const productsRouter = require('./routes/products');
+const manufacturersRouter = require('./routes/manufacturers');
+const suppliersRouter = require('./routes/suppliers');
+const modelsRouter = require('./routes/models');
+const warehousesRouter = require('./routes/warehouses');
+const stockRouter = require('./routes/stock');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -30,6 +36,12 @@ app.use('/profile', profileRoutes);
 app.use('/audit-logs', auditRoutes);
 app.use('/permissions', permissionsRouter);
 app.use('/resources', resourcesRouter);
+app.use('/products', productsRouter);
+app.use('/manufacturers', manufacturersRouter);
+app.use('/suppliers', suppliersRouter);
+app.use('/models', modelsRouter);
+app.use('/warehouses', warehousesRouter);
+app.use('/stock', stockRouter);
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
