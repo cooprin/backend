@@ -214,6 +214,11 @@ router.get('/movements', authenticate, checkPermission('warehouses.read'), async
             paramIndex++;
         }
 
+        if (product_id) {
+            conditions.push(`sm.product_id = $${paramIndex}`);
+            params.push(product_id);
+            paramIndex++;
+          }
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
         let movementsQuery = `
@@ -477,5 +482,37 @@ router.post('/adjust', authenticate, checkPermission('warehouses.update'), async
         client.release();
     }
 });
+// Додаємо новий ендпоінт для отримання поточного розташування продукту
+router.get('/current-location/:id', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+      const { id } = req.params;
+  
+      const result = await client.query(`
+        SELECT 
+          w.id as warehouse_id,
+          w.name as warehouse_name,
+          s.quantity,
+          s.price
+        FROM warehouses.stock s
+        JOIN warehouses.warehouses w ON s.warehouse_id = w.id
+        WHERE s.product_id = $1 AND s.quantity > 0
+        LIMIT 1
+      `, [id]);
+  
+      res.json({
+        success: true,
+        ...result.rows[0]
+      });
+    } catch (error) {
+      console.error('Error fetching product location:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Server error while fetching product location'
+      });
+    } finally {
+      client.release();
+    }
+  });
 
 module.exports = router;
