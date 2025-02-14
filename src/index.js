@@ -15,6 +15,7 @@ const suppliersRouter = require('./routes/suppliers');
 const modelsRouter = require('./routes/models');
 const warehousesRouter = require('./routes/warehouses');
 const stockRouter = require('./routes/stock');
+const productTypesRouter = require('./routes/product-types');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -42,6 +43,7 @@ app.use('/suppliers', suppliersRouter);
 app.use('/models', modelsRouter);
 app.use('/warehouses', warehousesRouter);
 app.use('/stock', stockRouter);
+app.use('/product-types', productTypesRouter);
 
 // Health check endpoint
 app.get('/health', async (req, res) => {

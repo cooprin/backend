@@ -6,11 +6,12 @@ const ENTITY_TYPES = {
     RESOURCE: 'RESOURCE',
     RESOURCE_ACTION: 'RESOURCE_ACTION',
     AUDIT_LOG: 'AUDIT_LOG',
-    // Додаємо нові типи
     MANUFACTURER: 'MANUFACTURER',
     SUPPLIER: 'SUPPLIER',
     MODEL: 'MODEL',
     PRODUCT: 'PRODUCT',
+    PRODUCT_TYPE: 'PRODUCT_TYPE',
+    PRODUCT_CHARACTERISTIC: 'PRODUCT_CHARACTERISTIC',
     WAREHOUSE: 'WAREHOUSE',
     STOCK: 'STOCK'
 };
@@ -67,7 +68,6 @@ const AUDIT_LOG_TYPES = {
         EXPORT_SUCCESS: 'AUDIT_EXPORT_SUCCESS',
         EXPORT_ERROR: 'AUDIT_EXPORT_ERROR'
     },
-    // Додаємо нові типи для продуктів
     PRODUCT: {
         CREATE: 'PRODUCT_CREATE',
         UPDATE: 'PRODUCT_UPDATE',
@@ -83,13 +83,20 @@ const AUDIT_LOG_TYPES = {
         MODEL_UPDATE: 'MODEL_UPDATE',
         MODEL_DELETE: 'MODEL_DELETE'
     },
-    // Додаємо нові типи для складів
+    PRODUCT_TYPE: {
+        CREATE: 'PRODUCT_TYPE_CREATE',
+        UPDATE: 'PRODUCT_TYPE_UPDATE',
+        DELETE: 'PRODUCT_TYPE_DELETE',
+        CHARACTERISTIC_CREATE: 'PRODUCT_TYPE_CHARACTERISTIC_CREATE',
+        CHARACTERISTIC_UPDATE: 'PRODUCT_TYPE_CHARACTERISTIC_UPDATE',
+        CHARACTERISTIC_DELETE: 'PRODUCT_TYPE_CHARACTERISTIC_DELETE',
+        CHARACTERISTIC_ORDER_UPDATE: 'PRODUCT_TYPE_CHARACTERISTIC_ORDER_UPDATE'
+    },
     WAREHOUSE: {
         CREATE: 'WAREHOUSE_CREATE',
         UPDATE: 'WAREHOUSE_UPDATE',
         DELETE: 'WAREHOUSE_DELETE'
     },
-    // Додаємо нові типи для складських операцій
     STOCK: {
         TRANSFER: 'STOCK_TRANSFER',
         INCREASE: 'STOCK_INCREASE',
@@ -103,7 +110,6 @@ const AUDIT_LOG_TYPES = {
     }
 };
 
-// Додаємо нові константи
 const PRODUCT_STATUS = {
     IN_STOCK: 'in_stock',
     INSTALLED: 'installed',
@@ -123,10 +129,19 @@ const STOCK_MOVEMENT_TYPES = {
     STOCK_OUT: 'stock_out'
 };
 
+const CHARACTERISTIC_TYPES = {
+    STRING: 'string',
+    NUMBER: 'number',
+    DATE: 'date',
+    BOOLEAN: 'boolean',
+    SELECT: 'select'
+};
+
 module.exports = {
     ENTITY_TYPES,
     AUDIT_TYPES,
     AUDIT_LOG_TYPES,
     PRODUCT_STATUS,
-    STOCK_MOVEMENT_TYPES
+    STOCK_MOVEMENT_TYPES,
+    CHARACTERISTIC_TYPES
 };
