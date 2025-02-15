@@ -1,6 +1,8 @@
 const { pool } = require('../database');
 const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
-
+function cleanIPv6(ip) {
+    return ip ? ip.replace('::ffff:', '') : ip;
+}
 class AuditService {
     static async log({ 
         userId, 
@@ -43,6 +45,7 @@ class AuditService {
                     formattedBrowserInfo) : 
                 null;
 
+            const cleanedIpAddress = cleanIPv6(ipAddress || req?.ip);    
             const { rows } = await pool.query(
                 `INSERT INTO audit.audit_logs
                  (user_id, action_type, entity_type, entity_id, 
@@ -59,7 +62,7 @@ class AuditService {
                     oldValues ? JSON.stringify(oldValues) : null,
                     newValues ? JSON.stringify(newValues) : null,
                     changes ? JSON.stringify(changes) : null,
-                    ipAddress || (req?.ip),
+                    cleanedIpAddress,
                     formattedBrowserInfo ? JSON.stringify(formattedBrowserInfo) : null,
                     userAgent || req?.headers['user-agent'],
                     tableSchema,
