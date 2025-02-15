@@ -46,29 +46,33 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
 
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
-        let manufacturersQuery = `
-            SELECT 
-                m.*,
-                COUNT(DISTINCT md.id) as models_count,
-                COUNT(DISTINCT p.id) as products_count
-            FROM products.manufacturers m
-            LEFT JOIN products.models md ON m.id = md.manufacturer_id
-            LEFT JOIN products.products p ON md.id = p.model_id
-            ${whereClause}
-            GROUP BY m.id
-            ORDER BY m.${sortBy} ${orderDirection}
-        `;
 
-        if (perPage) {
-            manufacturersQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-            params.push(perPage, offset);
-        }
+let manufacturersQuery = `
+WITH filtered_manufacturers AS (
+    SELECT m.*
+    FROM products.manufacturers m
+    ${whereClause}
+)
+SELECT 
+    fm.*,
+    COUNT(DISTINCT md.id) as models_count,
+    COUNT(DISTINCT p.id) as products_count
+FROM filtered_manufacturers fm
+LEFT JOIN products.models md ON fm.id = md.manufacturer_id
+LEFT JOIN products.products p ON md.id = p.model_id
+GROUP BY fm.id
+ORDER BY fm.${sortBy} ${orderDirection}
+`;
 
-        const countQuery = `
-            SELECT COUNT(*) 
-            FROM products.manufacturers
-            ${whereClause}
-        `;
+
+const countQuery = `
+SELECT COUNT(*) 
+FROM (
+    SELECT m.id
+    FROM products.manufacturers m
+    ${whereClause}
+) as filtered_count
+`;
 
         const [countResult, manufacturersResult] = await Promise.all([
             pool.query(countQuery, conditions.length ? params.slice(0, paramIndex - 1) : []),
