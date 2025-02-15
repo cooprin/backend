@@ -33,9 +33,9 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
         let paramIndex = 1;
 
         if (search) {
-            conditions.push(`(name ILIKE $${paramIndex} OR description ILIKE $${paramIndex})`);
-            params.push(`%${search}%`);
-            paramIndex++;
+            conditions.push(`(name ILIKE $${paramIndex} OR description ILIKE $${paramIndex + 1})`);
+            params.push(`%${search}%`, `%${search}%`);
+            paramIndex += 2;
         }
 
         if (isActive !== '') {
@@ -84,7 +84,9 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
         console.error('Error fetching manufacturers:', error);
         res.status(500).json({
             success: false,
-            message: 'Server error while fetching manufacturers'
+            message: 'Server error while fetching manufacturers',
+            error: error.message, 
+            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
         });
     }
 });
