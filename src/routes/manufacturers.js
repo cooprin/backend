@@ -33,56 +33,58 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
         let paramIndex = 1;
 
         if (search) {
-            conditions.push(`(name ILIKE $${paramIndex} OR description ILIKE $${paramIndex + 1})`);
-            params.push(`%${search}%`, `%${search}%`);
-            paramIndex += 2;
+            conditions.push(`(m.name ILIKE $${paramIndex} OR m.description ILIKE $${paramIndex})`);
+            params.push(`%${search}%`);
+            paramIndex++;
         }
 
         if (isActive !== '') {
-            conditions.push(`is_active = $${paramIndex}`);
+            conditions.push(`m.is_active = $${paramIndex}`);
             params.push(isActive === 'true');
             paramIndex++;
         }
 
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
+        const query = `
+            WITH manufacturer_stats AS (
+                SELECT 
+                    manufacturer_id,
+                    COUNT(DISTINCT id) as models_count
+                FROM products.models
+                GROUP BY manufacturer_id
+            ),
+            product_stats AS (
+                SELECT 
+                    m.manufacturer_id,
+                    COUNT(DISTINCT p.id) as products_count
+                FROM products.models m
+                LEFT JOIN products.products p ON m.id = p.model_id
+                GROUP BY m.manufacturer_id
+            )
+            SELECT 
+                m.*,
+                COALESCE(ms.models_count, 0) as models_count,
+                COALESCE(ps.products_count, 0) as products_count,
+                COUNT(*) OVER() as total_count
+            FROM products.manufacturers m
+            LEFT JOIN manufacturer_stats ms ON m.id = ms.manufacturer_id
+            LEFT JOIN product_stats ps ON m.id = ps.manufacturer_id
+            ${whereClause}
+            ORDER BY m.${sortBy} ${orderDirection}
+            ${perPage ? `LIMIT $${paramIndex} OFFSET $${paramIndex + 1}` : ''}
+        `;
 
-let manufacturersQuery = `
-WITH filtered_manufacturers AS (
-    SELECT m.*
-    FROM products.manufacturers m
-    ${whereClause}
-)
-SELECT 
-    fm.*,
-    COUNT(DISTINCT md.id) as models_count,
-    COUNT(DISTINCT p.id) as products_count
-FROM filtered_manufacturers fm
-LEFT JOIN products.models md ON fm.id = md.manufacturer_id
-LEFT JOIN products.products p ON md.id = p.model_id
-GROUP BY fm.id
-ORDER BY fm.${sortBy} ${orderDirection}
-`;
+        if (perPage) {
+            params.push(perPage, offset);
+        }
 
-
-const countQuery = `
-SELECT COUNT(*) 
-FROM (
-    SELECT m.id
-    FROM products.manufacturers m
-    ${whereClause}
-) as filtered_count
-`;
-
-        const [countResult, manufacturersResult] = await Promise.all([
-            pool.query(countQuery, conditions.length ? params.slice(0, paramIndex - 1) : []),
-            pool.query(manufacturersQuery, params)
-        ]);
-
+        const result = await pool.query(query, params);
+        
         res.json({
             success: true,
-            manufacturers: manufacturersResult.rows,
-            total: parseInt(countResult.rows[0].count)
+            manufacturers: result.rows,
+            total: result.rows.length > 0 ? result.rows[0].total_count : 0
         });
     } catch (error) {
         console.error('Error fetching manufacturers:', error);
