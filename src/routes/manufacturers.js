@@ -18,6 +18,11 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
             isActive = ''
         } = req.query;
 
+        // Визначаємо, чи потрібен префікс m. для сортування
+        const sortByWithPrefix = ['name', 'description', 'is_active'].includes(sortBy) 
+            ? `m.${sortBy}` 
+            : sortBy;
+
         if (perPage === 'All') {
             perPage = null;
         } else {
@@ -71,7 +76,7 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
             LEFT JOIN manufacturer_stats ms ON m.id = ms.manufacturer_id
             LEFT JOIN product_stats ps ON m.id = ps.manufacturer_id
             ${whereClause}
-            ORDER BY m.${sortBy} ${orderDirection}
+            ORDER BY ${sortByWithPrefix} ${orderDirection}
             ${perPage ? `LIMIT $${paramIndex} OFFSET $${paramIndex + 1}` : ''}
         `;
 
