@@ -6,6 +6,45 @@ const { checkPermission } = require('../middleware/checkPermission');
 const AuditService = require('../services/auditService');
 const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
 
+
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs').promises;
+
+const storage = multer.diskStorage({
+    destination: async (req, file, cb) => {
+      const uploadDir = path.join(process.env.UPLOAD_DIR, 'models');
+      try {
+        await fs.mkdir(uploadDir, { recursive: true });
+        cb(null, uploadDir);
+      } catch (error) {
+        cb(error);
+      }
+    },
+    filename: (req, file, cb) => {
+      const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
+      const ext = path.extname(file.originalname);
+      cb(null, `model-${uniqueSuffix}${ext}`);
+    }
+});
+
+const fileFilter = (req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only JPEG, PNG and GIF are allowed'));
+    }
+};
+
+const upload = multer({
+    storage,
+    limits: {
+      fileSize: 5 * 1024 * 1024 // 5MB limit
+    },
+    fileFilter
+});
+
 // Get models list with filtering and pagination
 router.get('/', authenticate, checkPermission('products.read'), async (req, res) => {
     try {
@@ -327,6 +366,75 @@ router.put('/:id', authenticate, checkPermission('products.update'), async (req,
         res.status(500).json({
             success: false,
             message: 'Server error while updating model'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// В models.js додайте новий endpoint для завантаження зображення
+router.post('/:id/image', authenticate, checkPermission('products.update'), upload.single('image'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        if (!req.file) {
+            return res.status(400).json({ 
+                success: false,
+                message: 'No file uploaded' 
+            });
+        }
+
+        const { id } = req.params;
+
+        await client.query('BEGIN');
+
+        // Отримуємо інформацію про стару картинку
+        const oldModel = await client.query(
+            'SELECT image_url FROM products.models WHERE id = $1',
+            [id]
+        );
+
+        // Якщо є стара картинка - видаляємо її
+        if (oldModel.rows[0]?.image_url) {
+            const oldImagePath = path.join(process.env.UPLOAD_DIR, oldModel.rows[0].image_url);
+            try {
+                await fs.unlink(oldImagePath);
+            } catch (err) {
+                console.error('Error deleting old image:', err);
+            }
+        }
+
+        const imageUrl = path.relative(process.env.UPLOAD_DIR, req.file.path);
+        
+        // Оновлюємо URL зображення в базі даних
+        await client.query(
+            'UPDATE products.models SET image_url = $1 WHERE id = $2 RETURNING *',
+            [imageUrl, id]
+        );
+
+        await AuditService.log({
+            userId: req.user.userId,
+            actionType: AUDIT_LOG_TYPES.PRODUCT.MODEL_IMAGE_UPDATE,
+            entityType: ENTITY_TYPES.MODEL,
+            entityId: id,
+            oldValues: { image_url: oldModel.rows[0]?.image_url },
+            newValues: { image_url: imageUrl },
+            ipAddress: req.ip,
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+
+        await client.query('COMMIT');
+
+        res.json({ 
+            success: true,
+            image_url: imageUrl
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error uploading image:', error);
+        res.status(500).json({ 
+            success: false,
+            message: 'Server error while uploading image' 
         });
     } finally {
         client.release();
