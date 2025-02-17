@@ -34,16 +34,16 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
 
         if (search) {
             conditions.push(`(
-                name ILIKE $${paramIndex} OR 
-                description ILIKE $${paramIndex} OR 
-                contact_person ILIKE $${paramIndex} OR 
-                phone ILIKE $${paramIndex} OR 
-                email ILIKE $${paramIndex} OR 
-                address ILIKE $${paramIndex}
+                s.name ILIKE $${paramIndex} OR 
+                COALESCE(s.description, '') ILIKE $${paramIndex} OR 
+                COALESCE(s.contact_person, '') ILIKE $${paramIndex} OR 
+                COALESCE(s.phone, '') ILIKE $${paramIndex} OR 
+                COALESCE(s.email, '') ILIKE $${paramIndex} OR 
+                COALESCE(s.address, '') ILIKE $${paramIndex}
             )`);
             params.push(`%${search}%`);
             paramIndex++;
-        }
+        }        
 
         if (isActive !== '') {
             conditions.push(`is_active = $${paramIndex}`);
@@ -54,16 +54,27 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
         let suppliersQuery = `
-            SELECT 
-                s.*,
-                COUNT(DISTINCT p.id) as products_count,
-                COUNT(DISTINCT CASE WHEN p.warranty_end > CURRENT_DATE THEN p.id END) as warranty_active_count
-            FROM products.suppliers s
-            LEFT JOIN products.products p ON s.id = p.supplier_id
-            ${whereClause}
-            GROUP BY s.id
-            ORDER BY s.${sortBy} ${orderDirection}
-        `;
+  SELECT 
+        s.id,
+        s.name,
+        s.description,
+        s.contact_person,
+        s.phone,
+        s.email,
+        s.address,
+        s.is_active,
+        COUNT(DISTINCT p.id) as products_count,
+        COUNT(DISTINCT CASE 
+            WHEN p.current_status != 'written_off' 
+            THEN p.id 
+        END) as active_warranty_count
+    FROM products.suppliers s
+    LEFT JOIN products.products p ON p.supplier_id = s.id
+    ${whereClause}
+    GROUP BY s.id, s.name, s.description, s.contact_person, 
+             s.phone, s.email, s.address, s.is_active
+    ORDER BY ${sortBy === 'name' ? 's.name' : sortBy} ${orderDirection}
+`;
 
         if (perPage) {
             suppliersQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
@@ -71,10 +82,10 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
         }
 
         const countQuery = `
-            SELECT COUNT(*) 
-            FROM products.suppliers
-            ${whereClause}
-        `;
+        SELECT COUNT(DISTINCT s.id) 
+        FROM products.suppliers s
+        ${whereClause}
+    `;
 
         const [countResult, suppliersResult] = await Promise.all([
             pool.query(countQuery, conditions.length ? params.slice(0, paramIndex - 1) : []),
