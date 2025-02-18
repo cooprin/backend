@@ -5,6 +5,7 @@ const authenticate = require('../middleware/auth');
 const { checkPermission } = require('../middleware/checkPermission');
 const ProductTypeService = require('../services/product-types.service');
 
+
 // Get product types list
 router.get('/', authenticate, checkPermission('products.read'), async (req, res) => {
     try {
@@ -341,6 +342,23 @@ router.delete('/:typeId/characteristics/:charId', authenticate, checkPermission(
         });
     } finally {
         client.release();
+    }
+});
+
+// Get product type codes
+router.get('/codes', authenticate, checkPermission('products.read'), async (req, res) => {
+    try {
+        const result = await ProductTypeService.getProductTypeCodes();
+        res.json({
+            success: true,
+            codes: result
+        });
+    } catch (error) {
+        console.error('Error fetching product type codes:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching product type codes'
+        });
     }
 });
 

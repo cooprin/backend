@@ -2,6 +2,8 @@ const { pool } = require('../database');
 const AuditService = require('./auditService');
 const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
 
+
+
 class ProductTypeService {
     static getBaseQuery() {
         return `
@@ -416,6 +418,20 @@ class ProductTypeService {
             auditType: AUDIT_TYPES.BUSINESS,
             req
         });
+    }
+    async getProductTypeCodes() {
+        const result = await pool.query(`
+            SELECT 
+                value,
+                label,
+                description,
+                is_active
+            FROM products.product_type_codes
+            WHERE is_active = true
+            ORDER BY label
+        `);
+        
+        return result.rows;
     }
 }
 
