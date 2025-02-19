@@ -419,7 +419,7 @@ class ProductTypeService {
             req
         });
     }
-    async getProductTypeCodes() {
+    static async getProductTypeCodes() {  
         const result = await pool.query(`
             SELECT 
                 value,
@@ -430,6 +430,13 @@ class ProductTypeService {
             WHERE is_active = true
             ORDER BY label
         `);
+        
+        // Якщо немає даних, повертаємо базовий набір
+        if (result.rows.length === 0) {
+            return [
+                { value: 'SIM', label: 'SIM - Sim card', description: 'Sim card' }
+            ];
+        }
         
         return result.rows;
     }
