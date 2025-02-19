@@ -20,6 +20,23 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
     }
 });
 
+// Get product type codes
+router.get('/codes', authenticate, checkPermission('products.read'), async (req, res) => {
+    try {
+        const result = await ProductTypeService.getProductTypeCodes();
+        res.json({
+            success: true,
+            codes: result
+        });
+    } catch (error) {
+        console.error('Error fetching product type codes:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching product type codes'
+        });
+    }
+});
+
 // Get single product type with characteristics
 router.get('/:id', authenticate, checkPermission('products.read'), async (req, res) => {
     try {
@@ -345,21 +362,6 @@ router.delete('/:typeId/characteristics/:charId', authenticate, checkPermission(
     }
 });
 
-// Get product type codes
-router.get('/codes', authenticate, checkPermission('products.read'), async (req, res) => {
-    try {
-        const result = await ProductTypeService.getProductTypeCodes();
-        res.json({
-            success: true,
-            codes: result
-        });
-    } catch (error) {
-        console.error('Error fetching product type codes:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error while fetching product type codes'
-        });
-    }
-});
+
 
 module.exports = router;
