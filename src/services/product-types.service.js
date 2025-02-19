@@ -419,26 +419,33 @@ class ProductTypeService {
             req
         });
     }
-    static async getProductTypeCodes() {  
-        const result = await pool.query(`
-            SELECT 
-                value,
-                label,
-                description,
-                is_active
-            FROM products.product_type_codes
-            WHERE is_active = true
-            ORDER BY label
-        `);
-        
-        // Якщо немає даних, повертаємо базовий набір
-        if (result.rows.length === 0) {
+    static async getProductTypeCodes() {
+        try {
+            const result = await pool.query(`
+                SELECT 
+                    value,
+                    label,
+                    description,
+                    is_active
+                FROM products.product_type_codes
+                WHERE is_active = true
+                ORDER BY label
+            `);
+            
+            // Якщо немає даних, повертаємо базовий набір
+            if (result.rows.length === 0) {
+                return [
+                    { value: 'SIM', label: 'SIM - Sim card', description: 'Sim card' }
+                ];
+            }
+            
+            return result.rows;
+        } catch (error) {
+            console.error('Error in getProductTypeCodes:', error);
             return [
                 { value: 'SIM', label: 'SIM - Sim card', description: 'Sim card' }
             ];
         }
-        
-        return result.rows;
     }
 }
 
