@@ -45,7 +45,7 @@ app.use('/models', modelsRouter);
 app.use('/warehouses', warehousesRouter);
 app.use('/stock', stockRouter);
 app.use('/product-types', productTypesRouter);
-app.use('/api/characteristic-types', characteristicTypesRouter);
+app.use('/characteristic-types', characteristicTypesRouter);
 
 // Health check endpoint
 app.get('/health', async (req, res) => {

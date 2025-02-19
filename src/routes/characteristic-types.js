@@ -7,6 +7,7 @@ const AuditService = require('../services/auditService');
 const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
 
 // Get characteristic types list
+// Get characteristic types list
 router.get('/', authenticate, checkPermission('products.read'), async (req, res) => {
     try {
         const result = await pool.query(`
@@ -14,9 +15,7 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
                 value,
                 label,
                 description,
-                validation,
-                created_at,
-                updated_at
+                validation
             FROM products.characteristic_types
             ORDER BY label
         `);
