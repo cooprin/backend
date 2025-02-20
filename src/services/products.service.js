@@ -151,71 +151,141 @@ class ProductService {
         return result.rows.length > 0;
     }
 
+    
     static async createProduct(client, { 
-        sku, model_id, supplier_id, product_type_id, is_own = true,
-        purchase_date, supplier_warranty_end, warranty_end,
-        sale_date = null, current_status = 'in_stock',
-        current_object_id = null, quantity = 0,
-        characteristics = {}, userId, ipAddress, req
+        sku, 
+        model_id, 
+        supplier_id, 
+        product_type_id, 
+        is_own = true,
+        purchase_date, 
+        supplier_warranty_end, 
+        warranty_end,
+        characteristics = {}, 
+        userId, 
+        ipAddress, 
+        req
     }) {
-        // Створюємо продукт
-        const productResult = await client.query(
-            `INSERT INTO products.products (
-                sku, model_id, supplier_id, product_type_id, is_own,
-                purchase_date, supplier_warranty_end, warranty_end,
-                sale_date, current_status, current_object_id
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            RETURNING *`,
-            [
-                sku, model_id, supplier_id, product_type_id, is_own,
-                purchase_date, supplier_warranty_end, warranty_end,
-                sale_date, current_status, current_object_id
-            ]
-        );
-
-        // Зберігаємо характеристики
-        const typeCharacteristics = await client.query(
-            `SELECT * FROM products.product_type_characteristics 
-             WHERE product_type_id = $1`,
-            [product_type_id]
-        );
-
-        await this.saveCharacteristics(
-            client, 
-            productResult.rows[0].id, 
-            characteristics, 
-            typeCharacteristics
-        );
-
-        // Створюємо запис на складі якщо потрібно
-        if (quantity > 0) {
-            await client.query(
-                `INSERT INTO warehouses.stock (product_id, warehouse_id, quantity)
-                 VALUES ($1, $2, $3)`,
-                [productResult.rows[0].id, warehouse_id, quantity]
-            );
-        }
-
-        // Логуємо аудит
-        await AuditService.log({
-            userId,
-            actionType: AUDIT_LOG_TYPES.PRODUCT.CREATE,
-            entityType: ENTITY_TYPES.PRODUCT,
-            entityId: productResult.rows[0].id,
-            newValues: {
-                sku, model_id, supplier_id, product_type_id, is_own,
-                purchase_date, supplier_warranty_end, warranty_end,
-                sale_date, current_status, current_object_id,
+        try {
+            // Логуємо вхідні дані
+            console.log('Creating product with data:', {
+                sku,
+                model_id,
+                supplier_id,
+                product_type_id,
+                is_own,
+                purchase_date,
+                supplier_warranty_end,
+                warranty_end,
                 characteristics
-            },
-            ipAddress,
-            auditType: AUDIT_TYPES.BUSINESS,
-            req
-        });
-
-        // Повертаємо створений продукт з усіма зв'язаними даними
-        return this.getProductById(productResult.rows[0].id);
+            });
+    
+            // Перевіряємо характеристики
+            const { isValid, errors } = await validateProductCharacteristics(
+                client, 
+                product_type_id, 
+                characteristics
+            );
+    
+            if (!isValid) {
+                console.error('Validation errors:', errors);
+                throw new Error(`Validation failed: ${errors.join(', ')}`);
+            }
+    
+            // Створюємо продукт
+            const productResult = await client.query(
+                `INSERT INTO products.products (
+                    sku, 
+                    model_id, 
+                    supplier_id, 
+                    product_type_id, 
+                    is_own,
+                    purchase_date, 
+                    supplier_warranty_end, 
+                    warranty_end,
+                    current_status
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                RETURNING *`,
+                [
+                    sku,
+                    model_id,
+                    supplier_id,
+                    product_type_id,
+                    is_own,
+                    purchase_date,
+                    supplier_warranty_end,
+                    warranty_end,
+                    'in_stock'
+                ]
+            );
+    
+            console.log('Product created:', productResult.rows[0]);
+    
+            // Отримуємо характеристики типу продукту
+            const typeCharacteristics = await client.query(
+                `SELECT * FROM products.product_type_characteristics 
+                 WHERE product_type_id = $1`,
+                [product_type_id]
+            );
+    
+            // Зберігаємо характеристики
+            for (const tc of typeCharacteristics.rows) {
+                const value = characteristics[tc.code];
+                if (value !== undefined && value !== null) {
+                    const formattedValue = formatCharacteristicValue(tc.type, value);
+                    
+                    console.log(`Saving characteristic ${tc.code}:`, {
+                        productId: productResult.rows[0].id,
+                        characteristicId: tc.id,
+                        value: formattedValue,
+                        originalValue: value,
+                        type: tc.type
+                    });
+    
+                    await client.query(
+                        `INSERT INTO products.product_characteristic_values 
+                         (product_id, characteristic_id, value)
+                         VALUES ($1, $2, $3)`,
+                        [
+                            productResult.rows[0].id, 
+                            tc.id, 
+                            formattedValue === null ? null : formattedValue.toString()
+                        ]
+                    );
+                }
+            }
+    
+            // Записуємо аудит
+            await AuditService.log({
+                userId,
+                actionType: AUDIT_LOG_TYPES.PRODUCT.CREATE,
+                entityType: ENTITY_TYPES.PRODUCT,
+                entityId: productResult.rows[0].id,
+                newValues: {
+                    sku,
+                    model_id,
+                    supplier_id,
+                    product_type_id,
+                    is_own,
+                    purchase_date,
+                    supplier_warranty_end,
+                    warranty_end,
+                    characteristics
+                },
+                ipAddress,
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+    
+            const createdProduct = await this.getProductById(productResult.rows[0].id);
+            console.log('Final product with characteristics:', createdProduct);
+    
+            return createdProduct;
+        } catch (error) {
+            console.error('Error in createProduct:', error);
+            throw error;
+        }
     }
 
     static async updateProduct(client, { id, data, oldProduct, userId, ipAddress, req }) {
