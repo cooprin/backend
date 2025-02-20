@@ -1,7 +1,10 @@
 const { pool } = require('../database');
 const AuditService = require('./auditService');
 const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
-const { formatCharacteristicValue } = require('../utils/characteristicsUtils');
+const { 
+    validateProductCharacteristics,
+    formatCharacteristicValue 
+} = require('../utils/characteristicsUtils');
 
 class ProductService {
     // Допоміжні функції
@@ -151,7 +154,7 @@ class ProductService {
         return result.rows.length > 0;
     }
 
-    
+
     static async createProduct(client, { 
         sku, 
         model_id, 
