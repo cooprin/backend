@@ -361,7 +361,24 @@ router.delete('/:typeId/characteristics/:charId', authenticate, checkPermission(
         client.release();
     }
 });
-
+// Get characteristics for product type
+router.get('/:id/characteristics', authenticate, checkPermission('products.read'), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const characteristics = await ProductTypeService.getTypeCharacteristics(id);
+        
+        res.json({
+            success: true,
+            characteristics
+        });
+    } catch (error) {
+        console.error('Error fetching characteristics:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching characteristics'
+        });
+    }
+});
 
 
 module.exports = router;

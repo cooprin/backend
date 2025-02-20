@@ -447,6 +447,30 @@ class ProductTypeService {
             ];
         }
     }
+    static async getTypeCharacteristics(typeId) {
+        try {
+            const result = await pool.query(`
+                SELECT 
+                    ptc.id,
+                    ptc.name,
+                    ptc.code,
+                    ptc.type,
+                    ptc.is_required,
+                    ptc.default_value,
+                    ptc.validation_rules,
+                    ptc.options,
+                    ptc.ordering
+                FROM products.product_type_characteristics ptc
+                WHERE ptc.product_type_id = $1
+                ORDER BY ptc.ordering
+            `, [typeId]);
+    
+            return result.rows;
+        } catch (error) {
+            console.error('Error in getTypeCharacteristics:', error);
+            throw error;
+        }
+    }
 }
 
 module.exports = ProductTypeService;
