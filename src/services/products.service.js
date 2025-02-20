@@ -159,31 +159,22 @@ class ProductService {
         sku, 
         model_id, 
         supplier_id, 
-        product_type_id, 
-        is_own = true,
-        purchase_date, 
-        supplier_warranty_end, 
-        warranty_end,
+        product_type_id,
         characteristics = {}, 
         userId, 
         ipAddress, 
         req
     }) {
         try {
-            // Логуємо вхідні дані
             console.log('Creating product with data:', {
                 sku,
                 model_id,
                 supplier_id,
                 product_type_id,
-                is_own,
-                purchase_date,
-                supplier_warranty_end,
-                warranty_end,
                 characteristics
             });
     
-            // Перевіряємо характеристики
+            // Валідація характеристик
             const { isValid, errors } = await validateProductCharacteristics(
                 client, 
                 product_type_id, 
@@ -201,79 +192,60 @@ class ProductService {
                     sku, 
                     model_id, 
                     supplier_id, 
-                    product_type_id, 
-                    is_own,
-                    purchase_date, 
-                    supplier_warranty_end, 
-                    warranty_end,
+                    product_type_id,
                     current_status
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                VALUES ($1, $2, $3, $4, $5)
                 RETURNING *`,
                 [
                     sku,
                     model_id,
                     supplier_id,
                     product_type_id,
-                    is_own,
-                    purchase_date,
-                    supplier_warranty_end,
-                    warranty_end,
                     'in_stock'
                 ]
             );
     
-            console.log('Product created:', productResult.rows[0]);
+            const productId = productResult.rows[0].id;
     
-            // Отримуємо характеристики типу продукту
+            // Зберігаємо характеристики
             const typeCharacteristics = await client.query(
                 `SELECT * FROM products.product_type_characteristics 
                  WHERE product_type_id = $1`,
                 [product_type_id]
             );
     
-            // Зберігаємо характеристики
             for (const tc of typeCharacteristics.rows) {
                 const value = characteristics[tc.code];
                 if (value !== undefined && value !== null) {
-                    const formattedValue = formatCharacteristicValue(tc.type, value);
+                    const formattedValue = typeof value === 'boolean' ? value.toString() : value;
                     
                     console.log(`Saving characteristic ${tc.code}:`, {
-                        productId: productResult.rows[0].id,
+                        productId,
                         characteristicId: tc.id,
                         value: formattedValue,
-                        originalValue: value,
-                        type: tc.type
                     });
     
                     await client.query(
                         `INSERT INTO products.product_characteristic_values 
                          (product_id, characteristic_id, value)
                          VALUES ($1, $2, $3)`,
-                        [
-                            productResult.rows[0].id, 
-                            tc.id, 
-                            formattedValue === null ? null : formattedValue.toString()
-                        ]
+                        [productId, tc.id, formattedValue]
                     );
                 }
             }
     
-            // Записуємо аудит
+            // Логуємо
             await AuditService.log({
                 userId,
                 actionType: AUDIT_LOG_TYPES.PRODUCT.CREATE,
                 entityType: ENTITY_TYPES.PRODUCT,
-                entityId: productResult.rows[0].id,
+                entityId: productId,
                 newValues: {
                     sku,
                     model_id,
                     supplier_id,
                     product_type_id,
-                    is_own,
-                    purchase_date,
-                    supplier_warranty_end,
-                    warranty_end,
                     characteristics
                 },
                 ipAddress,
@@ -281,10 +253,7 @@ class ProductService {
                 req
             });
     
-            const createdProduct = await this.getProductById(productResult.rows[0].id);
-            console.log('Final product with characteristics:', createdProduct);
-    
-            return createdProduct;
+            return await this.getProductById(productId);
         } catch (error) {
             console.error('Error in createProduct:', error);
             throw error;
