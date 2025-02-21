@@ -161,6 +161,7 @@ class ProductService {
         supplier_id, 
         product_type_id,
         warehouse_id,
+        is_own,
         characteristics = {}, 
         created_by,
         userId, 
@@ -199,9 +200,10 @@ class ProductService {
                     model_id, 
                     supplier_id, 
                     product_type_id,
-                    current_status
+                    current_status,
+                    is_own
                 )
-                VALUES ($1, $2, $3, $4, $5)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING *`,
                 [
                     sku,
