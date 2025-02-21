@@ -160,6 +160,7 @@ class ProductService {
         model_id, 
         supplier_id, 
         product_type_id,
+        warehouse_id,
         characteristics = {}, 
         created_by,
         userId, 
@@ -167,6 +168,9 @@ class ProductService {
         req
     }) {
         try {
+            if (!warehouse_id) {
+                throw new Error('Warehouse ID is required');
+            }
             console.log('Creating product with data:', {
                 sku,
                 model_id,
