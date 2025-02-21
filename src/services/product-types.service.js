@@ -7,27 +7,30 @@ const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/con
 class ProductTypeService {
     static getBaseQuery() {
         return `
-            SELECT 
-                pt.*,
-                jsonb_agg(
+        SELECT 
+            pt.*,
+            (
+                SELECT jsonb_agg(
                     jsonb_build_object(
-                        'id', ptc.id,
-                        'name', ptc.name,
-                        'code', ptc.code,
-                        'type', ptc.type,
-                        'is_required', ptc.is_required,
-                        'default_value', ptc.default_value,
-                        'validation_rules', ptc.validation_rules,
-                        'options', ptc.options,
-                        'ordering', ptc.ordering
-                    ) ORDER BY ptc.ordering
-                ) FILTER (WHERE ptc.id IS NOT NULL) as characteristics,
-                COUNT(DISTINCT p.id) as products_count
-            FROM products.product_types pt
-            LEFT JOIN products.product_type_characteristics ptc ON pt.id = ptc.product_type_id
-            LEFT JOIN products.products p ON pt.id = p.product_type_id
-        `;
-    }
+                        'id', c.id,
+                        'name', c.name,
+                        'code', c.code,
+                        'type', c.type,
+                        'is_required', c.is_required,
+                        'default_value', c.default_value,
+                        'validation_rules', c.validation_rules,
+                        'options', c.options,
+                        'ordering', c.ordering
+                    ) ORDER BY c.ordering
+                )
+                FROM products.product_type_characteristics c
+                WHERE c.product_type_id = pt.id
+            ) as characteristics,
+            COUNT(DISTINCT p.id) as products_count
+        FROM products.product_types pt
+        LEFT JOIN products.products p ON pt.id = p.product_type_id
+    `;
+}
 
     static async getProductTypes(filters) {
         const {
