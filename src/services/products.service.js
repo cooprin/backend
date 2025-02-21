@@ -210,7 +210,9 @@ class ProductService {
                     model_id,
                     supplier_id,
                     product_type_id,
-                    'in_stock'
+                    'in_stock',
+                    is_own
+
                 ]
             );
     
