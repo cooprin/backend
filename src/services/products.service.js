@@ -161,6 +161,7 @@ class ProductService {
         supplier_id, 
         product_type_id,
         characteristics = {}, 
+        created_by,
         userId, 
         ipAddress, 
         req
@@ -171,6 +172,7 @@ class ProductService {
                 model_id,
                 supplier_id,
                 product_type_id,
+                warehouse_id,
                 characteristics
             });
     
@@ -207,6 +209,29 @@ class ProductService {
             );
     
             const productId = productResult.rows[0].id;
+        // Створюємо запис в stock
+        await client.query(
+            `INSERT INTO warehouses.stock (
+                warehouse_id,
+                product_id,
+                quantity
+            )
+            VALUES ($1, $2, $3)`,
+            [warehouse_id, productId, 1]
+        );
+
+        // Створюємо запис в stock_movements
+        await client.query(
+            `INSERT INTO warehouses.stock_movements (
+                product_id,
+                to_warehouse_id,
+                quantity,
+                type,
+                created_by
+            )
+            VALUES ($1, $2, $3, $4, $5)`,
+            [productId, warehouse_id, 1, 'transfer', created_by]
+        );
     
             // Зберігаємо характеристики
             const typeCharacteristics = await client.query(
@@ -246,6 +271,7 @@ class ProductService {
                     model_id,
                     supplier_id,
                     product_type_id,
+                    warehouse_id,
                     characteristics
                 },
                 ipAddress,
