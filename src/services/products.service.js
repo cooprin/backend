@@ -72,6 +72,7 @@ class ProductService {
             sort_desc = 0,
             search = '',
             manufacturer_id = '',
+            model_id = '', // Added model_id filter
             current_status = '',
             is_own = null,
         } = filters;
@@ -93,6 +94,13 @@ class ProductService {
         if (manufacturer_id) {
             conditions.push(`man.id = $${paramIndex}`);
             params.push(manufacturer_id);
+            paramIndex++;
+        }
+    
+        // Add model_id filter
+        if (model_id) {
+            conditions.push(`m.id = $${paramIndex}`);
+            params.push(model_id);
             paramIndex++;
         }
     
