@@ -110,15 +110,23 @@ class ProductService {
         
         // Змінюємо ORDER BY в залежності від поля сортування
         let orderByClause;
-        switch(sortBy) {
+        switch (sortBy) {
             case 'model_name':
                 orderByClause = `m.name ${sort_desc ? 'DESC' : 'ASC'}`;
                 break;
             case 'manufacturer_name':
                 orderByClause = `man.name ${sort_desc ? 'DESC' : 'ASC'}`;
                 break;
-            default:
+            case 'supplier_name':
+                orderByClause = `s.name ${sort_desc ? 'DESC' : 'ASC'}`;
+                break;
+            case 'is_own':
+            case 'current_status':
+            case 'sku':
                 orderByClause = `p.${sortBy} ${sort_desc ? 'DESC' : 'ASC'}`;
+                break;
+            default:
+                orderByClause = `p.created_at ${sort_desc ? 'DESC' : 'ASC'}`; // дефолтне сортування
         }
     
         const query = `${this.getBaseQuery()}
