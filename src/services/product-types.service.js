@@ -31,61 +31,66 @@ class ProductTypeService {
         LEFT JOIN products.products p ON pt.id = p.product_type_id
     `;
 }
+static async getProductTypes(filters) {
+    const {
+        page = 1,
+        perPage = 10,
+        sortBy = 'name',
+        descending = false,
+        search = ''
+    } = filters;
 
-    static async getProductTypes(filters) {
-        const {
-            page = 1,
-            perPage = 10,
-            sortBy = 'name',
-            descending = false,
-            search = ''
-        } = filters;
-    
-        const sortMapping = {
-            'name': 'pt.name',
-            'code': 'pt.code',
-            'products_count': 'products_count',
-            'is_active': 'pt.is_active'
-        };
-    
-        const sortByColumn = sortMapping[sortBy] || 'pt.name';
-        const orderDirection = descending ? 'DESC' : 'ASC';
-    
-        let conditions = [];
-        let params = [];
-        let paramIndex = 1;
-    
-        if (search) {
-            conditions.push(`(
-                pt.name ILIKE $${paramIndex} OR 
-                pt.code ILIKE $${paramIndex} OR 
-                pt.description ILIKE $${paramIndex}
-            )`);
-            params.push(`%${search}%`);
-            paramIndex++;
-        }
-    
-        const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
-        const query = `${this.getBaseQuery()}
-            ${whereClause}
-            GROUP BY pt.id
-            ORDER BY ${sortByColumn} ${orderDirection}, pt.name ASC
-            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-        const [productTypes, total] = await Promise.all([
-            pool.query(query, [...params, perPage, (page - 1) * perPage]),
-            pool.query(`
-                SELECT COUNT(*)
-                FROM products.product_types pt
-                ${whereClause}
-            `, params)
-        ]);
+    // Маппінг полів для сортування
+    const sortMapping = {
+        'name': 'pt.name',
+        'code': 'pt.code',
+        'products_count': 'products_count',
+        'is_active': 'pt.is_active'
+    };
 
-        return {
-            success: true,
-            productTypes: productTypes.rows,
-            total: parseInt(total.rows[0].count)
-        };
+    const sortByColumn = sortMapping[sortBy] || 'pt.name';
+    const orderDirection = descending === true || descending === 'true' ? 'DESC' : 'ASC';
+
+    let conditions = [];
+    let params = [];
+    let paramIndex = 1;
+
+    if (search) {
+        conditions.push(`(
+            pt.name ILIKE $${paramIndex} OR 
+            pt.code ILIKE $${paramIndex} OR 
+            pt.description ILIKE $${paramIndex}
+        )`);
+        params.push(`%${search}%`);
+        paramIndex++;
     }
+
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+    
+    // Оновлений запит з правильним ORDER BY
+    const query = `
+        ${this.getBaseQuery()}
+        ${whereClause}
+        GROUP BY pt.id
+        ORDER BY ${sortByColumn} ${orderDirection}
+        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+    `;
+
+    const [productTypes, total] = await Promise.all([
+        pool.query(query, [...params, perPage, (page - 1) * perPage]),
+        pool.query(`
+            SELECT COUNT(*)
+            FROM products.product_types pt
+            ${whereClause}
+        `, params)
+    ]);
+
+    return {
+        success: true,
+        productTypes: productTypes.rows,
+        total: parseInt(total.rows[0].count)
+    };
+}
 
     static async getProductTypeById(id) {
         const query = `${this.getBaseQuery()}
