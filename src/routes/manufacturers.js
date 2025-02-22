@@ -51,34 +51,44 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
 
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
-        const query = `
-            WITH manufacturer_stats AS (
-                SELECT 
-                    manufacturer_id,
-                    COUNT(DISTINCT id) as models_count
-                FROM products.models
-                GROUP BY manufacturer_id
-            ),
-            product_stats AS (
-                SELECT 
-                    m.manufacturer_id,
-                    COUNT(DISTINCT p.id) as products_count
-                FROM products.models m
-                LEFT JOIN products.products p ON m.id = p.model_id
-                GROUP BY m.manufacturer_id
-            )
-            SELECT 
-                m.*,
-                COALESCE(ms.models_count, 0) as models_count,
-                COALESCE(ps.products_count, 0) as products_count,
-                COUNT(*) OVER() as total_count
-            FROM products.manufacturers m
-            LEFT JOIN manufacturer_stats ms ON m.id = ms.manufacturer_id
-            LEFT JOIN product_stats ps ON m.id = ps.manufacturer_id
-            ${whereClause}
-            ORDER BY ${sortByWithPrefix} ${orderDirection}
-            ${perPage ? `LIMIT $${paramIndex} OFFSET $${paramIndex + 1}` : ''}
-        `;
+      // В маршруті GET '/'
+const sortMapping = {
+    'models_count': 'ms.models_count',
+    'products_count': 'ps.products_count',
+    'name': 'm.name',
+    'is_active': 'm.is_active'
+  };
+  
+  const sortByColumn = sortMapping[sortBy] || 'm.name';
+  
+  const query = `
+    WITH manufacturer_stats AS (
+      SELECT 
+        manufacturer_id,
+        COUNT(DISTINCT id) as models_count
+      FROM products.models
+      GROUP BY manufacturer_id
+    ),
+    product_stats AS (
+      SELECT 
+        m.manufacturer_id,
+        COUNT(DISTINCT p.id) as products_count
+      FROM products.models m
+      LEFT JOIN products.products p ON m.id = p.model_id
+      GROUP BY m.manufacturer_id
+    )
+    SELECT 
+      m.*,
+      COALESCE(ms.models_count, 0) as models_count,
+      COALESCE(ps.products_count, 0) as products_count,
+      COUNT(*) OVER() as total_count
+    FROM products.manufacturers m
+    LEFT JOIN manufacturer_stats ms ON m.id = ms.manufacturer_id
+    LEFT JOIN product_stats ps ON m.id = ps.manufacturer_id
+    ${whereClause}
+    ORDER BY ${sortByColumn} ${orderDirection}, m.name ASC
+    ${perPage ? `LIMIT $${paramIndex} OFFSET $${paramIndex + 1}` : ''}
+  `;
 
         if (perPage) {
             params.push(perPage, offset);
