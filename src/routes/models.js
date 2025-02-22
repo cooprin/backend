@@ -57,7 +57,16 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
             manufacturer = '',
             isActive = ''
         } = req.query;
+        const sortMapping = {
+            'name': 'm.name',
+            'manufacturer_name': 'man.name',
+            'products_count': 'products_count',
+            'in_stock_count': 'in_stock_count',
+            'installed_count': 'installed_count',
+            'is_active': 'm.is_active'
+        };
 
+        const sortByColumn = sortMapping[sortBy] || 'm.name';
         if (perPage === 'All') {
             perPage = null;
         } else {
@@ -71,41 +80,30 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
         let conditions = [];
         let params = [];
         let paramIndex = 1;
-
+        
         if (search) {
             conditions.push(`(m.name ILIKE $${paramIndex} OR m.description ILIKE $${paramIndex})`);
             params.push(`%${search}%`);
             paramIndex++;
         }
-
-        if (manufacturer) {
-            conditions.push(`m.manufacturer_id = $${paramIndex}`);
-            params.push(manufacturer);
-            paramIndex++;
-        }
-
-        if (isActive !== '') {
-            conditions.push(`m.is_active = $${paramIndex}`);
-            params.push(isActive === 'true');
-            paramIndex++;
-        }
-
+        
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
+
         let modelsQuery = `
-            SELECT 
-                m.*,
-                man.name as manufacturer_name,
-                COUNT(DISTINCT p.id) as products_count,
-                COUNT(DISTINCT CASE WHEN p.current_status = 'in_stock' THEN p.id END) as in_stock_count,
-                COUNT(DISTINCT CASE WHEN p.current_status = 'installed' THEN p.id END) as installed_count
-            FROM products.models m
-            JOIN products.manufacturers man ON m.manufacturer_id = man.id
-            LEFT JOIN products.products p ON m.id = p.model_id
-            ${whereClause}
-            GROUP BY m.id, man.name
-            ORDER BY m.${sortBy} ${orderDirection}
-        `;
+        SELECT 
+            m.*,
+            man.name as manufacturer_name,
+            COUNT(DISTINCT p.id) as products_count,
+            COUNT(DISTINCT CASE WHEN p.current_status = 'in_stock' THEN p.id END) as in_stock_count,
+            COUNT(DISTINCT CASE WHEN p.current_status = 'installed' THEN p.id END) as installed_count
+        FROM products.models m
+        JOIN products.manufacturers man ON m.manufacturer_id = man.id
+        LEFT JOIN products.products p ON m.id = p.model_id
+        ${whereClause}
+        GROUP BY m.id, m.name, man.name, m.is_active
+        ORDER BY ${sortByColumn} ${orderDirection}, m.name ASC
+    `;
 
         if (perPage) {
             modelsQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;

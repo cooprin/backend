@@ -53,28 +53,39 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
 
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
-        let suppliersQuery = `
-  SELECT 
-        s.id,
-        s.name,
-        s.description,
-        s.contact_person,
-        s.phone,
-        s.email,
-        s.address,
-        s.is_active,
-        COUNT(DISTINCT p.id) as products_count,
-        COUNT(DISTINCT CASE 
-            WHEN p.current_status != 'written_off' 
-            THEN p.id 
-        END) as active_warranty_count
+        // У GET '/' маршруті додамо маппінг полів сортування
+const sortMapping = {
+    'name': 's.name',
+    'products_count': 'products_count',
+    'active_warranty_count': 'active_warranty_count',
+    'is_active': 's.is_active'
+  }
+  
+  const sortByColumn = sortMapping[sortBy] || 's.name'
+  
+  // Оновимо ORDER BY в SQL запиті
+  let suppliersQuery = `
+    SELECT 
+      s.id,
+      s.name,
+      s.description,
+      s.contact_person,
+      s.phone,
+      s.email,
+      s.address,
+      s.is_active,
+      COUNT(DISTINCT p.id) as products_count,
+      COUNT(DISTINCT CASE 
+          WHEN p.current_status != 'written_off' 
+          THEN p.id 
+      END) as active_warranty_count
     FROM products.suppliers s
     LEFT JOIN products.products p ON p.supplier_id = s.id
     ${whereClause}
     GROUP BY s.id, s.name, s.description, s.contact_person, 
              s.phone, s.email, s.address, s.is_active
-    ORDER BY ${sortBy === 'name' ? 's.name' : sortBy} ${orderDirection}
-`;
+    ORDER BY ${sortByColumn} ${orderDirection}, s.name ASC
+  `
 
         if (perPage) {
             suppliersQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;

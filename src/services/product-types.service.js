@@ -38,14 +38,23 @@ class ProductTypeService {
             perPage = 10,
             sortBy = 'name',
             descending = false,
-            search = '',
-            isActive = ''
+            search = ''
         } = filters;
-
+    
+        const sortMapping = {
+            'name': 'pt.name',
+            'code': 'pt.code',
+            'products_count': 'products_count',
+            'is_active': 'pt.is_active'
+        };
+    
+        const sortByColumn = sortMapping[sortBy] || 'pt.name';
+        const orderDirection = descending ? 'DESC' : 'ASC';
+    
         let conditions = [];
         let params = [];
         let paramIndex = 1;
-
+    
         if (search) {
             conditions.push(`(
                 pt.name ILIKE $${paramIndex} OR 
@@ -55,20 +64,13 @@ class ProductTypeService {
             params.push(`%${search}%`);
             paramIndex++;
         }
-
-        if (isActive !== '') {
-            conditions.push(`pt.is_active = $${paramIndex}`);
-            params.push(isActive === 'true');
-            paramIndex++;
-        }
-
+    
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
         const query = `${this.getBaseQuery()}
             ${whereClause}
             GROUP BY pt.id
-            ORDER BY pt.${sortBy} ${descending ? 'DESC' : 'ASC'}
+            ORDER BY ${sortByColumn} ${orderDirection}, pt.name ASC
             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-
         const [productTypes, total] = await Promise.all([
             pool.query(query, [...params, perPage, (page - 1) * perPage]),
             pool.query(`
