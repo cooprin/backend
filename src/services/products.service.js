@@ -67,42 +67,66 @@ class ProductService {
             page = 1,
             perPage = 10,
             sortBy = 'sku',
-            descending = false,
+            sort_desc = 0, // змінив на sort_desc замість descending
             search = '',
-            manufacturer = '',
-            supplier = '',
-            status = '',
-            dateFrom = '',
-            dateTo = '',
-            isOwn = '',
-            productType = '',
-            characteristic = ''
+            manufacturer_id = '', // змінив на manufacturer_id
+            current_status = '', // змінив на current_status
+            is_own = null,  // додав is_own
         } = filters;
-
+    
         let conditions = [];
         let params = [];
         let paramIndex = 1;
-
+    
         if (search) {
             conditions.push(`(
                 p.sku ILIKE $${paramIndex} OR
                 m.name ILIKE $${paramIndex} OR
-                s.name ILIKE $${paramIndex}
+                man.name ILIKE $${paramIndex}
             )`);
             params.push(`%${search}%`);
             paramIndex++;
         }
-
-        // Додаємо інші фільтри...
-        // Код фільтрації такий самий як був у products.js
-
+    
+        if (manufacturer_id) {
+            conditions.push(`man.id = $${paramIndex}`);
+            params.push(manufacturer_id);
+            paramIndex++;
+        }
+    
+        if (current_status) {
+            conditions.push(`p.current_status = $${paramIndex}`);
+            params.push(current_status);
+            paramIndex++;
+        }
+    
+        if (is_own !== null) {
+            conditions.push(`p.is_own = $${paramIndex}`);
+            params.push(is_own);
+            paramIndex++;
+        }
+    
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+        
+        // Змінюємо ORDER BY в залежності від поля сортування
+        let orderByClause;
+        switch(sortBy) {
+            case 'model_name':
+                orderByClause = `m.name ${sort_desc ? 'DESC' : 'ASC'}`;
+                break;
+            case 'manufacturer_name':
+                orderByClause = `man.name ${sort_desc ? 'DESC' : 'ASC'}`;
+                break;
+            default:
+                orderByClause = `p.${sortBy} ${sort_desc ? 'DESC' : 'ASC'}`;
+        }
+    
         const query = `${this.getBaseQuery()}
             ${whereClause}
             GROUP BY p.id, m.name, m.description, man.name, s.name, pt.name, st.quantity
-            ORDER BY p.${sortBy} ${descending ? 'DESC' : 'ASC'}
+            ORDER BY ${orderByClause}
             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-
+    
         const [products, total] = await Promise.all([
             pool.query(query, [...params, perPage, (page - 1) * perPage]),
             pool.query(`
@@ -114,7 +138,7 @@ class ProductService {
                 ${whereClause}
             `, params)
         ]);
-
+    
         return {
             success: true,
             products: products.rows,
