@@ -63,15 +63,17 @@ class ProductService {
 
     // Основні методи
     static async getProducts(filters) {
+        console.log('Received filters:', filters);
+    
         const {
             page = 1,
             perPage = 10,
             sortBy = 'sku',
-            sort_desc = 0, // змінив на sort_desc замість descending
+            sort_desc = 0,
             search = '',
-            manufacturer_id = '', // змінив на manufacturer_id
-            current_status = '', // змінив на current_status
-            is_own = null,  // додав is_own
+            manufacturer_id = '',
+            current_status = '',
+            is_own = null,
         } = filters;
     
         let conditions = [];
@@ -108,26 +110,27 @@ class ProductService {
     
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
         
-        // Змінюємо ORDER BY в залежності від поля сортування
+        const isDescending = Number(sort_desc) === 1;
+        console.log('Sort parameters:', { sortBy, sort_desc, isDescending });
+    
         let orderByClause;
         switch (sortBy) {
             case 'model_name':
-                orderByClause = `m.name ${sort_desc ? 'DESC' : 'ASC'}`;
+                orderByClause = `m.name ${isDescending ? 'DESC' : 'ASC'}`;
                 break;
             case 'manufacturer_name':
-                orderByClause = `man.name ${sort_desc ? 'DESC' : 'ASC'}`;
-                break;
-            case 'supplier_name':
-                orderByClause = `s.name ${sort_desc ? 'DESC' : 'ASC'}`;
+                orderByClause = `man.name ${isDescending ? 'DESC' : 'ASC'}`;
                 break;
             case 'is_own':
             case 'current_status':
             case 'sku':
-                orderByClause = `p.${sortBy} ${sort_desc ? 'DESC' : 'ASC'}`;
+                orderByClause = `p.${sortBy} ${isDescending ? 'DESC' : 'ASC'}`;
                 break;
             default:
-                orderByClause = `p.created_at ${sort_desc ? 'DESC' : 'ASC'}`; // дефолтне сортування
+                orderByClause = `p.sku ${isDescending ? 'DESC' : 'ASC'}`;
         }
+    
+        console.log('Final ORDER BY clause:', orderByClause);
     
         const query = `${this.getBaseQuery()}
             ${whereClause}
