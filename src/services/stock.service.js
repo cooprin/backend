@@ -217,13 +217,12 @@ class StockService {
         if (search) {
             conditions.push(`(
                 p.sku ILIKE $${paramIndex} OR 
-                p.sku = $${paramIndex} OR 
                 m.name ILIKE $${paramIndex} OR
                 COALESCE(wf.name, '') ILIKE $${paramIndex} OR
                 COALESCE(wt.name, '') ILIKE $${paramIndex} OR
                 COALESCE(sm.comment, '') ILIKE $${paramIndex}
             )`);
-            params.push(`%${search}%`);  
+            params.push(`%${search}%`);
             paramIndex++;
         }
 
@@ -277,6 +276,7 @@ class StockService {
         ${whereClause}
         GROUP BY 
             sm.id, 
+            sm.product_id,
             sm.created_at,
             sm.type,
             sm.quantity,
@@ -284,13 +284,15 @@ class StockService {
             sm.from_warehouse_id,
             sm.to_warehouse_id,
             sm.created_by,
+            sm.wialon_object_id,  // додали це поле
             p.sku, 
             m.name, 
             wf.name, 
             wt.name, 
             u.email, 
             u.first_name, 
-            u.last_name
+            u.last_name,
+            u.id              // додали це поле
         ORDER BY ${sortByColumn} ${orderDirection}, sm.id ASC
         LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
 
