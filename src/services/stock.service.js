@@ -286,8 +286,8 @@ class StockService {
             sm.created_by,
             p.sku, 
             m.name, 
-            w_from.name, 
-            w_to.name, 
+            wf.name, 
+            wt.name, 
             u.email, 
             u.first_name, 
             u.last_name
