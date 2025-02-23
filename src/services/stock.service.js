@@ -14,9 +14,8 @@ class StockService {
                 p.sku,
                 m.name as model_name,
                 man.name as manufacturer_name,
-                s.quantity,
-                s.price,
                 p.current_status,
+                p.current_object_id,
                 p.warranty_end,
                 p.supplier_warranty_end,
                 jsonb_object_agg(
@@ -30,10 +29,10 @@ class StockService {
                 s.created_at,
                 s.updated_at
             FROM warehouses.stock s
-            JOIN warehouses.warehouses w ON s.warehouse_id = w.id
+            JOIN warehouses.warehouses w ON s.warehouse_id = w.id AND w.is_active = true
             JOIN products.products p ON s.product_id = p.id
-            JOIN products.models m ON p.model_id = m.id
-            JOIN products.manufacturers man ON m.manufacturer_id = man.id
+            JOIN products.models m ON p.model_id = m.id AND m.is_active = true
+            JOIN products.manufacturers man ON m.manufacturer_id = man.id AND man.is_active = true
             LEFT JOIN products.product_type_characteristics ptc ON p.product_type_id = ptc.product_type_id
             LEFT JOIN products.product_characteristic_values pcv ON p.id = pcv.product_id AND ptc.id = pcv.characteristic_id
         `;
@@ -88,7 +87,6 @@ class StockService {
             manufacturer = '',
             model = '',
             status = '',
-            minQuantity = '',
             characteristic = ''
         } = filters;
 
@@ -97,12 +95,11 @@ class StockService {
             'model_name': 'm.name', 
             'manufacturer_name': 'man.name',
             'warehouse_name': 'w.name',
-            'quantity': 's.quantity',
             'current_status': 'p.current_status',
             'created_at': 's.created_at'
         };
 
-        let conditions = [];
+        let conditions = ['p.is_active = true']; // Завжди фільтруємо по активним
         let params = [];
         let paramIndex = 1;
 
@@ -141,12 +138,6 @@ class StockService {
             paramIndex++;
         }
 
-        if (minQuantity !== '') {
-            conditions.push(`s.quantity >= $${paramIndex}`);
-            params.push(parseInt(minQuantity));
-            paramIndex++;
-        }
-
         if (characteristic) {
             const [charCode, charValue] = characteristic.split(':');
             if (charCode && charValue) {
@@ -164,13 +155,13 @@ class StockService {
             }
         }
 
-        const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+        const whereClause = 'WHERE ' + conditions.join(' AND ');
         const sortByColumn = sortMapping[sortBy] || 's.created_at';
         const orderDirection = descending ? 'DESC' : 'ASC';
 
         const query = `${this.getBaseStockQuery()}
             ${whereClause}
-            GROUP BY s.id, w.name, p.sku, m.name, man.name, p.current_status, p.warranty_end
+            GROUP BY s.id, w.name, p.sku, m.name, man.name, p.current_status, p.current_object_id, p.warranty_end
             ORDER BY ${sortByColumn} ${orderDirection}, s.id ASC
             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
 
@@ -179,10 +170,10 @@ class StockService {
             pool.query(`
                 SELECT COUNT(DISTINCT s.id)
                 FROM warehouses.stock s
-                JOIN warehouses.warehouses w ON s.warehouse_id = w.id
+                JOIN warehouses.warehouses w ON s.warehouse_id = w.id AND w.is_active = true
                 JOIN products.products p ON s.product_id = p.id
-                JOIN products.models m ON p.model_id = m.id
-                JOIN products.manufacturers man ON m.manufacturer_id = man.id
+                JOIN products.models m ON p.model_id = m.id AND m.is_active = true
+                JOIN products.manufacturers man ON m.manufacturer_id = man.id AND man.is_active = true
                 ${whereClause}
             `, params)
         ]);
@@ -528,24 +519,39 @@ class StockService {
     }
 
     static async validateInstallation(client, { product_id, warehouse_id, object_id }) {
-        // Перевірка наявності продукту на складі
-        const stock = await client.query(
-            'SELECT quantity FROM warehouses.stock WHERE warehouse_id = $1 AND product_id = $2',
-            [warehouse_id, product_id]
-        );
-
-        if (stock.rows.length === 0 || stock.rows[0].quantity < 1) {
+        // Перевірка обов'язкових полів
+        if (!product_id || !warehouse_id || !object_id) {
             return {
                 isValid: false,
-                message: 'Product not available in warehouse'
+                message: 'Missing required fields'
             };
         }
 
-        // Перевірка поточного статусу продукту
+        // Перевірка чи склад активний
+        const warehouse = await client.query(
+            'SELECT id FROM warehouses.warehouses WHERE id = $1 AND is_active = true',
+            [warehouse_id]
+        );
+
+        if (warehouse.rows.length === 0) {
+            return {
+                isValid: false,
+                message: 'Warehouse is not active'
+            };
+        }
+
+        // Перевірка статусу продукту
         const product = await client.query(
-            'SELECT current_status, current_object_id FROM products.products WHERE id = $1',
+            'SELECT current_status, is_active FROM products.products WHERE id = $1',
             [product_id]
         );
+
+        if (!product.rows[0]?.is_active) {
+            return {
+                isValid: false,
+                message: 'Product is not active'
+            };
+        }
 
         if (product.rows[0].current_status !== PRODUCT_STATUS.IN_STOCK) {
             return {
@@ -554,8 +560,35 @@ class StockService {
             };
         }
 
+        // Перевірка чи є продукт на складі
+        const stock = await client.query(
+            'SELECT quantity FROM warehouses.stock WHERE warehouse_id = $1 AND product_id = $2',
+            [warehouse_id, product_id]
+        );
+
+        if (stock.rows.length === 0) {
+            return {
+                isValid: false,
+                message: 'Product not found in warehouse'
+            };
+        }
+
+        // Перевірка чи не встановлено вже інший продукт на цей об'єкт
+        const installedProduct = await client.query(
+            'SELECT id FROM products.products WHERE current_object_id = $1 AND current_status = $2',
+            [object_id, PRODUCT_STATUS.INSTALLED]
+        );
+
+        if (installedProduct.rows.length > 0) {
+            return {
+                isValid: false,
+                message: 'Another product is already installed on this object'
+            };
+        }
+
         return { isValid: true };
     }
+
 
     static async installProduct(client, {
         product_id,
@@ -702,11 +735,27 @@ class StockService {
         return movement.rows[0];
     }
 
-    static async validateRepairSend(client, { product_id }) {
+    static async validateRepairSend(client, { product_id, from_warehouse_id }) {
+        // Перевірка обов'язкових полів
+        if (!product_id) {
+            return {
+                isValid: false,
+                message: 'Product ID is required'
+            };
+        }
+
+        // Перевірка статусу продукту
         const product = await client.query(
-            'SELECT current_status FROM products.products WHERE id = $1',
+            'SELECT current_status, is_active FROM products.products WHERE id = $1',
             [product_id]
         );
+
+        if (!product.rows[0]?.is_active) {
+            return {
+                isValid: false,
+                message: 'Product is not active'
+            };
+        }
 
         if (product.rows[0].current_status === PRODUCT_STATUS.IN_REPAIR) {
             return {
@@ -715,8 +764,43 @@ class StockService {
             };
         }
 
+        if (product.rows[0].current_status === PRODUCT_STATUS.WRITTEN_OFF) {
+            return {
+                isValid: false,
+                message: 'Cannot send written off product to repair'
+            };
+        }
+
+        // Якщо продукт зі складу, перевіряємо наявність
+        if (from_warehouse_id) {
+            const warehouse = await client.query(
+                'SELECT id FROM warehouses.warehouses WHERE id = $1 AND is_active = true',
+                [from_warehouse_id]
+            );
+
+            if (warehouse.rows.length === 0) {
+                return {
+                    isValid: false,
+                    message: 'Warehouse is not active'
+                };
+            }
+
+            const stock = await client.query(
+                'SELECT quantity FROM warehouses.stock WHERE warehouse_id = $1 AND product_id = $2',
+                [from_warehouse_id, product_id]
+            );
+
+            if (stock.rows.length === 0) {
+                return {
+                    isValid: false,
+                    message: 'Product not found in warehouse'
+                };
+            }
+        }
+
         return { isValid: true };
     }
+
 
     static async sendToRepair(client, {
         product_id,
@@ -857,21 +941,64 @@ class StockService {
         return movement.rows[0];
     }
 
-    static async validateWriteOff(client, { product_id, warehouse_id }) {
+    static async validateWriteOff(client, { product_id, warehouse_id, comment }) {
+        // Перевірка обов'язкових полів
+        if (!product_id || !warehouse_id || !comment) {
+            return {
+                isValid: false,
+                message: 'Missing required fields (product, warehouse or comment)'
+            };
+        }
+
+        // Перевірка чи склад активний
+        const warehouse = await client.query(
+            'SELECT id FROM warehouses.warehouses WHERE id = $1 AND is_active = true',
+            [warehouse_id]
+        );
+
+        if (warehouse.rows.length === 0) {
+            return {
+                isValid: false,
+                message: 'Warehouse is not active'
+            };
+        }
+
+        // Перевірка статусу продукту
+        const product = await client.query(
+            'SELECT current_status, is_active FROM products.products WHERE id = $1',
+            [product_id]
+        );
+
+        if (!product.rows[0]?.is_active) {
+            return {
+                isValid: false,
+                message: 'Product is not active'
+            };
+        }
+
+        if (product.rows[0].current_status === PRODUCT_STATUS.WRITTEN_OFF) {
+            return {
+                isValid: false,
+                message: 'Product is already written off'
+            };
+        }
+
+        // Перевірка наявності на складі
         const stock = await client.query(
             'SELECT quantity FROM warehouses.stock WHERE warehouse_id = $1 AND product_id = $2',
             [warehouse_id, product_id]
         );
 
-        if (stock.rows.length === 0 || stock.rows[0].quantity < 1) {
+        if (stock.rows.length === 0) {
             return {
                 isValid: false,
-                message: 'Product not available in warehouse'
+                message: 'Product not found in warehouse'
             };
         }
 
         return { isValid: true };
     }
+
 
     static async writeOffProduct(client, {
         product_id,
