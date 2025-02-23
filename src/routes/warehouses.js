@@ -29,6 +29,15 @@ router.get('/', authenticate, checkPermission('warehouses.read'), async (req, re
         const offset = perPage ? (page - 1) * perPage : 0;
         const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
 
+        const sortMapping = {
+            'name': 'w.name',
+            'products_count': 'products_count',
+            'total_items': 'total_items',
+            'is_active': 'w.is_active'
+        };
+        
+        const sortByColumn = sortMapping[sortBy] || 'w.name';
+
         let conditions = [];
         let params = [];
         let paramIndex = 1;
@@ -58,19 +67,19 @@ router.get('/', authenticate, checkPermission('warehouses.read'), async (req, re
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
         let warehousesQuery = `
-            SELECT 
-                w.*,
-                u.email as responsible_person_email,
-                u.first_name || ' ' || u.last_name as responsible_person_name,
-                COUNT(DISTINCT s.product_id) as products_count,
-                COALESCE(SUM(s.quantity), 0) as total_items
-            FROM warehouses.warehouses w
-            LEFT JOIN auth.users u ON w.responsible_person_id = u.id
-            LEFT JOIN warehouses.stock s ON w.id = s.warehouse_id
-            ${whereClause}
-            GROUP BY w.id, u.email, u.first_name, u.last_name
-            ORDER BY w.${sortBy} ${orderDirection}
-        `;
+        SELECT 
+            w.*,
+            u.email as responsible_person_email,
+            u.first_name || ' ' || u.last_name as responsible_person_name,
+            COUNT(DISTINCT s.product_id) as products_count,
+            COALESCE(SUM(s.quantity), 0) as total_items
+        FROM warehouses.warehouses w
+        LEFT JOIN auth.users u ON w.responsible_person_id = u.id
+        LEFT JOIN warehouses.stock s ON w.id = s.warehouse_id
+        ${whereClause}
+        GROUP BY w.id, u.email, u.first_name, u.last_name
+        ORDER BY ${sortByColumn} ${orderDirection}, w.name ASC
+    `;
 
         if (perPage) {
             warehousesQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
