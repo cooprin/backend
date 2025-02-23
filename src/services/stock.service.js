@@ -136,13 +136,24 @@ class StockService {
             paramIndex++;
         }
     
-        const whereClause = 'WHERE ' + conditions.join(' AND ');
+        const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
         const sortByColumn = sortMapping[sortBy] || 's.created_at';
         const orderDirection = descending ? 'DESC' : 'ASC';
     
         const query = `${this.getBaseStockQuery()}
             ${whereClause}
-            GROUP BY s.id, w.name, p.sku, m.name, man.name, p.current_status, p.current_object_id
+            GROUP BY 
+                s.id, 
+                s.warehouse_id,
+                w.name, 
+                s.product_id,
+                p.sku, 
+                m.name, 
+                man.name, 
+                p.current_status,
+                p.current_object_id,
+                s.created_at,
+                s.updated_at
             ORDER BY ${sortByColumn} ${orderDirection}, s.id ASC
             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     
@@ -154,7 +165,7 @@ class StockService {
                 JOIN warehouses.warehouses w ON s.warehouse_id = w.id AND w.is_active = true
                 JOIN products.products p ON s.product_id = p.id
                 JOIN products.models m ON p.model_id = m.id AND m.is_active = true
-                JOIN products.manufacturers man ON m.manufacturer_id = man.id AND man.is_active = true
+                JOIN products.manufacturers man ON m.manufacturer_id = man.id AND m.is_active = true
                 ${whereClause}
             `, params)
         ]);
@@ -181,20 +192,21 @@ class StockService {
             createdBy = '',
             product_id = ''
         } = filters;
-
+    
         const sortMapping = {
             'created_at': 'sm.created_at',
             'type': 'sm.type',
-            'quantity': 'sm.quantity',
+            'sku': 'p.sku',
+            'model_name': 'm.name',
             'from_warehouse_name': 'wf.name',
             'to_warehouse_name': 'wt.name',
             'created_by_name': 'created_by_name'
         };
-
+    
         let conditions = [];
         let params = [];
         let paramIndex = 1;
-
+    
         if (search) {
             conditions.push(`(
                 p.sku ILIKE $${paramIndex} OR 
@@ -206,76 +218,75 @@ class StockService {
             params.push(`%${search}%`);
             paramIndex++;
         }
-
+    
         if (fromWarehouse) {
             conditions.push(`sm.from_warehouse_id = $${paramIndex}`);
             params.push(fromWarehouse);
             paramIndex++;
         }
-
+    
         if (toWarehouse) {
             conditions.push(`sm.to_warehouse_id = $${paramIndex}`);
             params.push(toWarehouse);
             paramIndex++;
         }
-
+    
         if (type) {
             conditions.push(`sm.type = $${paramIndex}`);
             params.push(type);
             paramIndex++;
         }
-
+    
         if (dateFrom) {
             conditions.push(`sm.created_at >= $${paramIndex}::timestamp`);
             params.push(dateFrom);
             paramIndex++;
         }
-
+    
         if (dateTo) {
             conditions.push(`sm.created_at <= $${paramIndex}::timestamp`);
             params.push(dateTo);
             paramIndex++;
         }
-
+    
         if (createdBy) {
             conditions.push(`sm.created_by = $${paramIndex}`);
             params.push(createdBy);
             paramIndex++;
         }
-
+    
         if (product_id) {
             conditions.push(`sm.product_id = $${paramIndex}`);
             params.push(product_id);
             paramIndex++;
         }
-
+    
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
         const sortByColumn = sortMapping[sortBy] || 'sm.created_at';
         const orderDirection = descending ? 'DESC' : 'ASC';
-
+    
         const query = `${this.getBaseMovementsQuery()}
-        ${whereClause}
-        GROUP BY 
-            sm.id,
-            sm.product_id,
-            sm.created_at,
-            sm.type,
-            sm.quantity,
-            sm.comment,
-            sm.from_warehouse_id,
-            sm.to_warehouse_id,
-            sm.created_by,
-            sm.wialon_object_id,
-            p.sku,
-            m.name,
-            wf.name,
-            wt.name,
-            u.email,
-            u.first_name,
-            u.last_name
-        ORDER BY ${sortByColumn} ${orderDirection}, sm.id ASC
-        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-
+            ${whereClause}
+            GROUP BY 
+                sm.id,
+                sm.product_id,
+                sm.created_at,
+                sm.type,
+                sm.comment,
+                sm.from_warehouse_id,
+                sm.to_warehouse_id,
+                sm.created_by,
+                sm.wialon_object_id,
+                p.sku,
+                m.name,
+                wf.name,
+                wt.name,
+                u.email,
+                u.first_name,
+                u.last_name
+            ORDER BY ${sortByColumn} ${orderDirection}, sm.id ASC
+            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    
         const [movementsResult, total] = await Promise.all([
             pool.query(query, [...params, perPage, (page - 1) * perPage]),
             pool.query(`
@@ -285,10 +296,11 @@ class StockService {
                 JOIN products.models m ON p.model_id = m.id
                 LEFT JOIN warehouses.warehouses wf ON sm.from_warehouse_id = wf.id
                 LEFT JOIN warehouses.warehouses wt ON sm.to_warehouse_id = wt.id
+                JOIN auth.users u ON sm.created_by = u.id
                 ${whereClause}
             `, params)
         ]);
-
+    
         return {
             success: true,
             movements: movementsResult.rows,

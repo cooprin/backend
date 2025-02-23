@@ -445,7 +445,7 @@ static async getProductTypes(filters) {
             // Якщо немає даних, повертаємо базовий набір
             if (result.rows.length === 0) {
                 return [
-                    { value: 'SIM', label: 'SIM - Sim card', description: 'Sim card' }
+                    { value: 'TEST', label: 'TEST - Test', description: 'Test' }
                 ];
             }
             
@@ -453,7 +453,7 @@ static async getProductTypes(filters) {
         } catch (error) {
             console.error('Error in getProductTypeCodes:', error);
             return [
-                { value: 'SIM', label: 'SIM - Sim card', description: 'Sim card' }
+                { value: 'TEST', label: 'TEST - Test', description: 'Test' }
             ];
         }
     }
