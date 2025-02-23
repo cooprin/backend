@@ -16,8 +16,6 @@ class StockService {
                 man.name as manufacturer_name,
                 p.current_status,
                 p.current_object_id,
-                p.warranty_end,
-                p.supplier_warranty_end,
                 jsonb_object_agg(
                     COALESCE(ptc.code, 'none'),
                     jsonb_build_object(
@@ -86,10 +84,9 @@ class StockService {
             warehouse = '',
             manufacturer = '',
             model = '',
-            status = '',
-            characteristic = ''
+            status = ''
         } = filters;
-
+    
         const sortMapping = {
             'sku': 'p.sku',
             'model_name': 'm.name', 
@@ -98,11 +95,11 @@ class StockService {
             'current_status': 'p.current_status',
             'created_at': 's.created_at'
         };
-
-        let conditions = ['p.is_active = true']; // Завжди фільтруємо по активним
+    
+        let conditions = ['p.is_active = true'];
         let params = [];
         let paramIndex = 1;
-
+    
         if (search) {
             conditions.push(`(
                 p.sku ILIKE $${paramIndex} OR 
@@ -113,58 +110,41 @@ class StockService {
             params.push(`%${search}%`);
             paramIndex++;
         }
-
+    
         if (warehouse) {
             conditions.push(`w.id = $${paramIndex}`);
             params.push(warehouse);
             paramIndex++;
         }
-
+    
         if (manufacturer) {
             conditions.push(`man.id = $${paramIndex}`);
             params.push(manufacturer);
             paramIndex++;
         }
-
+    
         if (model) {
             conditions.push(`m.id = $${paramIndex}`);
             params.push(model);
             paramIndex++;
         }
-
+    
         if (status) {
             conditions.push(`p.current_status = $${paramIndex}`);
             params.push(status);
             paramIndex++;
         }
-
-        if (characteristic) {
-            const [charCode, charValue] = characteristic.split(':');
-            if (charCode && charValue) {
-                conditions.push(`(
-                    EXISTS (
-                        SELECT 1 FROM products.product_characteristic_values pcv2
-                        JOIN products.product_type_characteristics ptc2 ON pcv2.characteristic_id = ptc2.id
-                        WHERE pcv2.product_id = p.id 
-                        AND ptc2.code = $${paramIndex}
-                        AND pcv2.value = $${paramIndex + 1}
-                    )
-                )`);
-                params.push(charCode, charValue);
-                paramIndex += 2;
-            }
-        }
-
+    
         const whereClause = 'WHERE ' + conditions.join(' AND ');
         const sortByColumn = sortMapping[sortBy] || 's.created_at';
         const orderDirection = descending ? 'DESC' : 'ASC';
-
+    
         const query = `${this.getBaseStockQuery()}
             ${whereClause}
-            GROUP BY s.id, w.name, p.sku, m.name, man.name, p.current_status, p.current_object_id, p.warranty_end
+            GROUP BY s.id, w.name, p.sku, m.name, man.name, p.current_status, p.current_object_id
             ORDER BY ${sortByColumn} ${orderDirection}, s.id ASC
             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-
+    
         const [stockResult, total] = await Promise.all([
             pool.query(query, [...params, perPage, (page - 1) * perPage]),
             pool.query(`
@@ -177,7 +157,7 @@ class StockService {
                 ${whereClause}
             `, params)
         ]);
-
+    
         return {
             success: true,
             stock: stockResult.rows,
