@@ -217,14 +217,15 @@ class StockService {
         if (search) {
             conditions.push(`(
                 p.sku ILIKE $${paramIndex} OR 
+                CAST(p.sku AS TEXT) = $${paramIndex + 1} OR  // додали точний пошук по sku
                 m.name ILIKE $${paramIndex} OR
                 COALESCE(w_from.name, '') ILIKE $${paramIndex} OR
                 COALESCE(w_to.name, '') ILIKE $${paramIndex} OR
                 COALESCE(sm.comment, '') ILIKE $${paramIndex} OR
                 CAST(sm.quantity as TEXT) ILIKE $${paramIndex}
             )`);
-            params.push(`%${search}%`);
-            paramIndex++;
+            params.push(`%${search}%`, search);  // додали параметр для точного пошуку
+            paramIndex += 2;
         }
 
         if (fromWarehouse) {
