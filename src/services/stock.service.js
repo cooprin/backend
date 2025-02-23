@@ -42,7 +42,16 @@ class StockService {
     static getBaseMovementsQuery() {
         return `
             SELECT 
-                sm.*,
+                sm.id,
+                sm.product_id,
+                sm.created_at,
+                sm.type,
+                sm.quantity,
+                sm.comment,
+                sm.from_warehouse_id,
+                sm.to_warehouse_id,
+                sm.created_by,
+                sm.wialon_object_id,
                 p.sku,
                 m.name as model_name,
                 wf.name as from_warehouse_name,
@@ -275,7 +284,7 @@ class StockService {
         const query = `${this.getBaseMovementsQuery()}
         ${whereClause}
         GROUP BY 
-            sm.id, 
+            sm.id,
             sm.product_id,
             sm.created_at,
             sm.type,
@@ -284,15 +293,14 @@ class StockService {
             sm.from_warehouse_id,
             sm.to_warehouse_id,
             sm.created_by,
-            sm.wialon_object_id,  // додали це поле
-            p.sku, 
-            m.name, 
-            wf.name, 
-            wt.name, 
-            u.email, 
-            u.first_name, 
-            u.last_name,
-            u.id              // додали це поле
+            sm.wialon_object_id,
+            p.sku,
+            m.name,
+            wf.name,
+            wt.name,
+            u.email,
+            u.first_name,
+            u.last_name
         ORDER BY ${sortByColumn} ${orderDirection}, sm.id ASC
         LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
 
