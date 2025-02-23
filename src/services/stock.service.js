@@ -83,6 +83,16 @@ class StockService {
             characteristic = ''
         } = filters;
 
+        const sortMapping = {
+            'sku': 'p.sku',
+            'model_name': 'm.name', 
+            'manufacturer_name': 'man.name',
+            'warehouse_name': 'w.name',
+            'quantity': 's.quantity',
+            'current_status': 'p.current_status',
+            'created_at': 's.created_at'
+        };
+
         let conditions = [];
         let params = [];
         let paramIndex = 1;
@@ -146,11 +156,13 @@ class StockService {
         }
 
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+        const sortByColumn = sortMapping[sortBy] || 's.created_at';
+        const orderDirection = descending ? 'DESC' : 'ASC';
 
         const query = `${this.getBaseStockQuery()}
             ${whereClause}
             GROUP BY s.id, w.name, p.sku, m.name, man.name, p.current_status, p.warranty_end
-            ORDER BY s.${sortBy} ${descending ? 'DESC' : 'ASC'}
+            ORDER BY ${sortByColumn} ${orderDirection}, s.id ASC
             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
 
         const [stockResult, total] = await Promise.all([
@@ -189,6 +201,15 @@ class StockService {
             product_id = ''
         } = filters;
 
+        const sortMapping = {
+            'created_at': 'sm.created_at',
+            'type': 'sm.type',
+            'quantity': 'sm.quantity',
+            'from_warehouse_name': 'w_from.name',
+            'to_warehouse_name': 'w_to.name',
+            'created_by_name': 'created_by_name'
+        };
+
         let conditions = [];
         let params = [];
         let paramIndex = 1;
@@ -197,6 +218,8 @@ class StockService {
             conditions.push(`(
                 p.sku ILIKE $${paramIndex} OR 
                 m.name ILIKE $${paramIndex} OR
+                w_from.name ILIKE $${paramIndex} OR
+                w_to.name ILIKE $${paramIndex} OR
                 sm.comment ILIKE $${paramIndex}
             )`);
             params.push(`%${search}%`);
@@ -246,11 +269,13 @@ class StockService {
         }
 
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+        const sortByColumn = sortMapping[sortBy] || 'sm.created_at';
+        const orderDirection = descending ? 'DESC' : 'ASC';
 
         const query = `${this.getBaseMovementsQuery()}
             ${whereClause}
             GROUP BY sm.id, p.sku, m.name, w_from.name, w_to.name, u.email, u.first_name, u.last_name
-            ORDER BY sm.${sortBy} ${descending ? 'DESC' : 'ASC'}
+            ORDER BY ${sortByColumn} ${orderDirection}, sm.id ASC
             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
 
         const [movementsResult, total] = await Promise.all([
