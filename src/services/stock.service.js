@@ -45,8 +45,8 @@ class StockService {
                 sm.*,
                 p.sku,
                 m.name as model_name,
-                w_from.name as from_warehouse_name,
-                w_to.name as to_warehouse_name,
+                wf.name as from_warehouse_name,
+                wt.name as to_warehouse_name,
                 u.email as created_by_email,
                 u.first_name || ' ' || u.last_name as created_by_name,
                 jsonb_object_agg(
@@ -60,8 +60,8 @@ class StockService {
             FROM warehouses.stock_movements sm
             JOIN products.products p ON sm.product_id = p.id
             JOIN products.models m ON p.model_id = m.id
-            LEFT JOIN warehouses.warehouses w_from ON sm.from_warehouse_id = w_from.id
-            LEFT JOIN warehouses.warehouses w_to ON sm.to_warehouse_id = w_to.id
+            LEFT JOIN warehouses.warehouses wf ON sm.from_warehouse_id = wf.id
+            LEFT JOIN warehouses.warehouses wt ON sm.to_warehouse_id = wt.id
             JOIN auth.users u ON sm.created_by = u.id
             LEFT JOIN products.product_type_characteristics ptc ON p.product_type_id = ptc.product_type_id
             LEFT JOIN products.product_characteristic_values pcv ON p.id = pcv.product_id AND ptc.id = pcv.characteristic_id
@@ -205,8 +205,8 @@ class StockService {
             'created_at': 'sm.created_at',
             'type': 'sm.type',
             'quantity': 'sm.quantity',
-            'from_warehouse_name': 'w_from.name',
-            'to_warehouse_name': 'w_to.name',
+            'from_warehouse_name': 'wf.name',
+            'to_warehouse_name': 'wt.name',
             'created_by_name': 'created_by_name'
         };
 
