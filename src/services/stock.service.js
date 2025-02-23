@@ -217,15 +217,14 @@ class StockService {
         if (search) {
             conditions.push(`(
                 p.sku ILIKE $${paramIndex} OR 
-                CAST(p.sku AS TEXT) = $${paramIndex + 1} OR  // додали точний пошук по sku
+                p.sku = $${paramIndex} OR 
                 m.name ILIKE $${paramIndex} OR
                 COALESCE(w_from.name, '') ILIKE $${paramIndex} OR
                 COALESCE(w_to.name, '') ILIKE $${paramIndex} OR
-                COALESCE(sm.comment, '') ILIKE $${paramIndex} OR
-                CAST(sm.quantity as TEXT) ILIKE $${paramIndex}
+                COALESCE(sm.comment, '') ILIKE $${paramIndex}
             )`);
-            params.push(`%${search}%`, search);  // додали параметр для точного пошуку
-            paramIndex += 2;
+            params.push(`%${search}%`);  
+            paramIndex++;
         }
 
         if (fromWarehouse) {
@@ -275,10 +274,25 @@ class StockService {
         const orderDirection = descending ? 'DESC' : 'ASC';
 
         const query = `${this.getBaseMovementsQuery()}
-            ${whereClause}
-            GROUP BY sm.id, p.sku, m.name, w_from.name, w_to.name, u.email, u.first_name, u.last_name
-            ORDER BY ${sortByColumn} ${orderDirection}, sm.id ASC
-            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        ${whereClause}
+        GROUP BY 
+            sm.id, 
+            sm.created_at,
+            sm.type,
+            sm.quantity,
+            sm.comment,
+            sm.from_warehouse_id,
+            sm.to_warehouse_id,
+            sm.created_by,
+            p.sku, 
+            m.name, 
+            w_from.name, 
+            w_to.name, 
+            u.email, 
+            u.first_name, 
+            u.last_name
+        ORDER BY ${sortByColumn} ${orderDirection}, sm.id ASC
+        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
 
         const [movementsResult, total] = await Promise.all([
             pool.query(query, [...params, perPage, (page - 1) * perPage]),
