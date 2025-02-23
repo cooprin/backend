@@ -16,6 +16,7 @@ class StockService {
                 man.name as manufacturer_name,
                 p.current_status,
                 p.current_object_id,
+                s.price,
                 jsonb_object_agg(
                     COALESCE(ptc.code, 'none'),
                     jsonb_build_object(
@@ -340,43 +341,34 @@ class StockService {
         product_id,
         from_warehouse_id,
         to_warehouse_id,
-        quantity,
         comment = null,
         userId,
         ipAddress,
         req
     }) {
-        // Update source stock
+        // Видаляємо зі старого складу
         await client.query(
-            `UPDATE warehouses.stock 
-             SET quantity = quantity - $1,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE warehouse_id = $2 AND product_id = $3`,
-            [quantity, from_warehouse_id, product_id]
+            'DELETE FROM warehouses.stock WHERE warehouse_id = $1 AND product_id = $2',
+            [from_warehouse_id, product_id]
         );
-
-        // Update or create destination stock
+    
+        // Додаємо на новий склад
         await client.query(
-            `INSERT INTO warehouses.stock (warehouse_id, product_id, quantity)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (warehouse_id, product_id) 
-             DO UPDATE SET 
-                quantity = warehouses.stock.quantity + EXCLUDED.quantity,
-                updated_at = CURRENT_TIMESTAMP`,
-            [to_warehouse_id, product_id, quantity]
+            'INSERT INTO warehouses.stock (warehouse_id, product_id) VALUES ($1, $2)',
+            [to_warehouse_id, product_id]
         );
-
-        // Create movement record
+    
+        // Створюємо запис про рух
         const movement = await client.query(
             `INSERT INTO warehouses.stock_movements (
                 product_id, from_warehouse_id, to_warehouse_id, 
                 quantity, type, comment, created_by
             )
-            VALUES ($1, $2, $3, $4, 'transfer', $5, $6)
+            VALUES ($1, $2, $3, 1, 'transfer', $4, $5)
             RETURNING *`,
-            [product_id, from_warehouse_id, to_warehouse_id, quantity, comment, userId]
+            [product_id, from_warehouse_id, to_warehouse_id, comment, userId]
         );
-
+    
         await AuditService.log({
             userId,
             actionType: AUDIT_LOG_TYPES.STOCK.TRANSFER,
@@ -386,14 +378,13 @@ class StockService {
                 product_id,
                 from_warehouse_id,
                 to_warehouse_id,
-                quantity,
                 comment
             },
             ipAddress,
             auditType: AUDIT_TYPES.BUSINESS,
             req
         });
-
+    
         return movement.rows[0];
     }
 
@@ -579,15 +570,12 @@ class StockService {
         ipAddress,
         req
     }) {
-        // Зменшуємо кількість на складі
+        // Видаляємо зі складу
         await client.query(
-            `UPDATE warehouses.stock 
-             SET quantity = quantity - 1,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE warehouse_id = $1 AND product_id = $2`,
+            'DELETE FROM warehouses.stock WHERE warehouse_id = $1 AND product_id = $2',
             [warehouse_id, product_id]
         );
-
+    
         // Оновлюємо статус продукту
         await client.query(
             `UPDATE products.products 
@@ -597,7 +585,7 @@ class StockService {
              WHERE id = $3`,
             [PRODUCT_STATUS.INSTALLED, object_id, product_id]
         );
-
+    
         // Створюємо запис про рух
         const movement = await client.query(
             `INSERT INTO warehouses.stock_movements (
@@ -609,11 +597,11 @@ class StockService {
                 comment,
                 created_by
             )
-            VALUES ($1, $2, $3, 'install', $4, $5, $6)
+            VALUES ($1, $2, 1, 'install', $3, $4, $5)
             RETURNING *`,
-            [product_id, warehouse_id, 1, object_id, comment, userId]
+            [product_id, warehouse_id, object_id, comment, userId]
         );
-
+    
         await AuditService.log({
             userId,
             actionType: AUDIT_LOG_TYPES.STOCK.INSTALL,
@@ -629,7 +617,7 @@ class StockService {
             auditType: AUDIT_TYPES.BUSINESS,
             req
         });
-
+    
         return movement.rows[0];
     }
 
@@ -661,15 +649,10 @@ class StockService {
     }) {
         // Додаємо на склад
         await client.query(
-            `INSERT INTO warehouses.stock (warehouse_id, product_id, quantity)
-             VALUES ($1, $2, 1)
-             ON CONFLICT (warehouse_id, product_id) 
-             DO UPDATE SET 
-                quantity = warehouses.stock.quantity + 1,
-                updated_at = CURRENT_TIMESTAMP`,
+            'INSERT INTO warehouses.stock (warehouse_id, product_id) VALUES ($1, $2)',
             [warehouse_id, product_id]
         );
-
+    
         // Оновлюємо статус продукту
         await client.query(
             `UPDATE products.products 
@@ -679,7 +662,7 @@ class StockService {
              WHERE id = $2`,
             [PRODUCT_STATUS.IN_STOCK, product_id]
         );
-
+    
         // Створюємо запис про рух
         const movement = await client.query(
             `INSERT INTO warehouses.stock_movements (
@@ -691,11 +674,11 @@ class StockService {
                 comment,
                 created_by
             )
-            VALUES ($1, $2, $3, 'uninstall', $4, $5, $6)
+            VALUES ($1, $2, 1, 'uninstall', $3, $4, $5)
             RETURNING *`,
-            [product_id, warehouse_id, 1, object_id, comment, userId]
+            [product_id, warehouse_id, object_id, comment, userId]
         );
-
+    
         await AuditService.log({
             userId,
             actionType: AUDIT_LOG_TYPES.STOCK.UNINSTALL,
@@ -711,7 +694,7 @@ class StockService {
             auditType: AUDIT_TYPES.BUSINESS,
             req
         });
-
+    
         return movement.rows[0];
     }
 
