@@ -219,8 +219,8 @@ class StockService {
                 p.sku ILIKE $${paramIndex} OR 
                 p.sku = $${paramIndex} OR 
                 m.name ILIKE $${paramIndex} OR
-                COALESCE(w_from.name, '') ILIKE $${paramIndex} OR
-                COALESCE(w_to.name, '') ILIKE $${paramIndex} OR
+                COALESCE(wf.name, '') ILIKE $${paramIndex} OR
+                COALESCE(wt.name, '') ILIKE $${paramIndex} OR
                 COALESCE(sm.comment, '') ILIKE $${paramIndex}
             )`);
             params.push(`%${search}%`);  
