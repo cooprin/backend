@@ -311,6 +311,8 @@ class StockService {
                 FROM warehouses.stock_movements sm
                 JOIN products.products p ON sm.product_id = p.id
                 JOIN products.models m ON p.model_id = m.id
+                LEFT JOIN warehouses.warehouses wf ON sm.from_warehouse_id = wf.id
+                LEFT JOIN warehouses.warehouses wt ON sm.to_warehouse_id = wt.id
                 ${whereClause}
             `, params)
         ]);
