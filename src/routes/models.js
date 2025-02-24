@@ -477,6 +477,7 @@ router.post('/:id/image', authenticate, checkPermission('products.update'), uplo
             }
         }
 
+        // Змінюємо на відносний шлях
         const imageUrl = path.relative(process.env.UPLOAD_DIR, req.file.path);
         
         // Оновлюємо URL зображення в базі даних
@@ -499,6 +500,7 @@ router.post('/:id/image', authenticate, checkPermission('products.update'), uplo
 
         await client.query('COMMIT');
 
+        // Повертаємо правильний шлях до зображення
         res.json({ 
             success: true,
             image_url: imageUrl
