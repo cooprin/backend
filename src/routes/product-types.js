@@ -170,6 +170,19 @@ router.delete('/:id', authenticate, checkPermission('products.delete'), async (r
                 message: result.message
             });
         }
+        // Check if type has models
+const modelsCheck = await client.query(
+    'SELECT id FROM products.models WHERE product_type_id = $1 LIMIT 1',
+    [typeId]
+);
+
+if (modelsCheck.rows.length > 0) {
+    return {
+        canDelete: false,
+        message: 'Cannot delete product type with existing models',
+        productType
+    };
+}
 
         await ProductTypeService.deleteProductType(client, {
             id: req.params.id,

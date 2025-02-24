@@ -241,7 +241,7 @@ router.post('/', authenticate, checkPermission('products.create'), async (req, r
                 message: 'Product type not found or inactive'
             });
         }
-        
+
         // Check if manufacturer exists and is active
         const manufacturerCheck = await client.query(
             'SELECT id FROM products.manufacturers WHERE id = $1 AND is_active = true',
@@ -268,6 +268,19 @@ router.post('/', authenticate, checkPermission('products.create'), async (req, r
                 success: false,
                 message: 'Model with this name already exists for this manufacturer'
             });
+        }
+        if (product_type_id) {
+            const typeCheck = await client.query(
+                'SELECT id FROM products.product_types WHERE id = $1 AND is_active = true',
+                [product_type_id]
+            );
+            if (typeCheck.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    message: 'Product type not found or inactive'
+                });
+            }
         }
 
         // Create model

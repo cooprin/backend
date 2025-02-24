@@ -30,7 +30,7 @@ class ProductService {
             JOIN products.models m ON p.model_id = m.id
             JOIN products.manufacturers man ON m.manufacturer_id = man.id
             JOIN products.suppliers s ON p.supplier_id = s.id
-            JOIN products.product_types pt ON p.product_type_id = pt.id
+            JOIN products.product_types pt ON m.product_type_id = pt.id
             LEFT JOIN warehouses.stock st ON p.id = st.product_id
             LEFT JOIN products.product_type_characteristics ptc ON pt.id = ptc.product_type_id
             LEFT JOIN products.product_characteristic_values pcv ON p.id = pcv.product_id AND ptc.id = pcv.characteristic_id
@@ -242,17 +242,15 @@ class ProductService {
                     sku, 
                     model_id, 
                     supplier_id, 
-                    product_type_id,
                     current_status,
                     is_own
                 )
-                VALUES ($1, $2, $3, $4, $5, $6)
+                VALUES ($1, $2, $3, $4, $5)
                 RETURNING *`,
                 [
                     sku,
                     model_id,
                     supplier_id,
-                    product_type_id,
                     'in_stock',
                     is_own
 

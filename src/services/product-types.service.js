@@ -28,7 +28,8 @@ class ProductTypeService {
             ) as characteristics,
             COUNT(DISTINCT p.id) as products_count
         FROM products.product_types pt
-        LEFT JOIN products.products p ON pt.id = p.product_type_id
+        LEFT JOIN products.models m ON m.product_type_id = pt.id
+        LEFT JOIN products.products p ON p.model_id = m.id
     `;
 }
 static async getProductTypes(filters) {
@@ -205,10 +206,18 @@ static async getProductTypes(filters) {
         }
 
         // Check if type has products
-        const productsCheck = await client.query(
-            'SELECT id FROM products.products WHERE product_type_id = $1 LIMIT 1',
+        const modelsCheck = await client.query(
+            'SELECT id FROM products.models WHERE product_type_id = $1 LIMIT 1',
             [id]
         );
+        
+        if (modelsCheck.rows.length > 0) {
+            return {
+                canDelete: false,
+                message: 'Cannot delete product type with existing models',
+                productType
+            };
+        }
 
         if (productsCheck.rows.length > 0) {
             return {
