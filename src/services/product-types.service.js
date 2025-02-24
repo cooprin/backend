@@ -204,8 +204,8 @@ static async getProductTypes(filters) {
                 message: 'Product type not found'
             };
         }
-
-        // Check if type has products
+    
+        // Check if type has models
         const modelsCheck = await client.query(
             'SELECT id FROM products.models WHERE product_type_id = $1 LIMIT 1',
             [id]
@@ -218,21 +218,11 @@ static async getProductTypes(filters) {
                 productType
             };
         }
-
-        if (productsCheck.rows.length > 0) {
-            return {
-                canDelete: false,
-                message: 'Cannot delete product type that has products',
-                productType
-            };
-        }
-
-        return {
+         return {
             canDelete: true,
             productType
         };
     }
-
     static async deleteProductType(client, { 
         id, oldProductType, userId, ipAddress, req 
     }) {
