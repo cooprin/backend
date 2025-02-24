@@ -77,6 +77,18 @@ router.post('/', authenticate, checkPermission('products.create'), async (req, r
                 message: 'Product with this SKU already exists'
             });
         }
+        const modelCheck = await client.query(
+            'SELECT product_type_id FROM products.models WHERE id = $1',
+            [req.body.model_id]
+        );
+        
+        if (modelCheck.rows[0].product_type_id !== req.body.product_type_id) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                success: false,
+                message: 'Product type must match model product type'
+            });
+        }
 
         // Validate characteristics
         const { isValid, errors } = await validateProductCharacteristics(

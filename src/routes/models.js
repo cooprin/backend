@@ -55,8 +55,10 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
             descending = false,
             search = '',
             manufacturer = '',
+            productType = '',
             isActive = ''
         } = req.query;
+
         const sortMapping = {
             'name': 'm.name',
             'manufacturer_name': 'man.name',
@@ -80,6 +82,12 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
         let conditions = [];
         let params = [];
         let paramIndex = 1;
+
+        if (productType) {
+            conditions.push(`m.product_type_id = $${paramIndex}`);
+            params.push(productType);
+            paramIndex++;
+        }
         
         if (search) {
             conditions.push(`(m.name ILIKE $${paramIndex} OR m.description ILIKE $${paramIndex})`);
@@ -89,21 +97,33 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
         
         const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
-
         let modelsQuery = `
         SELECT 
             m.*,
             man.name as manufacturer_name,
+            pt.name as product_type_name,
             COUNT(DISTINCT p.id) as products_count,
             COUNT(DISTINCT CASE WHEN p.current_status = 'in_stock' THEN p.id END) as in_stock_count,
             COUNT(DISTINCT CASE WHEN p.current_status = 'installed' THEN p.id END) as installed_count
         FROM products.models m
         JOIN products.manufacturers man ON m.manufacturer_id = man.id
+        JOIN products.product_types pt ON m.product_type_id = pt.id
         LEFT JOIN products.products p ON m.id = p.model_id
         ${whereClause}
-        GROUP BY m.id, m.name, man.name, m.is_active
+        GROUP BY 
+            m.id, 
+            m.name, 
+            m.description,
+            m.manufacturer_id,
+            m.product_type_id,
+            m.image_url,
+            m.is_active,
+            m.created_at,
+            m.updated_at,
+            man.name, 
+            pt.name
         ORDER BY ${sortByColumn} ${orderDirection}, m.name ASC
-    `;
+        `;
 
         if (perPage) {
             modelsQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
@@ -114,6 +134,7 @@ router.get('/', authenticate, checkPermission('products.read'), async (req, res)
             SELECT COUNT(*) 
             FROM products.models m
             JOIN products.manufacturers man ON m.manufacturer_id = man.id
+            JOIN products.product_types pt ON m.product_type_id = pt.id
             ${whereClause}
         `;
 
@@ -145,6 +166,7 @@ router.get('/:id', authenticate, checkPermission('products.read'), async (req, r
             SELECT 
                 m.*,
                 man.name as manufacturer_name,
+                pt.name as product_type_name,
                 COUNT(DISTINCT p.id) as products_count,
                 COUNT(DISTINCT CASE WHEN p.current_status = 'in_stock' THEN p.id END) as in_stock_count,
                 COUNT(DISTINCT CASE WHEN p.current_status = 'installed' THEN p.id END) as installed_count,
@@ -158,9 +180,20 @@ router.get('/:id', authenticate, checkPermission('products.read'), async (req, r
                 ) FILTER (WHERE p.id IS NOT NULL) as products
             FROM products.models m
             JOIN products.manufacturers man ON m.manufacturer_id = man.id
+            JOIN products.product_types pt ON m.product_type_id = pt.id
             LEFT JOIN products.products p ON m.id = p.model_id
             WHERE m.id = $1
-            GROUP BY m.id, man.name
+            GROUP BY 
+                m.id, 
+                man.name, 
+                pt.name,
+                m.description,
+                m.manufacturer_id,
+                m.product_type_id,
+                m.image_url,
+                m.is_active,
+                m.created_at,
+                m.updated_at
         `, [id]);
 
         if (result.rows.length === 0) {
@@ -191,11 +224,24 @@ router.post('/', authenticate, checkPermission('products.create'), async (req, r
             name, 
             description, 
             manufacturer_id,
+            product_type_id,
             image_url = null
         } = req.body;
 
         await client.query('BEGIN');
 
+        const typeCheck = await client.query(
+            'SELECT id FROM products.product_types WHERE id = $1 AND is_active = true',
+            [product_type_id]
+        );        
+        if (typeCheck.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                success: false,
+                message: 'Product type not found or inactive'
+            });
+        }
+        
         // Check if manufacturer exists and is active
         const manufacturerCheck = await client.query(
             'SELECT id FROM products.manufacturers WHERE id = $1 AND is_active = true',
@@ -226,10 +272,10 @@ router.post('/', authenticate, checkPermission('products.create'), async (req, r
 
         // Create model
         const result = await client.query(
-            `INSERT INTO products.models (name, description, manufacturer_id, image_url)
-             VALUES ($1, $2, $3, $4)
-             RETURNING *`,
-            [name, description, manufacturer_id, image_url]
+            `INSERT INTO products.models (name, description, manufacturer_id, product_type_id, image_url)
+ VALUES ($1, $2, $3, $4, $5)
+ RETURNING *`,
+[name, description, manufacturer_id, product_type_id, image_url]
         );
 
         await AuditService.log({
@@ -238,7 +284,7 @@ router.post('/', authenticate, checkPermission('products.create'), async (req, r
             entityType: ENTITY_TYPES.MODEL,
             entityId: result.rows[0].id,
             newValues: { 
-                name, description, manufacturer_id, image_url
+                name, description, manufacturer_id, product_type_id, image_url
             },
             ipAddress: req.ip,
             auditType: AUDIT_TYPES.BUSINESS,
@@ -272,6 +318,7 @@ router.put('/:id', authenticate, checkPermission('products.update'), async (req,
             name, 
             description,
             manufacturer_id,
+            product_type_id,
             image_url,
             is_active
         } = req.body;
@@ -290,6 +337,21 @@ router.put('/:id', authenticate, checkPermission('products.update'), async (req,
                 success: false,
                 message: 'Model not found'
             });
+        }
+
+        if (product_type_id && product_type_id !== oldData.rows[0].product_type_id) {
+            const typeCheck = await client.query(
+                'SELECT id FROM products.product_types WHERE id = $1 AND is_active = true',
+                [product_type_id]
+            );
+        
+            if (typeCheck.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    message: 'Product type not found or inactive'
+                });
+            }
         }
 
         // If manufacturer is changing, check if it exists and is active
@@ -327,15 +389,16 @@ router.put('/:id', authenticate, checkPermission('products.update'), async (req,
         // Update model
         const result = await client.query(
             `UPDATE products.models 
-             SET name = COALESCE($1, name),
-                 description = COALESCE($2, description),
-                 manufacturer_id = COALESCE($3, manufacturer_id),
-                 image_url = COALESCE($4, image_url),
-                 is_active = COALESCE($5, is_active),
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = $6
-             RETURNING *`,
-            [name, description, manufacturer_id, image_url, is_active, id]
+SET name = COALESCE($1, name),
+    description = COALESCE($2, description),
+    manufacturer_id = COALESCE($3, manufacturer_id),
+    product_type_id = COALESCE($4, product_type_id),
+    image_url = COALESCE($5, image_url),
+    is_active = COALESCE($6, is_active),
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = $7
+RETURNING *`,
+[name, description, manufacturer_id, product_type_id, image_url, is_active, id]
         );
 
         await AuditService.log({
@@ -345,7 +408,7 @@ router.put('/:id', authenticate, checkPermission('products.update'), async (req,
             entityId: id,
             oldValues: oldData.rows[0],
             newValues: { 
-                name, description, manufacturer_id, image_url, is_active
+                name, description, manufacturer_id, product_type_id, image_url, is_active
             },
             ipAddress: req.ip,
             auditType: AUDIT_TYPES.BUSINESS,
