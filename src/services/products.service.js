@@ -14,7 +14,7 @@ class ProductService {
                 p.*,
                 m.name as model_name,
                 m.description as model_description,
-                man.name as manufacturer_id,
+                man.id as manufacturer_id,
                 man.name as manufacturer_name,
                 s.name as supplier_name,
                 pt.name as product_type_name,
