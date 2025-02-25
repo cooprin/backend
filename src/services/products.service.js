@@ -340,7 +340,7 @@ class ProductService {
         const {
             model_id, supplier_id, is_own,
             current_status, current_object_id,
-            characteristics
+            characteristics, product_type_id
         } = data;
 
         // Оновлюємо продукт
