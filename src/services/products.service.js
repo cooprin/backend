@@ -143,7 +143,7 @@ class ProductService {
     
         const query = `${this.getBaseQuery()}
             ${whereClause}
-            GROUP BY p.id, m.name, m.description, man.name, s.name, pt.name, st.quantity
+            GROUP BY p.id, m.name, m.description, man.id, man.name, s.name, pt.name, st.quantity
             ORDER BY ${orderByClause}
             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     
@@ -169,7 +169,7 @@ class ProductService {
     static async getProductById(id) {
         const query = `${this.getBaseQuery()}
             WHERE p.id = $1
-            GROUP BY p.id, m.name, m.description, man.name, s.name, pt.name, st.quantity`;
+            GROUP BY p.id, m.name, m.description, man.id, man.name, s.name, pt.name, st.quantity`;
         
         const result = await pool.query(query, [id]);
         return result.rows[0];
