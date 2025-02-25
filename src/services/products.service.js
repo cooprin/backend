@@ -48,8 +48,10 @@ class ProductService {
         // Додаємо нові значення
         for (const tc of typeCharacteristics.rows) {
             const value = characteristics[tc.code];
+
             if (value !== undefined && value !== null) {
                 const formattedValue = formatCharacteristicValue(tc.type, value);
+
                 if (formattedValue !== null) {
                     await client.query(
                         `INSERT INTO products.product_characteristic_values 
@@ -216,27 +218,18 @@ class ProductService {
             if (!warehouse_id) {
                 throw new Error('Warehouse ID is required');
             }
-            console.log('Creating product with data:', {
-                sku,
-                model_id,
-                supplier_id,
-                product_type_id,
-                warehouse_id,
-                characteristics
-            });
-    
+
             // Валідація характеристик
             const { isValid, errors } = await validateProductCharacteristics(
                 client, 
                 product_type_id, 
                 characteristics
             );
-    
+
             if (!isValid) {
-                console.error('Validation errors:', errors);
                 throw new Error(`Validation failed: ${errors.join(', ')}`);
             }
-    
+
             // Створюємо продукт
             const productResult = await client.query(
                 `INSERT INTO products.products (
@@ -254,62 +247,45 @@ class ProductService {
                     supplier_id,
                     'in_stock',
                     is_own
-
                 ]
             );
-    
-            const productId = productResult.rows[0].id;
-        // Створюємо запис в stock
-        await client.query(
-            `INSERT INTO warehouses.stock (
-                warehouse_id,
-                product_id,
-                quantity
-            )
-            VALUES ($1, $2, $3)`,
-            [warehouse_id, productId, 1]
-        );
 
-        // Створюємо запис в stock_movements
-        await client.query(
-            `INSERT INTO warehouses.stock_movements (
-                product_id,
-                to_warehouse_id,
-                quantity,
-                type,
-                created_by
-            )
-            VALUES ($1, $2, $3, $4, $5)`,
-            [productId, warehouse_id, 1, 'transfer', created_by]
-        );
-    
+            const productId = productResult.rows[0].id;
+            
+            // Створюємо запис в stock
+            await client.query(
+                `INSERT INTO warehouses.stock (
+                    warehouse_id,
+                    product_id,
+                    quantity
+                )
+                VALUES ($1, $2, $3)`,
+                [warehouse_id, productId, 1]
+            );
+
+            // Створюємо запис в stock_movements
+            await client.query(
+                `INSERT INTO warehouses.stock_movements (
+                    product_id,
+                    to_warehouse_id,
+                    quantity,
+                    type,
+                    created_by
+                )
+                VALUES ($1, $2, $3, $4, $5)`,
+                [productId, warehouse_id, 1, 'transfer', created_by]
+            );
+
             // Зберігаємо характеристики
             const typeCharacteristics = await client.query(
                 `SELECT * FROM products.product_type_characteristics 
-                 WHERE product_type_id = $1`,
+                WHERE product_type_id = $1`,
                 [product_type_id]
             );
-    
-            for (const tc of typeCharacteristics.rows) {
-                const value = characteristics[tc.code];
-                if (value !== undefined && value !== null) {
-                    const formattedValue = typeof value === 'boolean' ? value.toString() : value;
-                    
-                    console.log(`Saving characteristic ${tc.code}:`, {
-                        productId,
-                        characteristicId: tc.id,
-                        value: formattedValue,
-                    });
-    
-                    await client.query(
-                        `INSERT INTO products.product_characteristic_values 
-                         (product_id, characteristic_id, value)
-                         VALUES ($1, $2, $3)`,
-                        [productId, tc.id, formattedValue]
-                    );
-                }
-            }
-    
+
+            // Використовуємо функцію saveCharacteristics замість власної логіки
+            await this.saveCharacteristics(client, productId, characteristics, typeCharacteristics);
+
             // Логуємо
             await AuditService.log({
                 userId,
@@ -328,10 +304,9 @@ class ProductService {
                 auditType: AUDIT_TYPES.BUSINESS,
                 req
             });
-    
+
             return await this.getProductById(productId);
         } catch (error) {
-            console.error('Error in createProduct:', error);
             throw error;
         }
     }
