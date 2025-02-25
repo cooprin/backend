@@ -350,10 +350,6 @@ class ProductService {
              SET model_id = COALESCE($1, model_id),
                  supplier_id = COALESCE($2, supplier_id),
                  is_own = COALESCE($4, is_own),
-                 purchase_date = COALESCE($5, purchase_date),
-                 supplier_warranty_end = COALESCE($6, supplier_warranty_end),
-                 warranty_end = COALESCE($7, warranty_end),
-                 sale_date = COALESCE($8, sale_date),
                  current_status = COALESCE($9, current_status),
                  current_object_id = COALESCE($10, current_object_id),
                  updated_at = CURRENT_TIMESTAMP
