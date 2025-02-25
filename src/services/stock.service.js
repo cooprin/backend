@@ -32,7 +32,7 @@ class StockService {
             JOIN products.products p ON s.product_id = p.id
             JOIN products.models m ON p.model_id = m.id AND m.is_active = true
             JOIN products.manufacturers man ON m.manufacturer_id = man.id AND man.is_active = true
-            LEFT JOIN products.product_type_characteristics ptc ON p.product_type_id = ptc.product_type_id
+            LEFT JOIN products.product_type_characteristics ptc ON m.product_type_id = ptc.product_type_id
             LEFT JOIN products.product_characteristic_values pcv ON p.id = pcv.product_id AND ptc.id = pcv.characteristic_id
         `;
     }
@@ -70,7 +70,7 @@ class StockService {
             LEFT JOIN warehouses.warehouses wf ON sm.from_warehouse_id = wf.id
             LEFT JOIN warehouses.warehouses wt ON sm.to_warehouse_id = wt.id
             JOIN auth.users u ON sm.created_by = u.id
-            LEFT JOIN products.product_type_characteristics ptc ON p.product_type_id = ptc.product_type_id
+            LEFT JOIN products.product_type_characteristics ptc ON m.product_type_id = ptc.product_type_id
             LEFT JOIN products.product_characteristic_values pcv ON p.id = pcv.product_id AND ptc.id = pcv.characteristic_id
         `;
     }
