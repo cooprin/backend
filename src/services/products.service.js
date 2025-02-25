@@ -338,9 +338,8 @@ class ProductService {
 
     static async updateProduct(client, { id, data, oldProduct, userId, ipAddress, req }) {
         const {
-            model_id, supplier_id, product_type_id, is_own,
-            purchase_date, supplier_warranty_end, warranty_end,
-            sale_date, current_status, current_object_id,
+            model_id, supplier_id, is_own,
+            current_status, current_object_id,
             characteristics
         } = data;
 
@@ -349,16 +348,15 @@ class ProductService {
             `UPDATE products.products 
              SET model_id = COALESCE($1, model_id),
                  supplier_id = COALESCE($2, supplier_id),
-                 is_own = COALESCE($4, is_own),
-                 current_status = COALESCE($9, current_status),
-                 current_object_id = COALESCE($10, current_object_id),
+                 is_own = COALESCE($3, is_own),
+                 current_status = COALESCE($4, current_status),
+                 current_object_id = COALESCE($5, current_object_id),
                  updated_at = CURRENT_TIMESTAMP
-             WHERE id = $11
+             WHERE id = $6
              RETURNING *`,
             [
                 model_id, supplier_id, is_own,
-                purchase_date, supplier_warranty_end, warranty_end,
-                sale_date, current_status, current_object_id, id
+                current_status, current_object_id, id
             ]
         );
 
