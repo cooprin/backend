@@ -349,7 +349,6 @@ class ProductService {
             `UPDATE products.products 
              SET model_id = COALESCE($1, model_id),
                  supplier_id = COALESCE($2, supplier_id),
-                 product_type_id = COALESCE($3, product_type_id),
                  is_own = COALESCE($4, is_own),
                  purchase_date = COALESCE($5, purchase_date),
                  supplier_warranty_end = COALESCE($6, supplier_warranty_end),
@@ -361,7 +360,7 @@ class ProductService {
              WHERE id = $11
              RETURNING *`,
             [
-                model_id, supplier_id, product_type_id, is_own,
+                model_id, supplier_id, is_own,
                 purchase_date, supplier_warranty_end, warranty_end,
                 sale_date, current_status, current_object_id, id
             ]
