@@ -45,6 +45,239 @@ const upload = multer({
     fileFilter
 });
 
+// налаштування multer для файлів документації
+const fileStorage = multer.diskStorage({
+    destination: async (req, file, cb) => {
+      const uploadDir = path.join(process.env.UPLOAD_DIR, 'model_files');
+      try {
+        await fs.mkdir(uploadDir, { recursive: true });
+        cb(null, uploadDir);
+      } catch (error) {
+        cb(error);
+      }
+    },
+    filename: (req, file, cb) => {
+      const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
+      const ext = path.extname(file.originalname);
+      cb(null, `file-${uniqueSuffix}${ext}`);
+    }
+});
+
+const fileUpload = multer({
+    storage: fileStorage,
+    limits: {
+      fileSize: 20 * 1024 * 1024 // 20MB limit
+    },
+    fileFilter: (req, file, cb) => {
+      const allowedTypes = [
+        'application/pdf', 
+        'application/msword', 
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/plain',
+        'application/zip',
+        'application/x-zip-compressed'
+      ];
+      if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error('Invalid file type. Only document formats are allowed'));
+      }
+    }
+});
+
+// Ендпоінт для завантаження файлу
+router.post('/:id/files', authenticate, checkPermission('products.update'), fileUpload.single('file'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        if (!req.file) {
+            return res.status(400).json({ 
+                success: false,
+                message: 'No file uploaded' 
+            });
+        }
+
+        const { id } = req.params;
+        const { description } = req.body;
+
+        await client.query('BEGIN');
+
+        // Перевірка існування моделі
+        const modelCheck = await client.query(
+            'SELECT id FROM products.models WHERE id = $1',
+            [id]
+        );
+
+        if (modelCheck.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({
+                success: false,
+                message: 'Model not found'
+            });
+        }
+
+        // Змінюємо на відносний шлях
+        const filePath = path.relative(process.env.UPLOAD_DIR, req.file.path);
+        
+        // Зберігаємо запис про файл в БД
+        const result = await client.query(
+            `INSERT INTO products.model_files 
+            (model_id, file_name, file_path, file_size, file_type, description, uploaded_by) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING *`,
+            [
+                id, 
+                req.file.originalname, 
+                filePath, 
+                req.file.size, 
+                req.file.mimetype, 
+                description, 
+                req.user.userId
+            ]
+        );
+
+        await AuditService.log({
+            userId: req.user.userId,
+            actionType: AUDIT_LOG_TYPES.PRODUCT.MODEL_FILE_UPLOAD,
+            entityType: ENTITY_TYPES.MODEL,
+            entityId: id,
+            newValues: { 
+                file_name: req.file.originalname,
+                file_path: filePath,
+                file_size: req.file.size,
+                file_type: req.file.mimetype,
+                description
+            },
+            ipAddress: req.ip,
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+
+        await client.query('COMMIT');
+
+        res.status(201).json({ 
+            success: true,
+            file: result.rows[0]
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error uploading file:', error);
+        res.status(500).json({ 
+            success: false,
+            message: 'Server error while uploading file' 
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// Ендпоінт для отримання списку файлів моделі
+router.get('/:id/files', authenticate, checkPermission('products.read'), async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Перевірка існування моделі
+        const modelCheck = await pool.query(
+            'SELECT id FROM products.models WHERE id = $1',
+            [id]
+        );
+
+        if (modelCheck.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Model not found'
+            });
+        }
+
+        // Отримання файлів
+        const result = await pool.query(
+            `SELECT mf.*, u.username as uploaded_by_name
+             FROM products.model_files mf
+             LEFT JOIN users.users u ON mf.uploaded_by = u.id
+             WHERE mf.model_id = $1
+             ORDER BY mf.created_at DESC`,
+            [id]
+        );
+
+        res.json({
+            success: true,
+            files: result.rows
+        });
+    } catch (error) {
+        console.error('Error fetching model files:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching model files'
+        });
+    }
+});
+
+// Ендпоінт для видалення файлу
+router.delete('/:modelId/files/:fileId', authenticate, checkPermission('products.delete'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const { modelId, fileId } = req.params;
+
+        await client.query('BEGIN');
+
+        // Отримуємо інформацію про файл
+        const fileData = await client.query(
+            'SELECT * FROM products.model_files WHERE id = $1 AND model_id = $2',
+            [fileId, modelId]
+        );
+
+        if (fileData.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({
+                success: false,
+                message: 'File not found'
+            });
+        }
+
+        // Видаляємо файл з диску
+        const filePath = path.join(process.env.UPLOAD_DIR, fileData.rows[0].file_path);
+        try {
+            await fs.unlink(filePath);
+        } catch (err) {
+            console.error('Error deleting file from disk:', err);
+        }
+
+        // Видаляємо запис з БД
+        await client.query(
+            'DELETE FROM products.model_files WHERE id = $1',
+            [fileId]
+        );
+
+        await AuditService.log({
+            userId: req.user.userId,
+            actionType: AUDIT_LOG_TYPES.PRODUCT.MODEL_FILE_DELETE,
+            entityType: ENTITY_TYPES.MODEL,
+            entityId: modelId,
+            oldValues: fileData.rows[0],
+            ipAddress: req.ip,
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+
+        await client.query('COMMIT');
+
+        res.json({
+            success: true,
+            message: 'File deleted successfully'
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error deleting file:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while deleting file'
+        });
+    } finally {
+        client.release();
+    }
+});
+
 // Get models list with filtering and pagination
 router.get('/', authenticate, checkPermission('products.read'), async (req, res) => {
     try {

@@ -81,7 +81,9 @@ const AUDIT_LOG_TYPES = {
         SUPPLIER_DELETE: 'SUPPLIER_DELETE',
         MODEL_CREATE: 'MODEL_CREATE',
         MODEL_UPDATE: 'MODEL_UPDATE',
-        MODEL_DELETE: 'MODEL_DELETE'
+        MODEL_DELETE: 'MODEL_DELETE',
+        MODEL_FILE_UPLOAD: 'model_file_upload',
+        MODEL_FILE_DELETE: 'model_file_delete'
     },
     PRODUCT_TYPE: {
         CREATE: 'PRODUCT_TYPE_CREATE',
