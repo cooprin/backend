@@ -192,9 +192,9 @@ router.get('/:id/files', authenticate, checkPermission('products.read'), async (
 
         // Отримання файлів
         const result = await pool.query(
-            `SELECT mf.*, u.username as uploaded_by_name
+            `SELECT mf.*, u.email as uploaded_by_name
              FROM products.model_files mf
-             LEFT JOIN users.users u ON mf.uploaded_by = u.id
+             LEFT JOIN auth.users u ON mf.uploaded_by = u.id
              WHERE mf.model_id = $1
              ORDER BY mf.created_at DESC`,
             [id]
