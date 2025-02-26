@@ -126,12 +126,11 @@ router.get('/:id', authenticate, checkPermission('products.read'), async (req, r
             SELECT 
                 s.*,
                 COUNT(DISTINCT p.id) as products_count,
-                COUNT(DISTINCT CASE WHEN p.warranty_end > CURRENT_DATE THEN p.id END) as warranty_active_count,
+                COUNT(DISTINCT CASE WHEN p.current_status != 'written_off' THEN p.id END) as active_count,
                 json_agg(
                     DISTINCT jsonb_build_object(
                         'id', p.id,
                         'sku', p.sku,
-                        'warranty_end', p.warranty_end,
                         'current_status', p.current_status
                     )
                 ) FILTER (WHERE p.id IS NOT NULL) as products
