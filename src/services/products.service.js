@@ -143,14 +143,21 @@ class ProductService {
     
         console.log('Final ORDER BY clause:', orderByClause);
     
+        // Обробка параметра perPage для експорту
+        const limit = perPage === 'All' ? null : parseInt(perPage);
+        const limitClause = limit ? `LIMIT $${paramIndex} OFFSET $${paramIndex + 1}` : '';
+        const queryParams = limit 
+            ? [...params, limit, (page - 1) * limit] 
+            : params;
+    
         const query = `${this.getBaseQuery()}
             ${whereClause}
             GROUP BY p.id, m.name, m.description, man.id, man.name, s.name, pt.name, st.quantity
             ORDER BY ${orderByClause}
-            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+            ${limitClause}`;
     
         const [products, total] = await Promise.all([
-            pool.query(query, [...params, perPage, (page - 1) * perPage]),
+            pool.query(query, queryParams),
             pool.query(`
                 SELECT COUNT(DISTINCT p.id)
                 FROM products.products p
@@ -167,7 +174,6 @@ class ProductService {
             total: parseInt(total.rows[0].count)
         };
     }
-
     static async getProductById(id) {
         const query = `${this.getBaseQuery()}
             WHERE p.id = $1

@@ -265,6 +265,13 @@ class StockService {
         const sortByColumn = sortMapping[sortBy] || 'sm.created_at';
         const orderDirection = descending ? 'DESC' : 'ASC';
     
+        // Обробка параметра perPage для експорту
+        const limit = perPage === 'All' ? null : parseInt(perPage);
+        const limitClause = limit ? `LIMIT $${paramIndex} OFFSET $${paramIndex + 1}` : '';
+        const queryParams = limit 
+            ? [...params, limit, (page - 1) * limit] 
+            : params;
+    
         const query = `${this.getBaseMovementsQuery()}
             ${whereClause}
             GROUP BY 
@@ -285,10 +292,10 @@ class StockService {
                 u.first_name,
                 u.last_name
             ORDER BY ${sortByColumn} ${orderDirection}, sm.id ASC
-            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+            ${limitClause}`;
     
         const [movementsResult, total] = await Promise.all([
-            pool.query(query, [...params, perPage, (page - 1) * perPage]),
+            pool.query(query, queryParams),
             pool.query(`
                 SELECT COUNT(DISTINCT sm.id)
                 FROM warehouses.stock_movements sm
