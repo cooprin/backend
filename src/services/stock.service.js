@@ -846,30 +846,56 @@ class StockService {
         return movement.rows[0];
     }
 
-    static async validateRepairReturn(client, { product_id, to_warehouse_id }) {
+    static async validateRepairReturn(client, { product_id, warehouse_id }) {
+        // Перевірка обов'язкових полів
+        if (!product_id || !warehouse_id) {
+            return {
+                isValid: false,
+                message: 'Product ID and warehouse ID are required'
+            };
+        }
+    
         const product = await client.query(
             'SELECT current_status FROM products.products WHERE id = $1',
             [product_id]
         );
-
+    
         if (product.rows[0].current_status !== PRODUCT_STATUS.IN_REPAIR) {
             return {
                 isValid: false,
                 message: 'Product is not in repair'
             };
         }
-
+    
+        // Перевірка, що склад існує і активний
+        const warehouse = await client.query(
+            'SELECT id FROM warehouses.warehouses WHERE id = $1 AND is_active = true',
+            [warehouse_id]
+        );
+    
+        if (warehouse.rows.length === 0) {
+            return {
+                isValid: false,
+                message: 'Warehouse not found or not active'
+            };
+        }
+    
         return { isValid: true };
     }
 
     static async returnFromRepair(client, {
         product_id,
-        to_warehouse_id,
+        warehouse_id, // Змінено з to_warehouse_id на warehouse_id
         comment = null,
         userId,
         ipAddress,
         req
     }) {
+        // Додаткова перевірка, що warehouse_id не є null
+        if (!warehouse_id) {
+            throw new Error('Warehouse ID is required for returning product from repair');
+        }
+    
         // Додаємо на склад
         await client.query(
             `INSERT INTO warehouses.stock (warehouse_id, product_id, quantity)
@@ -878,9 +904,9 @@ class StockService {
              DO UPDATE SET 
                 quantity = warehouses.stock.quantity + 1,
                 updated_at = CURRENT_TIMESTAMP`,
-            [to_warehouse_id, product_id]
+            [warehouse_id, product_id]
         );
-
+    
         // Оновлюємо статус продукту
         await client.query(
             `UPDATE products.products 
@@ -889,8 +915,8 @@ class StockService {
              WHERE id = $2`,
             [PRODUCT_STATUS.IN_STOCK, product_id]
         );
-
-        // Створюємо запис про рух
+    
+        // Створюємо запис про рух (використовуємо warehouse_id як to_warehouse_id)
         const movement = await client.query(
             `INSERT INTO warehouses.stock_movements (
                 product_id,
@@ -902,9 +928,9 @@ class StockService {
             )
             VALUES ($1, $2, 1, 'repair_return', $3, $4)
             RETURNING *`,
-            [product_id, to_warehouse_id, comment, userId]
+            [product_id, warehouse_id, comment, userId]
         );
-
+    
         await AuditService.log({
             userId,
             actionType: AUDIT_LOG_TYPES.STOCK.REPAIR_RETURN,
@@ -912,14 +938,14 @@ class StockService {
             entityId: movement.rows[0].id,
             newValues: { 
                 product_id,
-                to_warehouse_id,
+                to_warehouse_id: warehouse_id, // Використовуємо warehouse_id для логування
                 comment
             },
             ipAddress,
             auditType: AUDIT_TYPES.BUSINESS,
             req
         });
-
+    
         return movement.rows[0];
     }
 
