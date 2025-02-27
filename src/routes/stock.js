@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
+const AuditService = require('../services/auditService');
 const { checkPermission } = require('../middleware/checkPermission');
 const StockService = require('../services/stock.service');
 const ExcelJS = require('exceljs');
