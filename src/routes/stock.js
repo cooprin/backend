@@ -4,6 +4,7 @@ const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { checkPermission } = require('../middleware/checkPermission');
 const StockService = require('../services/stock.service');
+const ExcelJS = require('exceljs');
 
 // Get stock with filtering and pagination
 router.get('/', authenticate, checkPermission('warehouses.read'), async (req, res) => {
@@ -341,6 +342,120 @@ router.post('/write-off', authenticate, checkPermission('warehouses.update'), as
         });
     } finally {
         client.release();
+    }
+});
+// Export movements to Excel
+router.get('/movements/export', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    try {
+        const {
+            search, fromWarehouse, toWarehouse, type, dateFrom, dateTo
+        } = req.query;
+
+        // Логуємо початок експорту
+        const browserInfo = {
+            userAgent: req.headers['user-agent'],
+            platform: req.headers['sec-ch-ua-platform'],
+            mobile: req.headers['sec-ch-ua-mobile']
+        };
+
+        await AuditService.log({
+            userId: req.user.userId,
+            actionType: AUDIT_LOG_TYPES.STOCK.EXPORT,
+            entityType: ENTITY_TYPES.STOCK,
+            ipAddress: req.ip,
+            browserInfo,
+            userAgent: req.headers['user-agent'],
+            newValues: { filters: req.query },
+            tableSchema: 'warehouses',
+            tableName: 'stock_movements',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+
+        // Отримуємо дані для експорту
+        const result = await StockService.getStockMovements({
+            ...req.query,
+            perPage: 'All' // Експортуємо всі дані
+        });
+
+        // Створюємо новий документ Excel
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Stock Movements');
+
+        // Встановлюємо заголовки
+        worksheet.columns = [
+            { header: 'Date', key: 'date', width: 20 },
+            { header: 'Product', key: 'product', width: 20 },
+            { header: 'Type', key: 'type', width: 15 },
+            { header: 'Quantity', key: 'quantity', width: 10 },
+            { header: 'From Warehouse', key: 'fromWarehouse', width: 20 },
+            { header: 'To Warehouse', key: 'toWarehouse', width: 20 },
+            { header: 'Created By', key: 'createdBy', width: 20 },
+            { header: 'Comment', key: 'comment', width: 40 },
+            // Додайте інші потрібні колонки
+        ];
+
+        // Додаємо дані
+        result.movements.forEach(movement => {
+            worksheet.addRow({
+                date: new Date(movement.created_at).toLocaleString(),
+                product: movement.sku + ' - ' + movement.model_name,
+                type: movement.type,
+                quantity: movement.quantity,
+                fromWarehouse: movement.from_warehouse_name || '-',
+                toWarehouse: movement.to_warehouse_name || '-',
+                createdBy: movement.created_by_name,
+                comment: movement.comment || '-',
+                // Додайте інші поля
+            });
+        });
+
+        // Стилізуємо заголовки
+        worksheet.getRow(1).font = { bold: true };
+        worksheet.getRow(1).fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFE0E0E0' }
+        };
+
+        // Встановлюємо заголовки відповіді
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename=stock-movements-${new Date().toISOString().slice(0,10)}.xlsx`
+        );
+
+        // Відправляємо файл
+        await workbook.xlsx.write(res);
+        res.end();
+
+        // Логуємо успішний експорт
+        await AuditService.log({
+            userId: req.user.userId,
+            actionType: AUDIT_LOG_TYPES.STOCK.EXPORT_SUCCESS,
+            entityType: ENTITY_TYPES.STOCK,
+            ipAddress: req.ip,
+            browserInfo,
+            userAgent: req.headers['user-agent'],
+            newValues: {
+                recordsCount: result.movements.length,
+                exportDate: new Date().toISOString()
+            },
+            tableSchema: 'warehouses',
+            tableName: 'stock_movements',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+
+    } catch (error) {
+        console.error('Error exporting stock movements:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while exporting stock movements'
+        });
     }
 });
 
