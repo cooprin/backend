@@ -3,6 +3,7 @@ const router = express.Router();
 const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const AuditService = require('../services/auditService');
+const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
 const { checkPermission } = require('../middleware/checkPermission');
 const StockService = require('../services/stock.service');
 const ExcelJS = require('exceljs');
