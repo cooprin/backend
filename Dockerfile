@@ -1,5 +1,7 @@
 FROM node:18
 
+ENV NODE_OPTIONS="--max-http-header-size=32768"
+
 WORKDIR /app
 
 # Копіюємо package.json і встановлюємо залежності
