@@ -53,6 +53,7 @@ router.post('/', authenticate, checkPermission('wialon_objects.create'), async (
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        await client.query("SET LOCAL audit.user_id = $1", [req.user.userId]);
         
         const newObject = await WialonService.createObject(
             client, 
@@ -84,7 +85,8 @@ router.put('/:id', authenticate, checkPermission('wialon_objects.update'), async
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        
+        await client.query("SET LOCAL audit.user_id = $1", [req.user.userId]);
+
         const updatedObject = await WialonService.updateObject(
             client, 
             req.params.id, 
@@ -116,6 +118,7 @@ router.post('/:id/change-owner', authenticate, checkPermission('wialon_objects.u
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        await client.query("SET LOCAL audit.user_id = $1", [req.user.userId]);
         
         const { client_id, notes } = req.body;
         
@@ -155,6 +158,7 @@ router.delete('/:id', authenticate, checkPermission('wialon_objects.delete'), as
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        await client.query("SET LOCAL audit.user_id = $1", [req.user.userId]);
         
         await WialonService.deleteObject(
             client, 
