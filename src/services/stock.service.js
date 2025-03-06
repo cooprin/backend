@@ -508,77 +508,80 @@ class StockService {
         return movement.rows[0];
     }
 
-    static async validateInstallation(client, { product_id, warehouse_id, object_id }) {
-        // Перевірка обов'язкових полів
-        if (!product_id || !warehouse_id || !object_id) {
-            return {
-                isValid: false,
-                message: 'Missing required fields'
-            };
-        }
-
-        // Перевірка чи склад активний
-        const warehouse = await client.query(
-            'SELECT id FROM warehouses.warehouses WHERE id = $1 AND is_active = true',
-            [warehouse_id]
-        );
-
-        if (warehouse.rows.length === 0) {
-            return {
-                isValid: false,
-                message: 'Warehouse is not active'
-            };
-        }
-
-        // Перевірка статусу продукту
-        const product = await client.query(
-            'SELECT current_status, is_active FROM products.products WHERE id = $1',
-            [product_id]
-        );
-
-        if (!product.rows[0]?.is_active) {
-            return {
-                isValid: false,
-                message: 'Product is not active'
-            };
-        }
-
-        if (product.rows[0].current_status !== PRODUCT_STATUS.IN_STOCK) {
-            return {
-                isValid: false,
-                message: 'Product is not available for installation'
-            };
-        }
-
-        // Перевірка чи є продукт на складі
-        const stock = await client.query(
-            'SELECT quantity FROM warehouses.stock WHERE warehouse_id = $1 AND product_id = $2',
-            [warehouse_id, product_id]
-        );
-
-        if (stock.rows.length === 0) {
-            return {
-                isValid: false,
-                message: 'Product not found in warehouse'
-            };
-        }
-
-        // Перевірка чи не встановлено вже інший продукт на цей об'єкт
-        const installedProduct = await client.query(
-            'SELECT id FROM products.products WHERE current_object_id = $1 AND current_status = $2',
-            [object_id, PRODUCT_STATUS.INSTALLED]
-        );
-
-        if (installedProduct.rows.length > 0) {
-            return {
-                isValid: false,
-                message: 'Another product is already installed on this object'
-            };
-        }
-
-        return { isValid: true };
+  
+static async validateInstallation(client, { product_id, warehouse_id, object_id }) {
+    // Перевірка обов'язкових полів
+    if (!product_id || !warehouse_id || !object_id) {
+        return {
+            isValid: false,
+            message: 'Missing required fields'
+        };
     }
 
+    // Перевірка чи склад активний
+    const warehouse = await client.query(
+        'SELECT id FROM warehouses.warehouses WHERE id = $1 AND is_active = true',
+        [warehouse_id]
+    );
+
+    if (warehouse.rows.length === 0) {
+        return {
+            isValid: false,
+            message: 'Warehouse is not active'
+        };
+    }
+
+    // Перевірка статусу продукту
+    const product = await client.query(
+        'SELECT current_status, is_active FROM products.products WHERE id = $1',
+        [product_id]
+    );
+
+    if (!product.rows[0]?.is_active) {
+        return {
+            isValid: false,
+            message: 'Product is not active'
+        };
+    }
+
+    if (product.rows[0].current_status !== PRODUCT_STATUS.IN_STOCK) {
+        return {
+            isValid: false,
+            message: 'Product is not available for installation'
+        };
+    }
+
+    // Перевірка чи є продукт на складі
+    const stock = await client.query(
+        'SELECT quantity FROM warehouses.stock WHERE warehouse_id = $1 AND product_id = $2',
+        [warehouse_id, product_id]
+    );
+
+    if (stock.rows.length === 0) {
+        return {
+            isValid: false,
+            message: 'Product not found in warehouse'
+        };
+    }
+
+    // Перевірка, чи цей продукт вже встановлено на якийсь об'єкт
+    const alreadyInstalled = await client.query(
+        'SELECT id FROM products.products WHERE id = $1 AND current_status = $2',
+        [product_id, PRODUCT_STATUS.INSTALLED]
+    );
+
+    if (alreadyInstalled.rows.length > 0) {
+        return {
+            isValid: false,
+            message: 'This product is already installed on another object'
+        };
+    }
+
+    // Видаляємо перевірку на кількість встановлених продуктів на об'єкт
+    // Тепер можна встановлювати декілька продуктів на один об'єкт
+
+    return { isValid: true };
+}
 
     static async installProduct(client, {
         product_id,
