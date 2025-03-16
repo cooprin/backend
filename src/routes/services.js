@@ -244,6 +244,38 @@ router.get('/client/:clientId', authenticate, checkPermission('services.read'), 
     }
 });
 
+
+router.get('/invoices', authenticate, checkPermission('invoices.read'), async (req, res) => {
+    try {
+        // Адаптуємо фільтри з запиту
+        const filters = {
+            page: req.query.page || 1,
+            perPage: req.query.perPage || 10,
+            sortBy: req.query.sortBy || 'invoice_date',
+            descending: req.query.descending === '1' || req.query.descending === 'true',
+            search: req.query.search,
+            status: req.query.status,
+            year: req.query.year,
+            month: req.query.month
+        };
+
+
+        const result = await ServiceService.getAllInvoices(filters);
+        
+        res.json({
+            success: true,
+            invoices: result.invoices,
+            total: result.total
+        });
+    } catch (error) {
+        console.error('Error fetching invoices:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні списку рахунків'
+        });
+    }
+});
+
 // Створення рахунку
 router.post('/invoices', authenticate, checkPermission('invoices.create'), async (req, res) => {
     const client = await pool.connect();

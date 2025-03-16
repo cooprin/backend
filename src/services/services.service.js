@@ -781,6 +781,118 @@ static async createInvoice(client, data, userId, req) {
     }
 }
 
+static async getAllInvoices(filters) {
+    const {
+        page = 1,
+        perPage = 10,
+        sortBy = 'invoice_date',
+        descending = true,
+        search = '',
+        status = null,
+        year = null,
+        month = null
+    } = filters;
+
+    let conditions = [];
+    let params = [];
+    let paramIndex = 1;
+
+    if (search) {
+        conditions.push(`(
+            i.invoice_number ILIKE $${paramIndex} OR
+            c.name ILIKE $${paramIndex}
+        )`);
+        params.push(`%${search}%`);
+        paramIndex++;
+    }
+
+    if (status) {
+        conditions.push(`i.status = $${paramIndex}`);
+        params.push(status);
+        paramIndex++;
+    }
+
+    if (year) {
+        conditions.push(`i.billing_year = $${paramIndex}`);
+        params.push(parseInt(year));
+        paramIndex++;
+    }
+
+    if (month) {
+        conditions.push(`i.billing_month = $${paramIndex}`);
+        params.push(parseInt(month));
+        paramIndex++;
+    }
+
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+    const orderDirection = descending ? 'DESC' : 'ASC';
+    
+    // Визначення поля для сортування
+    let orderByField;
+    switch(sortBy) {
+        case 'invoice_date':
+            orderByField = 'i.invoice_date';
+            break;
+        case 'invoice_number':
+            orderByField = 'i.invoice_number';
+            break;
+        case 'client_name':
+            orderByField = 'c.name';
+            break;
+        case 'status':
+            orderByField = 'i.status';
+            break;
+        case 'total_amount':
+            orderByField = 'i.total_amount';
+            break;
+        case 'billing_period':
+            orderByField = 'i.billing_year, i.billing_month';
+            break;
+        default:
+            orderByField = 'i.invoice_date';
+    }
+
+    // Обробка опції "всі записи" для експорту
+    const limit = perPage === 'All' ? null : parseInt(perPage);
+    const offset = limit ? (parseInt(page) - 1) * limit : 0;
+    
+    let query = `
+        SELECT 
+            i.*,
+            c.name as client_name,
+            COUNT(ii.id) as items_count,
+            p.payment_date
+        FROM services.invoices i
+        JOIN clients.clients c ON i.client_id = c.id
+        LEFT JOIN services.invoice_items ii ON i.id = ii.invoice_id
+        LEFT JOIN billing.payments p ON i.payment_id = p.id
+        ${whereClause}
+        GROUP BY i.id, c.name, c.id, p.payment_date
+        ORDER BY ${orderByField} ${orderDirection}
+    `;
+
+    if (limit !== null) {
+        query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        params.push(limit, offset);
+    }
+
+    const countQuery = `
+        SELECT COUNT(DISTINCT i.id) FROM services.invoices i
+        JOIN clients.clients c ON i.client_id = c.id
+        ${whereClause}
+    `;
+
+    const [invoicesResult, countResult] = await Promise.all([
+        pool.query(query, params),
+        pool.query(countQuery, conditions.length ? params.slice(0, paramIndex - 1) : [])
+    ]);
+
+    return {
+        invoices: invoicesResult.rows,
+        total: parseInt(countResult.rows[0].count)
+    };
+}
+
     // Отримання рахунків клієнта
     static async getClientInvoices(clientId, filters = {}) {
         const { 
