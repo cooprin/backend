@@ -557,200 +557,229 @@ class ServiceService {
     }
 
     // Створення рахунку
-    static async createInvoice(client, data, userId, req) {
-        try {
-            const { 
-                client_id, invoice_date, billing_month, billing_year, 
-                items, notes 
-            } = data;
+// Створення рахунку
+static async createInvoice(client, data, userId, req) {
+    try {
+        const { 
+            client_id, invoice_date, billing_month, billing_year, 
+            items, notes 
+        } = data;
 
-            if (!client_id || !items || !Array.isArray(items) || items.length === 0) {
-                throw new Error('ID клієнта та перелік послуг обов\'язкові');
-            }
+        if (!client_id || !items || !Array.isArray(items) || items.length === 0) {
+            throw new Error('ID клієнта та перелік послуг обов\'язкові');
+        }
 
-            // Перевірка наявності клієнта
-            const clientExists = await client.query(
-                'SELECT id FROM clients.clients WHERE id = $1',
-                [client_id]
-            );
-
-            if (clientExists.rows.length === 0) {
-                throw new Error('Вказаний клієнт не існує');
-            }
-
-            // Генерація номера рахунку
-            const invoiceDate = invoice_date ? new Date(invoice_date) : new Date();
-            const month = billing_month || (invoiceDate.getMonth() + 1);
-            const year = billing_year || invoiceDate.getFullYear();
-            
-            // Отримуємо останній номер рахунку
-            const lastInvoiceNumber = await client.query(
-                `SELECT invoice_number FROM services.invoices
-                 WHERE client_id = $1 AND billing_year = $2
-                 ORDER BY invoice_number DESC
-                 LIMIT 1`,
-                [client_id, year]
-            );
-            
-            let invoiceNumber;
-            if (lastInvoiceNumber.rows.length > 0) {
-                const lastNumber = parseInt(lastInvoiceNumber.rows[0].invoice_number.split('-')[1], 10);
-                invoiceNumber = `${year}-${(lastNumber + 1).toString().padStart(4, '0')}`;
-            } else {
-                invoiceNumber = `${year}-0001`;
-            }
-
-            // Розрахунок загальної суми
-            let totalAmount = 0;
-            for (const item of items) {
-                totalAmount += (item.quantity || 1) * item.unit_price;
-            }
-
-            // Створення рахунку
-            const invoiceResult = await client.query(
-                `INSERT INTO services.invoices (
-                    client_id, invoice_number, invoice_date, billing_month, 
-                    billing_year, total_amount, status, notes, created_by
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                RETURNING *`,
-                [
-                    client_id, 
-                    invoiceNumber, 
-                    invoiceDate, 
-                    month, 
-                    year, 
-                    totalAmount, 
-                    'issued', 
-                    notes, 
-                    userId
-                ]
-            );
-
-            const invoiceId = invoiceResult.rows[0].id;
-
-            // Додавання позицій рахунку
-// Додавання позицій рахунку
-for (const item of items) {
-    // Для послуг типу "object_based" потрібно перевіряти дату призначення об'єктів
-    if (item.service_type === 'object_based') {
-        // Отримуємо всі об'єкти клієнта
-        const objectsResult = await client.query(
-            `SELECT o.id, o.name, t.price 
-             FROM wialon.objects o
-             JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
-             JOIN billing.tariffs t ON ot.tariff_id = t.id
-             WHERE o.client_id = $1 AND o.status = 'active'`,
+        // Перевірка наявності клієнта
+        const clientExists = await client.query(
+            'SELECT id FROM clients.clients WHERE id = $1',
             [client_id]
         );
-        
-        // Розраховуємо загальну вартість для всіх об'єктів з урахуванням дати призначення
-        let totalObjectsPrice = 0;
-        let includedObjectsCount = 0;
-        
-        for (const obj of objectsResult.rows) {
-            // Перевіряємо, чи потрібно нараховувати оплату за цей об'єкт за поточний місяць
-            const shouldChargeResult = await client.query(
-                `SELECT billing.should_charge_for_month($1, $2, $3, $4) as should_charge`,
-                [obj.id, client_id, year, month]
-            );
-            
-            if (shouldChargeResult.rows[0].should_charge) {
-                totalObjectsPrice += obj.price;
-                includedObjectsCount++;
-            }
+
+        if (clientExists.rows.length === 0) {
+            throw new Error('Вказаний клієнт не існує');
         }
+
+        // Генерація номера рахунку
+        const invoiceDate = invoice_date ? new Date(invoice_date) : new Date();
+        const month = billing_month || (invoiceDate.getMonth() + 1);
+        const year = billing_year || invoiceDate.getFullYear();
         
-        // Якщо є об'єкти для нарахування, додаємо позицію рахунку
-        if (includedObjectsCount > 0) {
-            // Опис з переліком об'єктів
-            const description = item.description || 
-                `${item.service_name || 'Послуга GPS моніторингу'} (${includedObjectsCount} об'єктів)`;
-            
-            await client.query(
-                `INSERT INTO services.invoice_items (
-                    invoice_id, service_id, description, quantity, 
-                    unit_price, total_price
-                )
-                VALUES ($1, $2, $3, $4, $5, $6)`,
-                [
-                    invoiceId, 
-                    item.service_id, 
-                    description, 
-                    1, 
-                    totalObjectsPrice, 
-                    totalObjectsPrice
-                ]
-            );
+        // Отримуємо останній номер рахунку
+        const lastInvoiceNumber = await client.query(
+            `SELECT invoice_number FROM services.invoices
+             WHERE client_id = $1 AND billing_year = $2
+             ORDER BY invoice_number DESC
+             LIMIT 1`,
+            [client_id, year]
+        );
+        
+        let invoiceNumber;
+        if (lastInvoiceNumber.rows.length > 0) {
+            const lastNumber = parseInt(lastInvoiceNumber.rows[0].invoice_number.split('-')[1], 10);
+            invoiceNumber = `${year}-${(lastNumber + 1).toString().padStart(4, '0')}`;
+        } else {
+            invoiceNumber = `${year}-0001`;
         }
-    } else {
-        // Для інших типів послуг використовуємо стандартну логіку
-        await client.query(
-            `INSERT INTO services.invoice_items (
-                invoice_id, service_id, description, quantity, 
-                unit_price, total_price
+
+        // Розрахунок загальної суми
+        let totalAmount = 0;
+        for (const item of items) {
+            totalAmount += (item.quantity || 1) * item.unit_price;
+        }
+
+        // Створення рахунку
+        const invoiceResult = await client.query(
+            `INSERT INTO services.invoices (
+                client_id, invoice_number, invoice_date, billing_month, 
+                billing_year, total_amount, status, notes, created_by
             )
-            VALUES ($1, $2, $3, $4, $5, $6)`,
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING *`,
             [
-                invoiceId, 
-                item.service_id, 
-                item.description, 
-                item.quantity || 1, 
-                item.unit_price, 
-                (item.quantity || 1) * item.unit_price
+                client_id, 
+                invoiceNumber, 
+                invoiceDate, 
+                month, 
+                year, 
+                totalAmount, 
+                'issued', 
+                notes, 
+                userId
             ]
         );
+
+        const invoiceId = invoiceResult.rows[0].id;
+
+        // Додавання позицій рахунку з перевіркою типу послуги
+        for (const item of items) {
+            if (!item.service_id) {
+                throw new Error('ID послуги обов\'язковий для кожної позиції рахунку');
+            }
+            
+            // Отримуємо інформацію про послугу
+            const serviceInfo = await client.query(
+                `SELECT id, name, service_type, fixed_price FROM services.services WHERE id = $1`,
+                [item.service_id]
+            );
+            
+            if (serviceInfo.rows.length === 0) {
+                throw new Error(`Послуга з ID ${item.service_id} не знайдена`);
+            }
+            
+            const service = serviceInfo.rows[0];
+            
+            // Якщо послуга типу object_based, перевіряємо чи вона призначена клієнту
+            if (service.service_type === 'object_based') {
+                // Перевіряємо чи призначена послуга клієнту
+                const assignedService = await client.query(
+                    `SELECT id FROM services.client_services 
+                    WHERE client_id = $1 AND service_id = $2 
+                    AND status = 'active' AND (end_date IS NULL OR end_date > CURRENT_DATE)`,
+                    [client_id, item.service_id]
+                );
+                
+                if (assignedService.rows.length === 0) {
+                    throw new Error(`Послуга типу object_based (${service.name}) повинна бути призначена клієнту перед використанням у рахунку`);
+                }
+                
+                // Для object_based послуг може бути окрема логіка розрахунку
+                // Отримуємо всі об'єкти клієнта
+                const objectsResult = await client.query(
+                    `SELECT o.id, o.name, t.price 
+                    FROM wialon.objects o
+                    JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
+                    JOIN billing.tariffs t ON ot.tariff_id = t.id
+                    WHERE o.client_id = $1 AND o.status = 'active'`,
+                    [client_id]
+                );
+                
+                // Розраховуємо загальну вартість для всіх об'єктів з урахуванням дати призначення
+                let totalObjectsPrice = 0;
+                let includedObjectsCount = 0;
+                
+                for (const obj of objectsResult.rows) {
+                    // Перевіряємо, чи потрібно нараховувати оплату за цей об'єкт за поточний місяць
+                    const shouldChargeResult = await client.query(
+                        `SELECT billing.should_charge_for_month($1, $2, $3, $4) as should_charge`,
+                        [obj.id, client_id, year, month]
+                    );
+                    
+                    if (shouldChargeResult.rows[0].should_charge) {
+                        totalObjectsPrice += obj.price;
+                        includedObjectsCount++;
+                    }
+                }
+                
+                // Якщо є об'єкти для нарахування, додаємо позицію рахунку
+                if (includedObjectsCount > 0) {
+                    // Опис з переліком об'єктів
+                    const description = item.description || 
+                        `${service.name} (${includedObjectsCount} об'єктів)`;
+                    
+                    await client.query(
+                        `INSERT INTO services.invoice_items (
+                            invoice_id, service_id, description, quantity, 
+                            unit_price, total_price
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6)`,
+                        [
+                            invoiceId, 
+                            item.service_id, 
+                            description, 
+                            1, 
+                            totalObjectsPrice, 
+                            totalObjectsPrice
+                        ]
+                    );
+                }
+            } else {
+                // Для fixed послуг не перевіряємо призначення клієнту
+                await client.query(
+                    `INSERT INTO services.invoice_items (
+                        invoice_id, service_id, description, quantity, 
+                        unit_price, total_price
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [
+                        invoiceId, 
+                        item.service_id, 
+                        item.description || service.name, 
+                        item.quantity || 1, 
+                        service.service_type === 'fixed' ? service.fixed_price : item.unit_price, 
+                        (item.quantity || 1) * (service.service_type === 'fixed' ? service.fixed_price : item.unit_price)
+                    ]
+                );
+            }
+        }
+
+        // Аудит
+        await AuditService.log({
+            userId,
+            actionType: 'INVOICE_CREATE',  // Це потрібно додати в AUDIT_LOG_TYPES
+            entityType: 'INVOICE',  // Це потрібно додати в ENTITY_TYPES
+            entityId: invoiceId,
+            newValues: { 
+                client_id, invoice_number: invoiceNumber, invoice_date: invoiceDate, 
+                billing_month: month, billing_year: year, total_amount: totalAmount,
+                items, notes
+            },
+            ipAddress: req.ip,
+            tableSchema: 'services',
+            tableName: 'invoices',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+
+        // Повертаємо створений рахунок з позиціями
+        const result = await client.query(
+            `SELECT 
+                i.*,
+                c.name as client_name,
+                json_agg(
+                    jsonb_build_object(
+                        'id', ii.id,
+                        'service_id', ii.service_id,
+                        'service_name', s.name,
+                        'description', ii.description,
+                        'quantity', ii.quantity,
+                        'unit_price', ii.unit_price,
+                        'total_price', ii.total_price
+                    )
+                ) as items
+            FROM services.invoices i
+            JOIN clients.clients c ON i.client_id = c.id
+            LEFT JOIN services.invoice_items ii ON i.id = ii.invoice_id
+            LEFT JOIN services.services s ON ii.service_id = s.id
+            WHERE i.id = $1
+            GROUP BY i.id, c.name`,
+            [invoiceId]
+        );
+
+        return result.rows[0];
+    } catch (error) {
+        throw error;
     }
 }
-
-            // Аудит
-            await AuditService.log({
-                userId,
-                actionType: 'INVOICE_CREATE',  // Це потрібно додати в AUDIT_LOG_TYPES
-                entityType: 'INVOICE',  // Це потрібно додати в ENTITY_TYPES
-                entityId: invoiceId,
-                newValues: { 
-                    client_id, invoice_number: invoiceNumber, invoice_date: invoiceDate, 
-                    billing_month: month, billing_year: year, total_amount: totalAmount,
-                    items, notes
-                },
-                ipAddress: req.ip,
-                tableSchema: 'services',
-                tableName: 'invoices',
-                auditType: AUDIT_TYPES.BUSINESS,
-                req
-            });
-
-            // Повертаємо створений рахунок з позиціями
-            const result = await client.query(
-                `SELECT 
-                    i.*,
-                    c.name as client_name,
-                    json_agg(
-                        jsonb_build_object(
-                            'id', ii.id,
-                            'service_id', ii.service_id,
-                            'service_name', s.name,
-                            'description', ii.description,
-                            'quantity', ii.quantity,
-                            'unit_price', ii.unit_price,
-                            'total_price', ii.total_price
-                        )
-                    ) as items
-                FROM services.invoices i
-                JOIN clients.clients c ON i.client_id = c.id
-                LEFT JOIN services.invoice_items ii ON i.id = ii.invoice_id
-                LEFT JOIN services.services s ON ii.service_id = s.id
-                WHERE i.id = $1
-                GROUP BY i.id, c.name`,
-                [invoiceId]
-            );
-
-            return result.rows[0];
-        } catch (error) {
-            throw error;
-        }
-    }
 
     // Отримання рахунків клієнта
     static async getClientInvoices(clientId, filters = {}) {
