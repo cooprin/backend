@@ -44,189 +44,7 @@ router.get('/', authenticate, checkPermission('services.read'), async (req, res)
     }
 });
 
-// Отримання однієї послуги
-router.get('/:id', authenticate, checkPermission('services.read'), async (req, res) => {
-    try {
-        const service = await ServiceService.getServiceById(req.params.id);
-        
-        if (!service) {
-            return res.status(404).json({
-                success: false,
-                message: 'Послуга не знайдена'
-            });
-        }
-        
-        res.json({
-            success: true,
-            service
-        });
-    } catch (error) {
-        console.error('Error fetching service:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Помилка при отриманні даних послуги'
-        });
-    }
-});
-
-// Створення послуги
-router.post('/', authenticate, checkPermission('services.create'), async (req, res) => {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        
-        const newService = await ServiceService.createService(
-            client, 
-            req.body, 
-            req.user.userId,
-            req
-        );
-        
-        await client.query('COMMIT');
-        
-        res.status(201).json({
-            success: true,
-            service: newService
-        });
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error('Error creating service:', error);
-        res.status(400).json({
-            success: false,
-            message: error.message || 'Помилка при створенні послуги'
-        });
-    } finally {
-        client.release();
-    }
-});
-
-// Оновлення послуги
-router.put('/:id', authenticate, checkPermission('services.update'), async (req, res) => {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        
-        const updatedService = await ServiceService.updateService(
-            client, 
-            req.params.id, 
-            req.body, 
-            req.user.userId,
-            req
-        );
-        
-        await client.query('COMMIT');
-        
-        res.json({
-            success: true,
-            service: updatedService
-        });
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error('Error updating service:', error);
-        res.status(400).json({
-            success: false,
-            message: error.message || 'Помилка при оновленні послуги'
-        });
-    } finally {
-        client.release();
-    }
-});
-
-// Видалення послуги
-router.delete('/:id', authenticate, checkPermission('services.delete'), async (req, res) => {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        
-        await ServiceService.deleteService(
-            client, 
-            req.params.id, 
-            req.user.userId,
-            req
-        );
-        
-        await client.query('COMMIT');
-        
-        res.json({
-            success: true,
-            message: 'Послуга успішно видалена'
-        });
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error('Error deleting service:', error);
-        res.status(400).json({
-            success: false,
-            message: error.message || 'Помилка при видаленні послуги'
-        });
-    } finally {
-        client.release();
-    }
-});
-
-// Призначення послуги клієнту
-router.post('/assign', authenticate, checkPermission('services.update'), async (req, res) => {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        
-        const assignment = await ServiceService.assignServiceToClient(
-            client, 
-            req.body, 
-            req.user.userId,
-            req
-        );
-        
-        await client.query('COMMIT');
-        
-        res.status(201).json({
-            success: true,
-            assignment
-        });
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error('Error assigning service:', error);
-        res.status(400).json({
-            success: false,
-            message: error.message || 'Помилка при призначенні послуги'
-        });
-    } finally {
-        client.release();
-    }
-});
-
-// Припинення надання послуги клієнту
-router.post('/terminate/:id', authenticate, checkPermission('services.update'), async (req, res) => {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        
-        const result = await ServiceService.terminateClientService(
-            client, 
-            req.params.id, 
-            req.body, 
-            req.user.userId,
-            req
-        );
-        
-        await client.query('COMMIT');
-        
-        res.json({
-            success: true,
-            result
-        });
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error('Error terminating service:', error);
-        res.status(400).json({
-            success: false,
-            message: error.message || 'Помилка при припиненні надання послуги'
-        });
-    } finally {
-        client.release();
-    }
-});
-
-// Отримання послуг клієнта
+// Отримання послуг клієнта - перемістили перед /:id
 router.get('/client/:clientId', authenticate, checkPermission('services.read'), async (req, res) => {
     try {
         const services = await ServiceService.getClientServices(req.params.clientId);
@@ -244,7 +62,7 @@ router.get('/client/:clientId', authenticate, checkPermission('services.read'), 
     }
 });
 
-
+// Маршрути для рахунків - перемістили перед /:id
 router.get('/invoices', authenticate, checkPermission('invoices.read'), async (req, res) => {
     try {
         // Адаптуємо фільтри з запиту
@@ -442,6 +260,188 @@ router.post('/invoices/:id/documents', authenticate, checkPermission('invoices.u
         res.status(400).json({
             success: false,
             message: error.message || 'Помилка при завантаженні документа'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// Призначення послуги клієнту - перемістили перед /:id
+router.post('/assign', authenticate, checkPermission('services.update'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        const assignment = await ServiceService.assignServiceToClient(
+            client, 
+            req.body, 
+            req.user.userId,
+            req
+        );
+        
+        await client.query('COMMIT');
+        
+        res.status(201).json({
+            success: true,
+            assignment
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error assigning service:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при призначенні послуги'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// Припинення надання послуги клієнту - перемістили перед /:id
+router.post('/terminate/:id', authenticate, checkPermission('services.update'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        const result = await ServiceService.terminateClientService(
+            client, 
+            req.params.id, 
+            req.body, 
+            req.user.userId,
+            req
+        );
+        
+        await client.query('COMMIT');
+        
+        res.json({
+            success: true,
+            result
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error terminating service:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при припиненні надання послуги'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// Отримання однієї послуги - перемістили після специфічних маршрутів
+router.get('/:id', authenticate, checkPermission('services.read'), async (req, res) => {
+    try {
+        const service = await ServiceService.getServiceById(req.params.id);
+        
+        if (!service) {
+            return res.status(404).json({
+                success: false,
+                message: 'Послуга не знайдена'
+            });
+        }
+        
+        res.json({
+            success: true,
+            service
+        });
+    } catch (error) {
+        console.error('Error fetching service:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні даних послуги'
+        });
+    }
+});
+
+// Створення послуги
+router.post('/', authenticate, checkPermission('services.create'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        const newService = await ServiceService.createService(
+            client, 
+            req.body, 
+            req.user.userId,
+            req
+        );
+        
+        await client.query('COMMIT');
+        
+        res.status(201).json({
+            success: true,
+            service: newService
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error creating service:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при створенні послуги'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// Оновлення послуги
+router.put('/:id', authenticate, checkPermission('services.update'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        const updatedService = await ServiceService.updateService(
+            client, 
+            req.params.id, 
+            req.body, 
+            req.user.userId,
+            req
+        );
+        
+        await client.query('COMMIT');
+        
+        res.json({
+            success: true,
+            service: updatedService
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error updating service:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при оновленні послуги'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// Видалення послуги
+router.delete('/:id', authenticate, checkPermission('services.delete'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        await ServiceService.deleteService(
+            client, 
+            req.params.id, 
+            req.user.userId,
+            req
+        );
+        
+        await client.query('COMMIT');
+        
+        res.json({
+            success: true,
+            message: 'Послуга успішно видалена'
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error deleting service:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при видаленні послуги'
         });
     } finally {
         client.release();
