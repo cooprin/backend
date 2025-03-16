@@ -780,6 +780,84 @@ static async createInvoice(client, data, userId, req) {
         throw error;
     }
 }
+// Метод для створення платежу
+static async createPayment(client, data, userId, req) {
+    try {
+        const { 
+            client_id, amount, payment_date, payment_type = 'regular', 
+            invoice_id, notes 
+        } = data;
+
+        if (!client_id || !amount || !payment_date) {
+            throw new Error('ID клієнта, сума та дата платежу обов\'язкові');
+        }
+
+        // Перевірка наявності клієнта
+        const clientExists = await client.query(
+            'SELECT id FROM clients.clients WHERE id = $1',
+            [client_id]
+        );
+
+        if (clientExists.rows.length === 0) {
+            throw new Error('Вказаний клієнт не існує');
+        }
+
+        // Отримання місяця і року з дати платежу
+        const paymentDateObj = new Date(payment_date);
+        const paymentMonth = paymentDateObj.getMonth() + 1;
+        const paymentYear = paymentDateObj.getFullYear();
+
+        // Створення платежу
+        const paymentResult = await client.query(
+            `INSERT INTO billing.payments (
+                client_id, amount, payment_date, payment_month, 
+                payment_year, payment_type, notes, created_by
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING *`,
+            [
+                client_id,
+                amount,
+                paymentDate,
+                paymentMonth,
+                paymentYear,
+                payment_type,
+                notes,
+                userId
+            ]
+        );
+
+        const paymentId = paymentResult.rows[0].id;
+
+        // Якщо вказано invoice_id, зв'язуємо платіж з рахунком
+        if (invoice_id) {
+            await client.query(
+                `UPDATE services.invoices 
+                 SET status = 'paid', payment_id = $1, updated_at = $2
+                 WHERE id = $3`,
+                [paymentId, new Date(), invoice_id]
+            );
+        }
+
+        // Аудит
+        await AuditService.log({
+            userId,
+            actionType: 'PAYMENT_CREATE',
+            entityType: 'PAYMENT',
+            entityId: paymentId,
+            newValues: data,
+            ipAddress: req.ip,
+            tableSchema: 'billing',
+            tableName: 'payments',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+
+        return paymentResult.rows[0];
+    } catch (error) {
+        throw error;
+    }
+}
 
 static async getAllInvoices(filters) {
     const {
@@ -1043,7 +1121,7 @@ static async getInvoiceDetails(id) {
 // Зміна статусу рахунку
 static async updateInvoiceStatus(client, id, data, userId, req) {
     try {
-        const { status, payment_id, notes } = data;
+        const { status, payment_date, amount, payment_type, notes } = data;
 
         if (!status || !['issued', 'paid', 'cancelled'].includes(status)) {
             throw new Error('Невірний статус рахунку. Допустимі значення: issued, paid, cancelled');
@@ -1060,22 +1138,36 @@ static async updateInvoiceStatus(client, id, data, userId, req) {
         }
 
         const oldData = invoiceExists.rows[0];
+        
+        let paymentId = null;
 
-        // Перевірка оплати при зміні статусу на "оплачено"
-        if (status === 'paid' && !payment_id) {
-            throw new Error('Для статусу "оплачено" необхідно вказати ID оплати');
-        }
+        // Якщо статус змінюється на "оплачено", створюємо платіж
+        if (status === 'paid') {
+            if (!payment_date) {
+                throw new Error('Для статусу "оплачено" необхідно вказати дату оплати');
+            }
 
-        // Перевірка наявності оплати
-        if (payment_id) {
-            const paymentExists = await client.query(
-                'SELECT id FROM billing.payments WHERE id = $1',
-                [payment_id]
+            // Створення платежу
+            const paymentResult = await client.query(
+                `INSERT INTO billing.payments (
+                    client_id, amount, payment_date, payment_month, 
+                    payment_year, payment_type, notes, created_by
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                RETURNING *`,
+                [
+                    oldData.client_id,
+                    amount || oldData.total_amount,
+                    payment_date,
+                    new Date(payment_date).getMonth() + 1,
+                    new Date(payment_date).getFullYear(),
+                    payment_type || 'regular',
+                    notes || null,
+                    userId
+                ]
             );
 
-            if (paymentExists.rows.length === 0) {
-                throw new Error('Вказана оплата не існує');
-            }
+            paymentId = paymentResult.rows[0].id;
         }
 
         // Оновлюємо статус рахунку
@@ -1086,7 +1178,7 @@ static async updateInvoiceStatus(client, id, data, userId, req) {
              RETURNING *`,
             [
                 status, 
-                status === 'paid' ? payment_id : null, 
+                status === 'paid' ? paymentId : null, 
                 notes || oldData.notes, 
                 new Date(), 
                 id
@@ -1096,11 +1188,11 @@ static async updateInvoiceStatus(client, id, data, userId, req) {
         // Аудит
         await AuditService.log({
             userId,
-            actionType: 'INVOICE_STATUS_CHANGE',  // Це потрібно додати в AUDIT_LOG_TYPES
-            entityType: 'INVOICE',  // Це потрібно додати в ENTITY_TYPES
+            actionType: 'INVOICE_STATUS_CHANGE',
+            entityType: 'INVOICE',
             entityId: id,
             oldValues: oldData,
-            newValues: { status, payment_id, notes },
+            newValues: { status, payment_id: paymentId, notes },
             ipAddress: req.ip,
             tableSchema: 'services',
             tableName: 'invoices',
@@ -1338,6 +1430,7 @@ async function generateInvoiceNumber(client, clientId, year) {
     
     return invoiceNumber;
 }
+
 
 
 

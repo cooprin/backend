@@ -7,6 +7,7 @@ const ServiceService = require('../services/services.service');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const PDFService = require('../services/pdfService');
 
 // Налаштування для завантаження файлів
 const storage = multer.diskStorage({
@@ -445,6 +446,62 @@ router.delete('/:id', authenticate, checkPermission('services.delete'), async (r
         });
     } finally {
         client.release();
+    }
+});
+// Генерація PDF для рахунку
+router.get('/invoices/:id/pdf', authenticate, checkPermission('invoices.read'), async (req, res) => {
+    try {
+        // Тут можна використати бібліотеку для генерації PDF, наприклад, PDFKit
+        const invoice = await ServiceService.getInvoiceDetails(req.params.id);
+        
+        if (!invoice) {
+            return res.status(404).json({
+                success: false,
+                message: 'Рахунок не знайдено'
+            });
+        }
+        
+        // Логіка генерації PDF буде реалізована в окремому сервісі
+        const pdfBuffer = await generateInvoicePdf(invoice);
+        
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="invoice-${invoice.invoice_number}.pdf"`);
+        res.send(pdfBuffer);
+        
+    } catch (error) {
+        console.error('Error generating PDF:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при генерації PDF'
+        });
+    }
+});
+
+// Генерація PDF для рахунку
+router.get('/invoices/:id/pdf', authenticate, checkPermission('invoices.read'), async (req, res) => {
+    try {
+        const invoice = await ServiceService.getInvoiceDetails(req.params.id);
+        
+        if (!invoice) {
+            return res.status(404).json({
+                success: false,
+                message: 'Рахунок не знайдено'
+            });
+        }
+        
+        // Генеруємо PDF
+        const pdfBuffer = await PDFService.generateInvoicePdf(invoice);
+        
+        // Відправляємо PDF клієнту
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="invoice-${invoice.invoice_number}.pdf"`);
+        res.send(pdfBuffer);
+    } catch (error) {
+        console.error('Error generating PDF:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при генерації PDF'
+        });
     }
 });
 
