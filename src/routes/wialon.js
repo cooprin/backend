@@ -117,7 +117,7 @@ router.post('/:id/change-owner', authenticate, checkPermission('wialon_objects.u
     try {
         await client.query('BEGIN');
         
-        const { client_id, notes } = req.body;
+        const { client_id, notes, operation_date } = req.body;
         
         if (!client_id) {
             throw new Error('ID клієнта обов\'язковий');
@@ -128,6 +128,7 @@ router.post('/:id/change-owner', authenticate, checkPermission('wialon_objects.u
             req.params.id, 
             client_id,
             notes,
+            operation_date,
             req.user.userId,
             req
         );

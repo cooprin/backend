@@ -136,7 +136,8 @@ class WialonService {
                         'client_id', prev_c.id,
                         'client_name', prev_c.name,
                         'start_date', ooh.start_date,
-                        'end_date', ooh.end_date
+                        'end_date', ooh.end_date,
+                        'notes', ooh.notes
                     )
                 ) FILTER (WHERE ooh.id IS NOT NULL) as ownership_history
             FROM wialon.objects o
@@ -183,7 +184,7 @@ class WialonService {
         try {
             const { 
                 name, wialon_id, description, client_id, status,
-                tariff_id, tariff_effective_from, attributes
+                tariff_id, tariff_effective_from, attributes, operation_date
             } = data;
 
             // Перевірка наявності об'єкта з таким Wialon ID
@@ -206,35 +207,41 @@ class WialonService {
                 throw new Error('Вказаний клієнт не існує');
             }
 
+            // Використовуємо вказану дату операції або поточну дату
+            const effectiveDate = operation_date ? new Date(operation_date) : new Date();
+
             // Створення об'єкта
             const result = await client.query(
                 `INSERT INTO wialon.objects (
-                    name, wialon_id, description, client_id, status
+                    name, wialon_id, description, client_id, status, created_at
                 )
-                VALUES ($1, $2, $3, $4, $5)
+                VALUES ($1, $2, $3, $4, $5, $6)
                 RETURNING *`,
                 [
                     name, 
                     wialon_id, 
                     description, 
                     client_id, 
-                    status || 'active'
+                    status || 'active',
+                    effectiveDate
                 ]
             );
 
             const newObject = result.rows[0];
 
-            // Додавання запису в історію власників
+            // Додавання запису в історію власників з вказаною датою
             await client.query(
                 `INSERT INTO wialon.object_ownership_history (
-                    object_id, client_id, start_date, created_by
+                    object_id, client_id, start_date, created_by, created_at
                 )
-                VALUES ($1, $2, $3, $4)`,
-                [newObject.id, client_id, new Date(), userId]
+                VALUES ($1, $2, $3, $4, $5)`,
+                [newObject.id, client_id, effectiveDate, userId, effectiveDate]
             );
 
             // Додавання тарифу, якщо він вказаний
             if (tariff_id) {
+                const tariffDate = tariff_effective_from ? new Date(tariff_effective_from) : effectiveDate;
+                
                 await client.query(
                     `INSERT INTO billing.object_tariffs (
                         object_id, tariff_id, effective_from, created_by
@@ -243,7 +250,7 @@ class WialonService {
                     [
                         newObject.id, 
                         tariff_id, 
-                        tariff_effective_from || new Date(), 
+                        tariffDate, 
                         userId
                     ]
                 );
@@ -265,10 +272,10 @@ class WialonService {
             // Аудит
             await AuditService.log({
                 userId,
-                actionType: 'OBJECT_CREATE',  // Це потрібно додати в AUDIT_LOG_TYPES
-                entityType: 'WIALON_OBJECT',  // Це потрібно додати в ENTITY_TYPES
+                actionType: 'OBJECT_CREATE',
+                entityType: 'WIALON_OBJECT',
                 entityId: newObject.id,
-                newValues: data,
+                newValues: {...data, operation_date: effectiveDate},
                 ipAddress: req.ip,
                 tableSchema: 'wialon',
                 tableName: 'objects',
@@ -309,6 +316,9 @@ class WialonService {
                 }
             }
 
+            // Використовуємо вказану дату операції або поточну дату
+            const effectiveDate = data.operation_date ? new Date(data.operation_date) : new Date();
+
             // Якщо змінюється клієнт, додаємо запис в історію власників
             if (data.client_id && data.client_id !== oldData.client_id) {
                 // Закриваємо попередній запис
@@ -316,7 +326,7 @@ class WialonService {
                     `UPDATE wialon.object_ownership_history 
                      SET end_date = $1
                      WHERE object_id = $2 AND end_date IS NULL`,
-                    [new Date(), id]
+                    [effectiveDate, id]
                 );
 
                 // Додаємо новий запис
@@ -325,7 +335,7 @@ class WialonService {
                         object_id, client_id, start_date, created_by
                     )
                     VALUES ($1, $2, $3, $4)`,
-                    [id, data.client_id, new Date(), userId]
+                    [id, data.client_id, effectiveDate, userId]
                 );
             }
 
@@ -346,7 +356,7 @@ class WialonService {
             }
 
             updateFields.push(`updated_at = $${paramIndex++}`);
-            updateValues.push(new Date());
+            updateValues.push(effectiveDate);
             updateValues.push(id);
 
             // Оновлення об'єкта
@@ -360,6 +370,10 @@ class WialonService {
 
             // Оновлення тарифу, якщо вказано
             if (data.tariff_id) {
+                // Використовуємо вказану дату для тарифу або дату операції
+                const tariffDate = data.tariff_effective_from ? 
+                    new Date(data.tariff_effective_from) : effectiveDate;
+
                 // Перевіряємо чи є вже активний тариф
                 const currentTariff = await client.query(
                     `SELECT id FROM billing.object_tariffs 
@@ -373,7 +387,7 @@ class WialonService {
                         `UPDATE billing.object_tariffs 
                          SET effective_to = $1
                          WHERE id = $2`,
-                        [data.tariff_effective_from || new Date(), currentTariff.rows[0].id]
+                        [tariffDate, currentTariff.rows[0].id]
                     );
                 }
 
@@ -386,7 +400,7 @@ class WialonService {
                     [
                         id, 
                         data.tariff_id, 
-                        data.tariff_effective_from || new Date(), 
+                        tariffDate, 
                         userId
                     ]
                 );
@@ -415,11 +429,11 @@ class WialonService {
             // Аудит
             await AuditService.log({
                 userId,
-                actionType: 'OBJECT_UPDATE',  // Це потрібно додати в AUDIT_LOG_TYPES
-                entityType: 'WIALON_OBJECT',  // Це потрібно додати в ENTITY_TYPES
+                actionType: 'OBJECT_UPDATE',
+                entityType: 'WIALON_OBJECT',
                 entityId: id,
                 oldValues: oldData,
-                newValues: data,
+                newValues: {...data, operation_date: effectiveDate},
                 ipAddress: req.ip,
                 tableSchema: 'wialon',
                 tableName: 'objects',
@@ -434,128 +448,128 @@ class WialonService {
     }
 
     // Зміна власника об'єкта
-// Зміна власника об'єкта
-static async changeOwner(client, id, newClientId, notes, userId, req) {
-    try {
-        // Перевірка наявності об'єкта
-        const object = await client.query(
-            'SELECT * FROM wialon.objects WHERE id = $1',
-            [id]
-        );
-
-        if (object.rows.length === 0) {
-            throw new Error('Об\'єкт не знайдений');
-        }
-
-        // Перевірка наявності клієнта
-        const clientExists = await client.query(
-            'SELECT id FROM clients.clients WHERE id = $1',
-            [newClientId]
-        );
-
-        if (clientExists.rows.length === 0) {
-            throw new Error('Вказаний клієнт не існує');
-        }
-
-        // Якщо власник не змінюється, немає потреби в оновленні
-        if (object.rows[0].client_id === newClientId) {
-            throw new Error('Вказаний клієнт вже є власником об\'єкта');
-        }
-        
-        const currentDate = new Date();
-        const dayOfMonth = currentDate.getDate();
-        const currentMonth = currentDate.getMonth() + 1;
-        const currentYear = currentDate.getFullYear();
-        
-        // Закриваємо попередній запис в історії власників
-        await client.query(
-            `UPDATE wialon.object_ownership_history 
-             SET end_date = $1
-             WHERE object_id = $2 AND end_date IS NULL`,
-            [currentDate, id]
-        );
-
-        // Додаємо новий запис в історію власників
-        await client.query(
-            `INSERT INTO wialon.object_ownership_history (
-                object_id, client_id, start_date, notes, created_by
-            )
-            VALUES ($1, $2, $3, $4, $5)`,
-            [id, newClientId, currentDate, notes, userId]
-        );
-
-        // Оновлюємо власника об'єкта
-        const result = await client.query(
-            `UPDATE wialon.objects 
-             SET client_id = $1, updated_at = $2
-             WHERE id = $3
-             RETURNING *`,
-            [newClientId, new Date(), id]
-        );
-        
-        // Перевіряємо чи потрібно створити запис про оплату за поточний місяць
-        // якщо об'єкт переданий до 15-го числа
-        if (dayOfMonth <= 15) {
-            // Отримуємо активний тариф для об'єкта
-            const tariffResult = await client.query(
-                `SELECT t.id, t.price
-                 FROM billing.object_tariffs ot
-                 JOIN billing.tariffs t ON ot.tariff_id = t.id
-                 WHERE ot.object_id = $1 AND ot.effective_to IS NULL`,
+    static async changeOwner(client, id, newClientId, notes, operation_date, userId, req) {
+        try {
+            // Перевірка наявності об'єкта
+            const object = await client.query(
+                'SELECT * FROM wialon.objects WHERE id = $1',
                 [id]
             );
+
+            if (object.rows.length === 0) {
+                throw new Error('Об\'єкт не знайдений');
+            }
+
+            // Перевірка наявності клієнта
+            const clientExists = await client.query(
+                'SELECT id FROM clients.clients WHERE id = $1',
+                [newClientId]
+            );
+
+            if (clientExists.rows.length === 0) {
+                throw new Error('Вказаний клієнт не існує');
+            }
+
+            // Якщо власник не змінюється, немає потреби в оновленні
+            if (object.rows[0].client_id === newClientId) {
+                throw new Error('Вказаний клієнт вже є власником об\'єкта');
+            }
             
-            if (tariffResult.rows.length > 0) {
-                const tariffId = tariffResult.rows[0].id;
-                const tariffPrice = tariffResult.rows[0].price;
-                
-                // Перевіряємо чи є вже оплата за цей об'єкт у поточному місяці
-                const paymentRecordExists = await client.query(
-                    `SELECT id FROM billing.object_payment_records
-                     WHERE object_id = $1 AND billing_month = $2 AND billing_year = $3`,
-                    [id, currentMonth, currentYear]
+            // Використовуємо вказану дату операції або поточну дату
+            const effectiveDate = operation_date ? new Date(operation_date) : new Date();
+            const dayOfMonth = effectiveDate.getDate();
+            const currentMonth = effectiveDate.getMonth() + 1;
+            const currentYear = effectiveDate.getFullYear();
+            
+            // Закриваємо попередній запис в історії власників
+            await client.query(
+                `UPDATE wialon.object_ownership_history 
+                SET end_date = $1
+                WHERE object_id = $2 AND end_date IS NULL`,
+                [effectiveDate, id]
+            );
+
+            // Додаємо новий запис в історію власників
+            await client.query(
+                `INSERT INTO wialon.object_ownership_history (
+                    object_id, client_id, start_date, notes, created_by
+                )
+                VALUES ($1, $2, $3, $4, $5)`,
+                [id, newClientId, effectiveDate, notes, userId]
+            );
+
+            // Оновлюємо власника об'єкта
+            const result = await client.query(
+                `UPDATE wialon.objects 
+                SET client_id = $1, updated_at = $2
+                WHERE id = $3
+                RETURNING *`,
+                [newClientId, effectiveDate, id]
+            );
+            
+            // Перевіряємо чи потрібно створити запис про оплату за поточний місяць
+            // якщо об'єкт переданий до 15-го числа
+            if (dayOfMonth <= 15) {
+                // Отримуємо активний тариф для об'єкта
+                const tariffResult = await client.query(
+                    `SELECT t.id, t.price
+                    FROM billing.object_tariffs ot
+                    JOIN billing.tariffs t ON ot.tariff_id = t.id
+                    WHERE ot.object_id = $1 AND ot.effective_to IS NULL`,
+                    [id]
                 );
                 
-                // Якщо оплати ще немає і об'єкт переданий до 15-го, створюємо примітку
-                if (paymentRecordExists.rows.length === 0) {
-                    // Додаємо запис в атрибути об'єкта про необхідність оплати
-                    await client.query(
-                        `INSERT INTO wialon.object_attributes (
-                            object_id, attribute_name, attribute_value
-                        )
-                        VALUES ($1, $2, $3)
-                        ON CONFLICT (object_id, attribute_name) 
-                        DO UPDATE SET attribute_value = $3`,
-                        [
-                            id, 
-                            'payment_required_month', 
-                            `${currentMonth}-${currentYear}`
-                        ]
+                if (tariffResult.rows.length > 0) {
+                    const tariffId = tariffResult.rows[0].id;
+                    const tariffPrice = tariffResult.rows[0].price;
+                    
+                    // Перевіряємо чи є вже оплата за цей об'єкт у поточному місяці
+                    const paymentRecordExists = await client.query(
+                        `SELECT id FROM billing.object_payment_records
+                        WHERE object_id = $1 AND billing_month = $2 AND billing_year = $3`,
+                        [id, currentMonth, currentYear]
                     );
+                    
+                    // Якщо оплати ще немає і об'єкт переданий до 15-го, створюємо примітку
+                    if (paymentRecordExists.rows.length === 0) {
+                        // Додаємо запис в атрибути об'єкта про необхідність оплати
+                        await client.query(
+                            `INSERT INTO wialon.object_attributes (
+                                object_id, attribute_name, attribute_value
+                            )
+                            VALUES ($1, $2, $3)
+                            ON CONFLICT (object_id, attribute_name) 
+                            DO UPDATE SET attribute_value = $3`,
+                            [
+                                id, 
+                                'payment_required_month', 
+                                `${currentMonth}-${currentYear}`
+                            ]
+                        );
+                    }
                 }
             }
+
+            // Аудит
+            await AuditService.log({
+                userId,
+                actionType: 'OBJECT_CHANGE_OWNER',
+                entityType: 'WIALON_OBJECT',
+                entityId: id,
+                oldValues: { client_id: object.rows[0].client_id },
+                newValues: { client_id: newClientId, notes, operation_date: effectiveDate },
+                ipAddress: req.ip,
+                tableSchema: 'wialon',
+                tableName: 'objects',
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+
+            return result.rows[0];
+        } catch (error) {
+            throw error;
         }
-
-        // Аудит
-        await AuditService.log({
-            userId,
-            actionType: 'OBJECT_CHANGE_OWNER',  // Це потрібно додати в AUDIT_LOG_TYPES
-            entityType: 'WIALON_OBJECT',  // Це потрібно додати в ENTITY_TYPES
-            entityId: id,
-            oldValues: { client_id: object.rows[0].client_id },
-            newValues: { client_id: newClientId, notes },
-            ipAddress: req.ip,
-            tableSchema: 'wialon',
-            tableName: 'objects',
-            auditType: AUDIT_TYPES.BUSINESS,
-            req
-        });
-
-        return result.rows[0];
-    } catch (error) {
-        throw error;
     }
-}
 
     // Видалення об'єкта
     static async deleteObject(client, id, userId, req) {
@@ -613,8 +627,8 @@ static async changeOwner(client, id, newClientId, notes, userId, req) {
             // Аудит
             await AuditService.log({
                 userId,
-                actionType: 'OBJECT_DELETE',  // Це потрібно додати в AUDIT_LOG_TYPES
-                entityType: 'WIALON_OBJECT',  // Це потрібно додати в ENTITY_TYPES
+                actionType: 'OBJECT_DELETE',
+                entityType: 'WIALON_OBJECT',
                 entityId: id,
                 oldValues: objectData.rows[0],
                 ipAddress: req.ip,
