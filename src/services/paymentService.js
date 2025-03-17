@@ -5,132 +5,133 @@ const ExcelJS = require('exceljs');
 
 class PaymentService {
     // Отримання списку платежів з фільтрацією та пагінацією
-    static async getPayments(filters) {
-        const {
-            page = 1,
-            perPage = 10,
-            sortBy = 'payment_date',
-            descending = true,
-            search = '',
-            clientId = null,
-            paymentType = null,
-            from = null,
-            to = null,
-            month = null,
-            year = null
-        } = filters;
 
-        let conditions = [];
-        let params = [];
-        let paramIndex = 1;
+static async getPayments(filters) {
+    const {
+        page = 1,
+        perPage = 10,
+        sortBy = 'payment_date',
+        descending = true,
+        search = '',
+        clientId = null,
+        paymentType = null,
+        from = null,
+        to = null,
+        month = null,
+        year = null
+    } = filters;
 
-        if (search) {
-            conditions.push(`(
-                c.name ILIKE $${paramIndex} OR
-                p.notes ILIKE $${paramIndex}
-            )`);
-            params.push(`%${search}%`);
-            paramIndex++;
-        }
+    let conditions = [];
+    let params = [];
+    let paramIndex = 1;
 
-        if (clientId) {
-            conditions.push(`p.client_id = $${paramIndex}`);
-            params.push(clientId);
-            paramIndex++;
-        }
-
-        if (paymentType) {
-            conditions.push(`p.payment_type = $${paramIndex}`);
-            params.push(paymentType);
-            paramIndex++;
-        }
-
-        if (from) {
-            conditions.push(`p.payment_date >= $${paramIndex}`);
-            params.push(from);
-            paramIndex++;
-        }
-
-        if (to) {
-            conditions.push(`p.payment_date <= $${paramIndex}`);
-            params.push(to);
-            paramIndex++;
-        }
-
-        if (month) {
-            conditions.push(`p.payment_month = $${paramIndex}`);
-            params.push(parseInt(month));
-            paramIndex++;
-        }
-
-        if (year) {
-            conditions.push(`p.payment_year = $${paramIndex}`);
-            params.push(parseInt(year));
-            paramIndex++;
-        }
-
-        const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
-        const orderDirection = descending === 'true' || descending === true ? 'DESC' : 'ASC';
-        
-        // Визначення поля для сортування
-        let orderByField;
-        switch(sortBy) {
-            case 'payment_date':
-                orderByField = 'p.payment_date';
-                break;
-            case 'client_name':
-                orderByField = 'c.name';
-                break;
-            case 'amount':
-                orderByField = 'p.amount';
-                break;
-            case 'payment_type':
-                orderByField = 'p.payment_type';
-                break;
-            case 'payment_period':
-                orderByField = 'p.payment_year, p.payment_month';
-                break;
-            default:
-                orderByField = 'p.payment_date';
-        }
-
-        // Обробка опції "всі записи" для експорту
-        const limit = perPage === 'All' ? null : parseInt(perPage);
-        const offset = limit ? (parseInt(page) - 1) * limit : 0;
-        
-        let query = `
-            SELECT 
-                p.*,
-                c.name as client_name,
-                u.username as created_by_username
-            FROM billing.payments p
-            JOIN clients.clients c ON p.client_id = c.id
-            LEFT JOIN auth.users u ON p.created_by = u.id
-            ${whereClause}
-            ORDER BY ${orderByField} ${orderDirection}
-        `;
-
-        if (limit !== null) {
-            query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-            params.push(limit, offset);
-        }
-
-        const countQuery = `
-            SELECT COUNT(*) FROM billing.payments p
-            JOIN clients.clients c ON p.client_id = c.id
-            ${whereClause}
-        `;
-
-        const [paymentsResult, countResult] = await Promise.all([
-            pool.query(query, params),
-            pool.query(countQuery, conditions.length ? params.slice(0, paramIndex - 1) : [])
-        ]);
-
-        return {
-            payments: paymentsResult.rows,
-            total: parseInt(countResult.rows[0].count)
-        };
+    if (search) {
+        conditions.push(`(
+            c.name ILIKE $${paramIndex} OR
+            p.notes ILIKE $${paramIndex}
+        )`);
+        params.push(`%${search}%`);
+        paramIndex++;
     }
+
+    if (clientId) {
+        conditions.push(`p.client_id = $${paramIndex}`);
+        params.push(clientId);
+        paramIndex++;
+    }
+
+    if (paymentType) {
+        conditions.push(`p.payment_type = $${paramIndex}`);
+        params.push(paymentType);
+        paramIndex++;
+    }
+
+    if (from) {
+        conditions.push(`p.payment_date >= $${paramIndex}`);
+        params.push(from);
+        paramIndex++;
+    }
+
+    if (to) {
+        conditions.push(`p.payment_date <= $${paramIndex}`);
+        params.push(to);
+        paramIndex++;
+    }
+
+    if (month) {
+        conditions.push(`p.payment_month = $${paramIndex}`);
+        params.push(parseInt(month));
+        paramIndex++;
+    }
+
+    if (year) {
+        conditions.push(`p.payment_year = $${paramIndex}`);
+        params.push(parseInt(year));
+        paramIndex++;
+    }
+
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+    const orderDirection = descending === 'true' || descending === true ? 'DESC' : 'ASC';
+    
+    // Визначення поля для сортування
+    let orderByField;
+    switch(sortBy) {
+        case 'payment_date':
+            orderByField = 'p.payment_date';
+            break;
+        case 'client_name':
+            orderByField = 'c.name';
+            break;
+        case 'amount':
+            orderByField = 'p.amount';
+            break;
+        case 'payment_type':
+            orderByField = 'p.payment_type';
+            break;
+        case 'payment_period':
+            orderByField = 'p.payment_year, p.payment_month';
+            break;
+        default:
+            orderByField = 'p.payment_date';
+    }
+
+    // Обробка опції "всі записи" для експорту
+    const limit = perPage === 'All' ? null : parseInt(perPage);
+    const offset = limit ? (parseInt(page) - 1) * limit : 0;
+    
+    // Modified query - removing the reference to u.username to avoid the error
+    let query = `
+        SELECT 
+            p.*,
+            c.name as client_name,
+            p.created_by as created_by_id
+        FROM billing.payments p
+        JOIN clients.clients c ON p.client_id = c.id
+        ${whereClause}
+        ORDER BY ${orderByField} ${orderDirection}
+    `;
+
+    if (limit !== null) {
+        query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        params.push(limit, offset);
+    }
+
+    const countQuery = `
+        SELECT COUNT(*) FROM billing.payments p
+        JOIN clients.clients c ON p.client_id = c.id
+        ${whereClause}
+    `;
+
+    const [paymentsResult, countResult] = await Promise.all([
+        pool.query(query, params),
+        pool.query(countQuery, conditions.length ? params.slice(0, paramIndex - 1) : [])
+    ]);
+
+    return {
+        payments: paymentsResult.rows,
+        total: parseInt(countResult.rows[0].count)
+    };
+}
 
     // Отримання платежів клієнта
     static async getClientPayments(clientId, filters = {}) {
@@ -139,59 +140,57 @@ class PaymentService {
     }
 
     // Отримання деталей платежу
-    static async getPaymentDetails(id) {
-        const query = `
-            SELECT 
-                p.*,
-                c.name as client_name,
-                u.username as created_by_username,
-                (
-                    SELECT json_agg(
-                        jsonb_build_object(
-                            'id', i.id,
-                            'invoice_number', i.invoice_number,
-                            'billing_month', i.billing_month,
-                            'billing_year', i.billing_year,
-                            'total_amount', i.total_amount,
-                            'status', i.status
-                        )
+static async getPaymentDetails(id) {
+    const query = `
+        SELECT 
+            p.*,
+            c.name as client_name,
+            (
+                SELECT json_agg(
+                    jsonb_build_object(
+                        'id', i.id,
+                        'invoice_number', i.invoice_number,
+                        'billing_month', i.billing_month,
+                        'billing_year', i.billing_year,
+                        'total_amount', i.total_amount,
+                        'status', i.status
                     )
-                    FROM services.invoices i
-                    WHERE i.payment_id = p.id
-                ) as invoices,
-                (
-                    SELECT json_agg(
-                        jsonb_build_object(
-                            'id', opr.id,
-                            'object_id', opr.object_id,
-                            'object_name', o.name,
-                            'amount', opr.amount,
-                            'tariff_id', opr.tariff_id,
-                            'tariff_name', t.name,
-                            'billing_month', opr.billing_month,
-                            'billing_year', opr.billing_year,
-                            'status', opr.status
-                        )
+                )
+                FROM services.invoices i
+                WHERE i.payment_id = p.id
+            ) as invoices,
+            (
+                SELECT json_agg(
+                    jsonb_build_object(
+                        'id', opr.id,
+                        'object_id', opr.object_id,
+                        'object_name', o.name,
+                        'amount', opr.amount,
+                        'tariff_id', opr.tariff_id,
+                        'tariff_name', t.name,
+                        'billing_month', opr.billing_month,
+                        'billing_year', opr.billing_year,
+                        'status', opr.status
                     )
-                    FROM billing.object_payment_records opr
-                    JOIN wialon.objects o ON opr.object_id = o.id
-                    JOIN billing.tariffs t ON opr.tariff_id = t.id
-                    WHERE opr.payment_id = p.id
-                ) as object_payments
-            FROM billing.payments p
-            JOIN clients.clients c ON p.client_id = c.id
-            LEFT JOIN auth.users u ON p.created_by = u.id
-            WHERE p.id = $1
-        `;
+                )
+                FROM billing.object_payment_records opr
+                JOIN wialon.objects o ON opr.object_id = o.id
+                JOIN billing.tariffs t ON opr.tariff_id = t.id
+                WHERE opr.payment_id = p.id
+            ) as object_payments
+        FROM billing.payments p
+        JOIN clients.clients c ON p.client_id = c.id
+        WHERE p.id = $1
+    `;
 
-        const result = await pool.query(query, [id]);
-        
-        if (result.rows.length === 0) {
-            return null;
-        }
-        
-        return result.rows[0];
+    const result = await pool.query(query, [id]);
+    
+    if (result.rows.length === 0) {
+        return null;
     }
+    
+    return result.rows[0];
+}
 
     // Створення нового платежу
     static async createPayment(client, data, userId, req) {
