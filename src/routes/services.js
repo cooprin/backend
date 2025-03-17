@@ -477,4 +477,36 @@ router.get('/invoices/:id/pdf', authenticate, checkPermission('invoices.read'), 
     }
 });
 
+// Генерація рахунків за певний період
+router.post('/invoices/generate', authenticate, checkPermission('invoices.create'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      const generatedInvoices = await ServiceService.generateMonthlyInvoices(
+        client, 
+        req.body.month,
+        req.body.year,
+        req.user.userId,
+        req
+      );
+      
+      await client.query('COMMIT');
+      
+      res.status(201).json({
+        success: true,
+        invoices: generatedInvoices
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Error generating invoices:', error);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Помилка при створенні рахунків'
+      });
+    } finally {
+      client.release();
+    }
+  });
+
 module.exports = router;
