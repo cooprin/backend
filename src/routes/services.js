@@ -448,34 +448,6 @@ router.delete('/:id', authenticate, checkPermission('services.delete'), async (r
         client.release();
     }
 });
-// Генерація PDF для рахунку
-router.get('/invoices/:id/pdf', authenticate, checkPermission('invoices.read'), async (req, res) => {
-    try {
-        // Тут можна використати бібліотеку для генерації PDF, наприклад, PDFKit
-        const invoice = await ServiceService.getInvoiceDetails(req.params.id);
-        
-        if (!invoice) {
-            return res.status(404).json({
-                success: false,
-                message: 'Рахунок не знайдено'
-            });
-        }
-        
-        // Логіка генерації PDF буде реалізована в окремому сервісі
-        const pdfBuffer = await generateInvoicePdf(invoice);
-        
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="invoice-${invoice.invoice_number}.pdf"`);
-        res.send(pdfBuffer);
-        
-    } catch (error) {
-        console.error('Error generating PDF:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Помилка при генерації PDF'
-        });
-    }
-});
 
 // Генерація PDF для рахунку
 router.get('/invoices/:id/pdf', authenticate, checkPermission('invoices.read'), async (req, res) => {

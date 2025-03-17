@@ -21,6 +21,7 @@ const clientsRouter = require('./routes/clients');
 const wialonRouter = require('./routes/wialon');
 const tariffsRouter = require('./routes/tariffs');
 const servicesRouter = require('./routes/services');
+const paymentsRoutes = require('./routes/payments');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -54,6 +55,7 @@ app.use('/clients', clientsRouter);
 app.use('/wialon', wialonRouter);
 app.use('/tariffs', tariffsRouter);
 app.use('/services', servicesRouter);
+app.use('/billing/payments', paymentsRoutes);
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
