@@ -99,12 +99,11 @@ static async getPayments(filters) {
     const limit = perPage === 'All' ? null : parseInt(perPage);
     const offset = limit ? (parseInt(page) - 1) * limit : 0;
     
-    // Modified query - removing the reference to u.username to avoid the error
+    // Змінений запит - прибрали join з auth.users та посилання на u.username
     let query = `
         SELECT 
             p.*,
-            c.name as client_name,
-            p.created_by as created_by_id
+            c.name as client_name
         FROM billing.payments p
         JOIN clients.clients c ON p.client_id = c.id
         ${whereClause}
