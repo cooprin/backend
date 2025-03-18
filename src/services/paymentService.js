@@ -205,28 +205,28 @@ class PaymentService {
         try {
             const { 
                 client_id, amount, payment_date, payment_type = 'regular', 
-                invoice_id, notes, object_payments 
+                invoice_id, notes, object_payments = [] 
             } = data;
-
+    
             if (!client_id || !amount || !payment_date) {
                 throw new Error('ID клієнта, сума та дата платежу обов\'язкові');
             }
-
+    
             // Перевірка наявності клієнта
             const clientExists = await client.query(
                 'SELECT id FROM clients.clients WHERE id = $1',
                 [client_id]
             );
-
+    
             if (clientExists.rows.length === 0) {
                 throw new Error('Вказаний клієнт не існує');
             }
-
+    
             // Отримання місяця і року з дати платежу
             const paymentDateObj = new Date(payment_date);
             const paymentMonth = paymentDateObj.getMonth() + 1;
             const paymentYear = paymentDateObj.getFullYear();
-
+    
             // Створення платежу
             const paymentResult = await client.query(
                 `INSERT INTO billing.payments (
@@ -246,22 +246,140 @@ class PaymentService {
                     userId
                 ]
             );
-
+    
             const paymentId = paymentResult.rows[0].id;
-
-            // Якщо вказано invoice_id, зв'язуємо платіж з рахунком
+    
+            // Сценарій 1 і 2: Обробка рахунку, якщо він вказаний
             if (invoice_id) {
+                // Отримуємо рахунок і його позиції
+                const invoiceQuery = `
+                    SELECT i.*, 
+                           i.billing_month as invoice_month, 
+                           i.billing_year as invoice_year 
+                    FROM services.invoices i 
+                    WHERE i.id = $1
+                `;
+                const invoiceResult = await client.query(invoiceQuery, [invoice_id]);
+                
+                if (invoiceResult.rows.length === 0) {
+                    throw new Error('Вказаний рахунок не знайдено');
+                }
+                
+                const invoice = invoiceResult.rows[0];
+                
+                // Змінюємо статус рахунку на "оплачено"
                 await client.query(
                     `UPDATE services.invoices 
                      SET status = 'paid', payment_id = $1, updated_at = $2
                      WHERE id = $3`,
                     [paymentId, new Date(), invoice_id]
                 );
-            }
-
-            // Якщо надані дані про оплату по об'єктах, зберігаємо їх
-            if (object_payments && Array.isArray(object_payments) && object_payments.length > 0) {
+                
+                // Отримуємо позиції рахунку
+                const itemsQuery = `
+                    SELECT ii.*, s.service_type 
+                    FROM services.invoice_items ii
+                    JOIN services.services s ON ii.service_id = s.id
+                    WHERE ii.invoice_id = $1
+                `;
+                const itemsResult = await client.query(itemsQuery, [invoice_id]);
+                
+                // Обробляємо кожну позицію рахунку
+                for (const item of itemsResult.rows) {
+                    // Перевіряємо, чи є це позиція з object_based послугою
+                    if (item.service_type === 'object_based' && item.metadata && item.metadata.objects) {
+                        // Для кожного об'єкта створюємо запис оплати
+                        for (const obj of item.metadata.objects) {
+                            await client.query(
+                                `INSERT INTO billing.object_payment_records (
+                                    object_id, payment_id, tariff_id, amount,
+                                    billing_month, billing_year, status
+                                )
+                                VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                                [
+                                    obj.id,
+                                    paymentId,
+                                    obj.tariff_id,
+                                    obj.price,
+                                    invoice.invoice_month,
+                                    invoice.invoice_year,
+                                    'paid'
+                                ]
+                            );
+                        }
+                    }
+                    
+                    // Якщо це запис про заборгованість, обробляємо його
+                    if (item.metadata && item.metadata.is_debt && item.metadata.unpaid_invoices) {
+                        for (const unpaidInvoice of item.metadata.unpaid_invoices) {
+                            // Отримуємо позиції неоплаченого рахунку
+                            const unpaidItemsQuery = `
+                                SELECT ii.*, s.service_type 
+                                FROM services.invoice_items ii
+                                JOIN services.services s ON ii.service_id = s.id
+                                WHERE ii.invoice_id = $1 AND s.service_type = 'object_based'
+                            `;
+                            const unpaidItemsResult = await client.query(unpaidItemsQuery, [unpaidInvoice.id]);
+                            
+                            // Обробляємо кожну позицію
+                            for (const unpaidItem of unpaidItemsResult.rows) {
+                                if (unpaidItem.metadata && unpaidItem.metadata.objects) {
+                                    for (const obj of unpaidItem.metadata.objects) {
+                                        await client.query(
+                                            `INSERT INTO billing.object_payment_records (
+                                                object_id, payment_id, tariff_id, amount,
+                                                billing_month, billing_year, status
+                                            )
+                                            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                                            [
+                                                obj.id,
+                                                paymentId,
+                                                obj.tariff_id,
+                                                obj.price,
+                                                unpaidInvoice.billing_month,
+                                                unpaidInvoice.billing_year,
+                                                'paid'
+                                            ]
+                                        );
+                                    }
+                                }
+                            }
+                            
+                            // Змінюємо статус неоплаченого рахунку
+                            await client.query(
+                                `UPDATE services.invoices 
+                                SET status = 'paid', payment_id = $1, updated_at = $2
+                                WHERE id = $3`,
+                                [paymentId, new Date(), unpaidInvoice.id]
+                            );
+                        }
+                    }
+                }
+            } 
+            // Сценарій 3: Прямі оплати за об'єкти без рахунку
+            else if (object_payments && object_payments.length > 0) {
+                // Обробляємо кожен обраний об'єкт з UI
                 for (const objPayment of object_payments) {
+                    if (!objPayment.object_id || !objPayment.tariff_id) {
+                        console.warn('Пропускаємо об\'єкт без ID або тарифу:', objPayment);
+                        continue;
+                    }
+                    
+                    // Отримуємо інформацію про тариф, якщо сума не вказана
+                    let objAmount = objPayment.amount;
+                    if (!objAmount) {
+                        const tariffQuery = `
+                            SELECT price FROM billing.tariffs WHERE id = $1
+                        `;
+                        const tariffResult = await client.query(tariffQuery, [objPayment.tariff_id]);
+                        if (tariffResult.rows.length > 0) {
+                            objAmount = tariffResult.rows[0].price;
+                        } else {
+                            throw new Error(`Тариф з ID ${objPayment.tariff_id} не знайдено`);
+                        }
+                    }
+                    
+                    // Створюємо запис оплати для об'єкта
                     await client.query(
                         `INSERT INTO billing.object_payment_records (
                             object_id, payment_id, tariff_id, amount,
@@ -272,7 +390,7 @@ class PaymentService {
                             objPayment.object_id,
                             paymentId,
                             objPayment.tariff_id,
-                            objPayment.amount,
+                            objAmount,
                             objPayment.billing_month || paymentMonth,
                             objPayment.billing_year || paymentYear,
                             objPayment.status || 'paid'
@@ -280,7 +398,7 @@ class PaymentService {
                     );
                 }
             }
-
+    
             // Аудит
             await AuditService.log({
                 userId,
@@ -294,7 +412,7 @@ class PaymentService {
                 auditType: AUDIT_TYPES.BUSINESS,
                 req
             });
-
+    
             return paymentResult.rows[0];
         } catch (error) {
             throw error;
