@@ -1168,6 +1168,63 @@ static async updateInvoiceStatus(client, id, data, userId, req) {
             );
 
             paymentId = paymentResult.rows[0].id;
+            
+            // Створюємо записи у object_payment_records
+            // Спочатку отримуємо елементи рахунку з інформацією про послуги
+            const invoiceItemsResult = await client.query(
+                `SELECT ii.*, s.service_type 
+                FROM services.invoice_items ii
+                JOIN services.services s ON ii.service_id = s.id
+                WHERE ii.invoice_id = $1`,
+                [id]
+            );
+            
+            // Для послуг типу "object_based" отримуємо інформацію про об'єкти клієнта
+            for (const item of invoiceItemsResult.rows) {
+                if (item.service_type === 'object_based') {
+                    // Отримуємо список об'єктів клієнта
+                    const objectsResult = await client.query(
+                        `SELECT o.id as object_id, ot.tariff_id, t.price
+                        FROM wialon.objects o
+                        JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
+                        JOIN billing.tariffs t ON ot.tariff_id = t.id
+                        WHERE o.client_id = $1 AND o.status = 'active'`,
+                        [oldData.client_id]
+                    );
+                    
+                    // Визначаємо місяць і рік з рахунку
+                    const billingMonth = oldData.billing_month;
+                    const billingYear = oldData.billing_year;
+                    
+                    // Для кожного об'єкта створюємо запис у object_payment_records
+                    for (const obj of objectsResult.rows) {
+                        // Перевіряємо, чи потрібно нараховувати оплату за цей об'єкт
+                        const shouldChargeResult = await client.query(
+                            `SELECT billing.should_charge_for_month($1, $2, $3, $4) as should_charge`,
+                            [obj.object_id, oldData.client_id, billingYear, billingMonth]
+                        );
+                        
+                        if (shouldChargeResult.rows[0].should_charge) {
+                            await client.query(
+                                `INSERT INTO billing.object_payment_records (
+                                    object_id, payment_id, tariff_id, amount,
+                                    billing_month, billing_year, status
+                                )
+                                VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                                [
+                                    obj.object_id,
+                                    paymentId,
+                                    obj.tariff_id,
+                                    obj.price,
+                                    billingMonth,
+                                    billingYear,
+                                    'paid'
+                                ]
+                            );
+                        }
+                    }
+                }
+            }
         }
 
         // Оновлюємо статус рахунку
