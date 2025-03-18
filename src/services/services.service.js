@@ -1169,8 +1169,7 @@ static async updateInvoiceStatus(client, id, data, userId, req) {
 
             paymentId = paymentResult.rows[0].id;
             
-            // Створюємо записи у object_payment_records
-            // Спочатку отримуємо елементи рахунку з інформацією про послуги
+            // Отримуємо всі позиції рахунку з метаданими про об'єкти
             const invoiceItemsResult = await client.query(
                 `SELECT ii.*, s.service_type 
                 FROM services.invoice_items ii
@@ -1179,49 +1178,78 @@ static async updateInvoiceStatus(client, id, data, userId, req) {
                 [id]
             );
             
-            // Для послуг типу "object_based" отримуємо інформацію про об'єкти клієнта
+            // Створюємо записи про оплату для кожного об'єкта
             for (const item of invoiceItemsResult.rows) {
-                if (item.service_type === 'object_based') {
-                    // Отримуємо список об'єктів клієнта
-                    const objectsResult = await client.query(
-                        `SELECT o.id as object_id, ot.tariff_id, t.price
-                        FROM wialon.objects o
-                        JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
-                        JOIN billing.tariffs t ON ot.tariff_id = t.id
-                        WHERE o.client_id = $1 AND o.status = 'active'`,
-                        [oldData.client_id]
-                    );
-                    
-                    // Визначаємо місяць і рік з рахунку
-                    const billingMonth = oldData.billing_month;
-                    const billingYear = oldData.billing_year;
-                    
-                    // Для кожного об'єкта створюємо запис у object_payment_records
-                    for (const obj of objectsResult.rows) {
-                        // Перевіряємо, чи потрібно нараховувати оплату за цей об'єкт
-                        const shouldChargeResult = await client.query(
-                            `SELECT billing.should_charge_for_month($1, $2, $3, $4) as should_charge`,
-                            [obj.object_id, oldData.client_id, billingYear, billingMonth]
+                // Перевіряємо наявність метаданих
+                if (!item.metadata) continue;
+                
+                // Якщо це послуга на основі об'єктів і є дані про об'єкти
+                if (item.service_type === 'object_based' && item.metadata.objects && Array.isArray(item.metadata.objects)) {
+                    // Для кожного об'єкта створюємо запис в таблиці object_payment_records
+                    for (const obj of item.metadata.objects) {
+                        await client.query(
+                            `INSERT INTO billing.object_payment_records (
+                                object_id, payment_id, tariff_id, amount,
+                                billing_month, billing_year, status
+                            )
+                            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                            [
+                                obj.id,
+                                paymentId,
+                                obj.tariff_id,
+                                obj.price,
+                                oldData.billing_month,
+                                oldData.billing_year,
+                                'paid'
+                            ]
+                        );
+                    }
+                }
+                // Якщо це запис про заборгованість
+                else if (item.metadata.is_debt && item.metadata.unpaid_invoices && Array.isArray(item.metadata.unpaid_invoices)) {
+                    // Для кожного неоплаченого рахунку отримуємо інформацію про об'єкти
+                    for (const unpaidInvoice of item.metadata.unpaid_invoices) {
+                        // Отримуємо позиції неоплаченого рахунку
+                        const unpaidItemsResult = await client.query(
+                            `SELECT ii.*, s.service_type 
+                            FROM services.invoice_items ii
+                            JOIN services.services s ON ii.service_id = s.id
+                            WHERE ii.invoice_id = $1 AND s.service_type = 'object_based'`,
+                            [unpaidInvoice.id]
                         );
                         
-                        if (shouldChargeResult.rows[0].should_charge) {
-                            await client.query(
-                                `INSERT INTO billing.object_payment_records (
-                                    object_id, payment_id, tariff_id, amount,
-                                    billing_month, billing_year, status
-                                )
-                                VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                                [
-                                    obj.object_id,
-                                    paymentId,
-                                    obj.tariff_id,
-                                    obj.price,
-                                    billingMonth,
-                                    billingYear,
-                                    'paid'
-                                ]
-                            );
+                        // Для кожної позиції з об'єктами
+                        for (const unpaidItem of unpaidItemsResult.rows) {
+                            if (unpaidItem.metadata && unpaidItem.metadata.objects) {
+                                // Для кожного об'єкта створюємо запис у object_payment_records
+                                for (const obj of unpaidItem.metadata.objects) {
+                                    await client.query(
+                                        `INSERT INTO billing.object_payment_records (
+                                            object_id, payment_id, tariff_id, amount,
+                                            billing_month, billing_year, status
+                                        )
+                                        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                                        [
+                                            obj.id,
+                                            paymentId,
+                                            obj.tariff_id,
+                                            obj.price,
+                                            unpaidInvoice.billing_month,
+                                            unpaidInvoice.billing_year,
+                                            'paid'
+                                        ]
+                                    );
+                                }
+                            }
                         }
+                        
+                        // Змінюємо статус неоплаченого рахунку на "paid"
+                        await client.query(
+                            `UPDATE services.invoices 
+                            SET status = 'paid', payment_id = $1, updated_at = $2
+                            WHERE id = $3`,
+                            [paymentId, new Date(), unpaidInvoice.id]
+                        );
                     }
                 }
             }
@@ -1302,9 +1330,87 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                 continue;
             }
             
+            // Перевіряємо наявність заборгованості
+            const unpaidInvoicesQuery = `
+                SELECT i.id, i.billing_month, i.billing_year, i.total_amount, i.invoice_number
+                FROM services.invoices i
+                WHERE i.client_id = $1 
+                AND i.status = 'issued'
+                AND (i.billing_year < $2 OR (i.billing_year = $2 AND i.billing_month < $3))
+                ORDER BY i.billing_year, i.billing_month
+            `;
+            
+            const unpaidResult = await client.query(unpaidInvoicesQuery, [
+                clientData.id, 
+                billingYear, 
+                billingMonth
+            ]);
+            
+            // Формуємо інформацію про заборгованість
+            let debtNotes = '';
+            let debtTotal = 0;
+            
+            if (unpaidResult.rows.length > 0) {
+                debtTotal = unpaidResult.rows.reduce((sum, row) => sum + parseFloat(row.total_amount), 0);
+                
+                debtNotes = `Заборгованість за попередні періоди: ${debtTotal.toFixed(2)} грн.\n`;
+                debtNotes += unpaidResult.rows.map(row => 
+                    `Рахунок №${row.invoice_number} (${row.billing_month}/${row.billing_year}): ${parseFloat(row.total_amount).toFixed(2)} грн.`
+                ).join('\n');
+            }
+            
+            // Перевіряємо, за які об'єкти клієнта вже виставлені рахунки за поточний період
+            const existingInvoiceItemsQuery = `
+                SELECT o.id as object_id
+                FROM services.invoices i
+                JOIN services.invoice_items ii ON i.id = ii.invoice_id
+                JOIN services.services s ON ii.service_id = s.id
+                CROSS JOIN jsonb_array_elements(ii.metadata->'objects') as obj
+                JOIN wialon.objects o ON obj->>'id' = o.id::text
+                WHERE i.client_id = $1
+                AND i.billing_month = $2
+                AND i.billing_year = $3
+                AND s.service_type = 'object_based'
+                AND i.status != 'cancelled'
+            `;
+            
+            const existingItemsResult = await client.query(existingInvoiceItemsQuery, [
+                clientData.id, 
+                billingMonth,
+                billingYear
+            ]);
+            
+            // Створюємо множину об'єктів, за які вже виставлені рахунки
+            const invoicedObjectsSet = new Set(
+                existingItemsResult.rows.map(row => row.object_id)
+            );
+            
             // Створюємо позиції рахунку
             const invoiceItems = [];
             let totalAmount = 0;
+            
+            // Якщо є заборгованість, додаємо як окрему позицію
+            if (debtTotal > 0) {
+                invoiceItems.push({
+                    service_id: servicesResult.rows[0].id, // Використовуємо першу активну послугу
+                    description: `Заборгованість за попередні періоди`,
+                    quantity: 1,
+                    unit_price: debtTotal,
+                    total_price: debtTotal,
+                    metadata: {
+                        is_debt: true,
+                        unpaid_invoices: unpaidResult.rows.map(row => ({
+                            id: row.id,
+                            invoice_number: row.invoice_number,
+                            billing_month: row.billing_month,
+                            billing_year: row.billing_year,
+                            amount: parseFloat(row.total_amount)
+                        }))
+                    }
+                });
+                
+                totalAmount += debtTotal;
+            }
             
             for (const service of servicesResult.rows) {
                 if (service.service_type === 'fixed') {
@@ -1314,7 +1420,10 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                         description: service.name,
                         quantity: 1,
                         unit_price: service.fixed_price,
-                        total_price: service.fixed_price
+                        total_price: service.fixed_price,
+                        metadata: {
+                            service_type: 'fixed'
+                        }
                     });
                     totalAmount += service.fixed_price;
                 } else if (service.service_type === 'object_based') {
@@ -1322,11 +1431,10 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                     
                     // Отримуємо всі об'єкти клієнта з активними тарифами
                     const objectsQuery = `
-                        SELECT o.id, o.name, t.id as tariff_id, t.price, oa.attribute_value
+                        SELECT o.id, o.name, t.id as tariff_id, t.name as tariff_name, t.price
                         FROM wialon.objects o
                         JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
                         JOIN billing.tariffs t ON ot.tariff_id = t.id
-                        LEFT JOIN wialon.object_attributes oa ON o.id = oa.object_id AND oa.attribute_name = 'payment_required_month'
                         WHERE o.client_id = $1 AND o.status = 'active'
                     `;
                     const objectsResult = await client.query(objectsQuery, [clientData.id]);
@@ -1334,16 +1442,30 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                     // Розраховуємо загальну вартість для всіх об'єктів з урахуванням дати призначення
                     let objectBasedTotal = 0;
                     const includedObjects = [];
+                    const objectsMetadata = [];
                     
                     for (const obj of objectsResult.rows) {
-                        // Перевіряємо атрибут payment_required_month або функцію should_charge_for_month
-                        const paymentPeriod = `${billingMonth}-${billingYear}`;
-                        const shouldCharge = obj.attribute_value === paymentPeriod || 
-                            await shouldChargeForMonth(client, obj.id, clientData.id, billingYear, billingMonth);
+                        // Пропускаємо об'єкти, за які вже виставлені рахунки
+                        if (invoicedObjectsSet.has(obj.id)) {
+                            continue;
+                        }
                         
-                        if (shouldCharge) {
-                            objectBasedTotal += obj.price;
+                        // Перевіряємо чи потрібно нараховувати оплату
+                        const shouldChargeResult = await client.query(
+                            `SELECT billing.should_charge_for_month($1, $2, $3, $4) as should_charge`,
+                            [obj.id, clientData.id, billingYear, billingMonth]
+                        );
+                        
+                        if (shouldChargeResult.rows[0].should_charge) {
+                            objectBasedTotal += parseFloat(obj.price);
                             includedObjects.push(obj.name);
+                            objectsMetadata.push({
+                                id: obj.id,
+                                name: obj.name,
+                                tariff_id: obj.tariff_id,
+                                tariff_name: obj.tariff_name,
+                                price: parseFloat(obj.price)
+                            });
                         }
                     }
                     
@@ -1355,7 +1477,11 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                             description: description,
                             quantity: 1,
                             unit_price: objectBasedTotal,
-                            total_price: objectBasedTotal
+                            total_price: objectBasedTotal,
+                            metadata: {
+                                service_type: 'object_based',
+                                objects: objectsMetadata
+                            }
                         });
                         totalAmount += objectBasedTotal;
                     }
@@ -1368,15 +1494,29 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
             }
             
             // Генеруємо номер рахунку
-            const invoiceNumber = await generateInvoiceNumber(client, clientData.id, billingYear);
+            const lastInvoiceNumber = await client.query(
+                `SELECT invoice_number FROM services.invoices
+                 WHERE client_id = $1 AND billing_year = $2
+                 ORDER BY invoice_number DESC
+                 LIMIT 1`,
+                [clientData.id, billingYear]
+            );
             
-            // Створюємо рахунок
+            let invoiceNumber;
+            if (lastInvoiceNumber.rows.length > 0) {
+                const lastNumber = parseInt(lastInvoiceNumber.rows[0].invoice_number.split('-')[1], 10);
+                invoiceNumber = `${billingYear}-${(lastNumber + 1).toString().padStart(4, '0')}`;
+            } else {
+                invoiceNumber = `${billingYear}-0001`;
+            }
+            
+            // Створюємо рахунок з примітками про заборгованість
             const invoiceResult = await client.query(
                 `INSERT INTO services.invoices (
                     client_id, invoice_number, invoice_date, billing_month, 
-                    billing_year, total_amount, status, created_by
+                    billing_year, total_amount, status, notes, created_by
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 RETURNING *`,
                 [
                     clientData.id, 
@@ -1386,6 +1526,7 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                     billingYear, 
                     totalAmount, 
                     'issued', 
+                    debtNotes || null, 
                     userId
                 ]
             );
@@ -1397,16 +1538,17 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                 await client.query(
                     `INSERT INTO services.invoice_items (
                         invoice_id, service_id, description, quantity, 
-                        unit_price, total_price
+                        unit_price, total_price, metadata
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6)`,
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)`,
                     [
                         invoiceId, 
                         item.service_id, 
                         item.description, 
                         item.quantity, 
                         item.unit_price, 
-                        item.total_price
+                        item.total_price,
+                        item.metadata ? JSON.stringify(item.metadata) : null
                     ]
                 );
             }
@@ -1428,7 +1570,8 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                 invoice_number: invoiceNumber,
                 client_id: clientData.id,
                 client_name: clientData.name,
-                total_amount: totalAmount
+                total_amount: totalAmount,
+                item_count: invoiceItems.length
             });
             
             // Аудит
@@ -1441,7 +1584,9 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                     client_id: clientData.id,
                     billing_month: billingMonth,
                     billing_year: billingYear,
-                    total_amount: totalAmount
+                    total_amount: totalAmount,
+                    items_count: invoiceItems.length,
+                    has_debt: debtTotal > 0
                 },
                 ipAddress: req.ip,
                 tableSchema: 'services',
