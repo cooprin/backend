@@ -170,6 +170,7 @@ router.get('/invoices/:id', authenticate, checkPermission('invoices.read'), asyn
     }
 });
 
+
 // Зміна статусу рахунку
 router.put('/invoices/:id/status', authenticate, checkPermission('invoices.update'), async (req, res) => {
     const client = await pool.connect();
