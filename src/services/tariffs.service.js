@@ -333,7 +333,6 @@ static async getOptimalTariffChangeDate(objectId) {
     }
 }
 
-// Модифікація методу для призначення тарифу з врахуванням оплачених періодів
 static async assignTariffToObject(client, data, userId, req) {
     try {
         const { object_id, tariff_id, effective_from, notes, use_optimal_date = false } = data;
@@ -344,7 +343,7 @@ static async assignTariffToObject(client, data, userId, req) {
 
         // Перевірка наявності об'єкта
         const objectExists = await client.query(
-            'SELECT id, status FROM wialon.objects WHERE id = $1',
+            'SELECT id, status, client_id FROM wialon.objects WHERE id = $1',
             [object_id]
         );
 
@@ -352,9 +351,11 @@ static async assignTariffToObject(client, data, userId, req) {
             throw new Error('Вказаний об\'єкт не існує');
         }
 
+        const objectData = objectExists.rows[0];
+
         // Перевірка наявності тарифу
         const tariffExists = await client.query(
-            'SELECT id, price FROM billing.tariffs WHERE id = $1',
+            'SELECT id, price, name FROM billing.tariffs WHERE id = $1',
             [tariff_id]
         );
 
@@ -362,52 +363,112 @@ static async assignTariffToObject(client, data, userId, req) {
             throw new Error('Вказаний тариф не існує');
         }
 
+        const tariffData = tariffExists.rows[0];
+
         // Перевірка чи є вже активний тариф
         const currentTariff = await client.query(
-            `SELECT id, tariff_id FROM billing.object_tariffs 
+            `SELECT id, tariff_id, effective_from FROM billing.object_tariffs 
              WHERE object_id = $1 AND effective_to IS NULL`,
             [object_id]
         );
 
-        // Якщо вказано use_optimal_date=true, визначаємо оптимальну дату зміни тарифу
+        // Отримуємо поточний місяць і рік
+        const now = new Date();
+        const currentMonth = now.getMonth() + 1;
+        const currentYear = now.getFullYear();
+        
+        // Перевіряємо, чи поточний період вже оплачений
+        const isPeriodPaidResult = await client.query(
+            'SELECT billing.is_period_paid($1, $2, $3) as is_paid',
+            [object_id, currentYear, currentMonth]
+        );
+        
+        const isPeriodPaid = isPeriodPaidResult.rows[0].is_paid;
+
+        // Визначення ефективної дати
         let effectiveDate;
-        if (use_optimal_date) {
-            const optimalDateResult = await client.query(
-                'SELECT billing.get_optimal_tariff_change_date($1) as change_date',
+        
+        if (use_optimal_date || isPeriodPaid) {
+            // Отримуємо наступний неоплачений період
+            const nextUnpaidPeriodResult = await client.query(
+                'SELECT * FROM billing.get_next_unpaid_period($1)',
                 [object_id]
             );
             
-            effectiveDate = optimalDateResult.rows[0].change_date;
+            if (nextUnpaidPeriodResult.rows.length > 0) {
+                const nextPeriod = nextUnpaidPeriodResult.rows[0];
+                // Перше число наступного неоплаченого місяця
+                effectiveDate = new Date(nextPeriod.billing_year, nextPeriod.billing_month - 1, 1);
+            } else {
+                // Якщо немає неоплаченого періоду, використовуємо перше число наступного місяця
+                effectiveDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+            }
+        } else if (effective_from) {
+            // Використовуємо вказану дату
+            effectiveDate = new Date(effective_from);
             
-            // Якщо оптимальна дата відсутня (помилка функції), використовуємо поточну дату
-            if (!effectiveDate) {
-                effectiveDate = new Date();
+            // Перевіряємо, чи не знаходиться вказана дата в оплаченому періоді
+            const effectiveMonth = effectiveDate.getMonth() + 1;
+            const effectiveYear = effectiveDate.getFullYear();
+            
+            const isEffectiveDatePaidResult = await client.query(
+                'SELECT billing.is_period_paid($1, $2, $3) as is_paid',
+                [object_id, effectiveYear, effectiveMonth]
+            );
+            
+            if (isEffectiveDatePaidResult.rows[0].is_paid) {
+                // Якщо період вже оплачений, переносимо на наступний місяць
+                effectiveDate = new Date(
+                    effectiveMonth === 12 ? effectiveYear + 1 : effectiveYear,
+                    effectiveMonth === 12 ? 0 : effectiveMonth,
+                    1
+                );
             }
         } else {
-            // Інакше використовуємо вказану дату або поточну
-            effectiveDate = effective_from ? new Date(effective_from) : new Date();
+            // Якщо дату не вказано і поточний період не оплачений, використовуємо поточну дату
+            effectiveDate = new Date();
         }
 
-        // Якщо є активний тариф і він такий самий як новий тариф, перевіряємо чи змінюється дата
-        if (currentTariff.rows.length > 0 && currentTariff.rows[0].tariff_id === tariff_id) {
-            // Отримуємо дату поточного тарифу
-            const currentTariffDate = await client.query(
-                `SELECT effective_from FROM billing.object_tariffs WHERE id = $1`,
-                [currentTariff.rows[0].id]
-            );
-
-            // Якщо дати збігаються, нічого не робимо
-            if (currentTariffDate.rows[0].effective_from.toISOString().split('T')[0] === 
+        // Перевірка, чи це та сама дата і той самий тариф
+        if (currentTariff.rows.length > 0 && 
+            currentTariff.rows[0].tariff_id === tariff_id) {
+            
+            const currentEffectiveDate = new Date(currentTariff.rows[0].effective_from);
+            
+            // Порівнюємо дати без часу
+            if (currentEffectiveDate.toISOString().split('T')[0] === 
                 effectiveDate.toISOString().split('T')[0]) {
                 throw new Error('Цей тариф вже призначений об\'єкту з вказаною датою');
             }
         }
 
         // Перевіряємо, чи це майбутня дата
-        const isFutureDate = effectiveDate.getTime() > Date.now();
+        const isFutureDate = effectiveDate.getTime() > now.getTime();
         
         // Якщо це майбутня дата і є активний тариф, то створюємо запланований перехід
         if (isFutureDate && currentTariff.rows.length > 0) {
+            // Перевіряємо, чи є вже запланована зміна
+            const plannedChanges = await client.query(
+                `SELECT attribute_value FROM wialon.object_attributes 
+                WHERE object_id = $1 AND attribute_name = 'planned_tariff_change'`,
+                [object_id]
+            );
+            
+            // Якщо є попередній план, видаляємо його
+            if (plannedChanges.rows.length > 0) {
+                const planned = JSON.parse(plannedChanges.rows[0].attribute_value);
+                
+                // Видаляємо запис запланованого тарифу
+                await client.query(
+                    `DELETE FROM billing.object_tariffs 
+                    WHERE object_id = $1 
+                    AND tariff_id = $2 
+                    AND effective_from = $3
+                    AND effective_to IS NULL`,
+                    [object_id, planned.tariff_id, new Date(planned.effective_from)]
+                );
+            }
+            
             // Створюємо новий запис з майбутньою датою без закриття поточного тарифу
             const result = await client.query(
                 `INSERT INTO billing.object_tariffs (
@@ -424,7 +485,7 @@ static async assignTariffToObject(client, data, userId, req) {
                 ]
             );
             
-            // Відзначаємо цей запис як запланований (можна додати атрибут або метадані)
+            // Відзначаємо цей запис як запланований
             await client.query(
                 `INSERT INTO wialon.object_attributes (
                     object_id, attribute_name, attribute_value
@@ -438,7 +499,9 @@ static async assignTariffToObject(client, data, userId, req) {
                     JSON.stringify({
                         tariff_id: tariff_id,
                         effective_from: effectiveDate.toISOString(),
-                        planned_by: userId
+                        planned_by: userId,
+                        tariff_name: tariffData.name,
+                        tariff_price: tariffData.price
                     })
                 ]
             );
@@ -485,6 +548,13 @@ static async assignTariffToObject(client, data, userId, req) {
                     notes, 
                     userId
                 ]
+            );
+
+            // Якщо була запланована зміна, видаляємо її
+            await client.query(
+                `DELETE FROM wialon.object_attributes 
+                WHERE object_id = $1 AND attribute_name = 'planned_tariff_change'`,
+                [object_id]
             );
 
             // Аудит
@@ -664,94 +734,6 @@ static async getPlannedTariffChanges(filters = {}) {
     };
 }
 
-    // Призначення тарифу об'єкту
-    static async assignTariffToObject(client, data, userId, req) {
-        try {
-            const { object_id, tariff_id, effective_from, notes } = data;
-
-            if (!object_id || !tariff_id) {
-                throw new Error('ID об\'єкта та тарифу обов\'язкові');
-            }
-
-            // Перевірка наявності об'єкта
-            const objectExists = await client.query(
-                'SELECT id FROM wialon.objects WHERE id = $1',
-                [object_id]
-            );
-
-            if (objectExists.rows.length === 0) {
-                throw new Error('Вказаний об\'єкт не існує');
-            }
-
-            // Перевірка наявності тарифу
-            const tariffExists = await client.query(
-                'SELECT id FROM billing.tariffs WHERE id = $1',
-                [tariff_id]
-            );
-
-            if (tariffExists.rows.length === 0) {
-                throw new Error('Вказаний тариф не існує');
-            }
-
-            // Перевірка чи є вже активний тариф
-            const currentTariff = await client.query(
-                `SELECT id, tariff_id FROM billing.object_tariffs 
-                 WHERE object_id = $1 AND effective_to IS NULL`,
-                [object_id]
-            );
-
-            const effectiveDate = effective_from ? new Date(effective_from) : new Date();
-
-            // Якщо є активний тариф, закриваємо його
-            if (currentTariff.rows.length > 0) {
-                // Якщо новий тариф такий самий як поточний, нічого не робимо
-                if (currentTariff.rows[0].tariff_id === tariff_id) {
-                    throw new Error('Цей тариф вже призначений об\'єкту');
-                }
-
-                await client.query(
-                    `UPDATE billing.object_tariffs 
-                     SET effective_to = $1
-                     WHERE id = $2`,
-                    [effectiveDate, currentTariff.rows[0].id]
-                );
-            }
-
-            // Додаємо новий запис тарифу
-            const result = await client.query(
-                `INSERT INTO billing.object_tariffs (
-                    object_id, tariff_id, effective_from, notes, created_by
-                )
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING *`,
-                [
-                    object_id, 
-                    tariff_id, 
-                    effectiveDate, 
-                    notes, 
-                    userId
-                ]
-            );
-
-            // Аудит
-            await AuditService.log({
-                userId,
-                actionType: 'TARIFF_ASSIGN',  // Це потрібно додати в AUDIT_LOG_TYPES
-                entityType: 'OBJECT_TARIFF',  // Це потрібно додати в ENTITY_TYPES
-                entityId: result.rows[0].id,
-                newValues: data,
-                ipAddress: req.ip,
-                tableSchema: 'billing',
-                tableName: 'object_tariffs',
-                auditType: AUDIT_TYPES.BUSINESS,
-                req
-            });
-
-            return result.rows[0];
-        } catch (error) {
-            throw error;
-        }
-    }
 
     // Отримання історії тарифів для об'єкта
     static async getObjectTariffHistory(objectId) {

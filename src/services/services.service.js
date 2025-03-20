@@ -1294,9 +1294,12 @@ static async updateInvoiceStatus(client, id, data, userId, req) {
 
 
 // Метод для генерації щомісячних рахунків для клієнтів з послугами типу "object_based"
-
 static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, req, clientId = null) {
     try {
+        // Перевірка типу параметрів
+        billingMonth = parseInt(billingMonth);
+        billingYear = parseInt(billingYear);
+        
         // Перевірка, чи зазначений період є в майбутньому
         const currentDate = new Date();
         const currentMonth = currentDate.getMonth() + 1;
@@ -1365,6 +1368,7 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
             // Формуємо інформацію про заборгованість, якщо не генеруємо рахунок за майбутній період
             let debtNotes = '';
             let debtTotal = 0;
+            let unpaidResult = { rows: [] };
             
             if (!isFuturePeriod) {
                 // Перевіряємо наявність заборгованості
@@ -1377,7 +1381,7 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                     ORDER BY i.billing_year, i.billing_month
                 `;
                 
-                const unpaidResult = await client.query(unpaidInvoicesQuery, [
+                unpaidResult = await client.query(unpaidInvoicesQuery, [
                     clientData.id, 
                     billingYear, 
                     billingMonth
@@ -1393,31 +1397,38 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                 }
             }
             
-            // Перевіряємо, за які об'єкти клієнта вже виставлені рахунки за поточний період
-            const existingInvoiceItemsQuery = `
-                SELECT o.id as object_id
-                FROM services.invoices i
-                JOIN services.invoice_items ii ON i.id = ii.invoice_id
-                JOIN services.services s ON ii.service_id = s.id
-                CROSS JOIN jsonb_array_elements(ii.metadata->'objects') as obj
-                JOIN wialon.objects o ON obj->>'id' = o.id::text
-                WHERE i.client_id = $1
-                AND i.billing_month = $2
-                AND i.billing_year = $3
-                AND s.service_type = 'object_based'
-                AND i.status != 'cancelled'
-            `;
+            // Створюємо множину об'єктів, за які вже виставлені рахунки за вказаний період
+            const invoicedObjectsSet = new Set();
             
-            const existingItemsResult = await client.query(existingInvoiceItemsQuery, [
-                clientData.id, 
-                billingMonth,
-                billingYear
-            ]);
-            
-            // Створюємо множину об'єктів, за які вже виставлені рахунки
-            const invoicedObjectsSet = new Set(
-                existingItemsResult.rows.map(row => row.object_id)
-            );
+            try {
+                // Використовуємо безпечний JSONB запит, щоб уникнути помилок
+                const existingItemsQuery = `
+                    SELECT o.id as object_id
+                    FROM services.invoices i
+                    JOIN services.invoice_items ii ON i.id = ii.invoice_id
+                    JOIN services.services s ON ii.service_id = s.id
+                    JOIN wialon.objects o ON o.client_id = i.client_id
+                    WHERE i.client_id = $1
+                    AND i.billing_month = $2
+                    AND i.billing_year = $3
+                    AND s.service_type = 'object_based'
+                    AND i.status != 'cancelled'
+                    AND ii.metadata::text LIKE '%' || o.id::text || '%'
+                `;
+                
+                const existingItemsResult = await client.query(existingItemsQuery, [
+                    clientData.id, 
+                    billingMonth,
+                    billingYear
+                ]);
+                
+                existingItemsResult.rows.forEach(row => {
+                    invoicedObjectsSet.add(row.object_id);
+                });
+            } catch (error) {
+                console.error("Error fetching existing invoice items:", error);
+                // Продовжуємо виконання навіть при помилці
+            }
             
             // Створюємо позиції рахунку
             const invoiceItems = [];
@@ -1459,7 +1470,7 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                             service_type: 'fixed'
                         }
                     });
-                    totalAmount += service.fixed_price;
+                    totalAmount += parseFloat(service.fixed_price);
                 } else if (service.service_type === 'object_based') {
                     // Для послуг на основі об'єктів рахуємо за активними об'єктами клієнта
                     
@@ -1481,6 +1492,7 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                     for (const obj of objectsResult.rows) {
                         // Пропускаємо об'єкти, за які вже виставлені рахунки
                         if (invoicedObjectsSet.has(obj.id)) {
+                            console.log(`Об'єкт ${obj.id} вже включений в інший рахунок за цей період`);
                             continue;
                         }
                         
@@ -1495,16 +1507,31 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                             continue;
                         }
                         
-                        // Для майбутніх періодів або для поточних періодів, які можна нараховувати
-                        if (isFuturePeriod || await shouldChargeForMonth(client, obj.id, clientData.id, billingYear, billingMonth)) {
-                            objectBasedTotal += parseFloat(obj.price);
+                        // Перевіряємо, чи потрібно нараховувати оплату
+                        let shouldCharge = false;
+                        
+                        if (isFuturePeriod) {
+                            // Для майбутнього періоду завжди нараховуємо
+                            shouldCharge = true;
+                        } else {
+                            // Для поточного або минулого періоду перевіряємо за спеціальним правилом
+                            const shouldChargeResult = await client.query(
+                                'SELECT billing.should_charge_for_month($1, $2, $3, $4) as should_charge',
+                                [obj.id, clientData.id, billingYear, billingMonth]
+                            );
+                            shouldCharge = shouldChargeResult.rows[0].should_charge;
+                        }
+                        
+                        if (shouldCharge) {
+                            const objPrice = parseFloat(obj.price);
+                            objectBasedTotal += objPrice;
                             includedObjects.push(obj.name);
                             objectsMetadata.push({
                                 id: obj.id,
                                 name: obj.name,
                                 tariff_id: obj.tariff_id,
                                 tariff_name: obj.tariff_name,
-                                price: parseFloat(obj.price)
+                                price: objPrice
                             });
                         }
                     }
