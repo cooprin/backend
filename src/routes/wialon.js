@@ -150,6 +150,40 @@ router.post('/:id/change-owner', authenticate, checkPermission('wialon_objects.u
         client.release();
     }
 });
+// Отримання даних об'єкта з інформацією про оплачені періоди
+router.get('/:id/payment-info', authenticate, checkPermission('wialon_objects.read'), async (req, res) => {
+    try {
+        const object = await WialonService.getObjectById(req.params.id);
+        
+        if (!object) {
+            return res.status(404).json({
+                success: false,
+                message: 'Об\'єкт не знайдений'
+            });
+        }
+        
+        // Отримуємо інформацію про оплачені періоди
+        const paidPeriods = await PaymentService.getObjectPaidPeriods(req.params.id);
+        
+        // Отримуємо наступний неоплачений період
+        const nextUnpaidPeriod = await PaymentService.getNextUnpaidPeriod(req.params.id);
+        
+        res.json({
+            success: true,
+            object,
+            paymentInfo: {
+                paidPeriods,
+                nextUnpaidPeriod
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching object with payment info:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні даних об\'єкта з інформацією про оплати'
+        });
+    }
+});
 
 // Видалення об'єкта
 router.delete('/:id', authenticate, checkPermission('wialon_objects.delete'), async (req, res) => {

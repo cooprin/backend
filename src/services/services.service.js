@@ -1294,10 +1294,19 @@ static async updateInvoiceStatus(client, id, data, userId, req) {
 
 
 // Метод для генерації щомісячних рахунків для клієнтів з послугами типу "object_based"
-static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, req) {
+
+static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, req, clientId = null) {
     try {
-        // Отримуємо всіх клієнтів з активними послугами типу "object_based"
-        const clientsWithServicesQuery = `
+        // Перевірка, чи зазначений період є в майбутньому
+        const currentDate = new Date();
+        const currentMonth = currentDate.getMonth() + 1;
+        const currentYear = currentDate.getFullYear();
+        
+        const isFuturePeriod = (billingYear > currentYear) || 
+                             (billingYear === currentYear && billingMonth > currentMonth);
+
+        // Отримуємо клієнтів з активними послугами типу "object_based"
+        let clientsWithServicesQuery = `
             SELECT DISTINCT c.id, c.name
             FROM clients.clients c
             JOIN services.client_services cs ON c.id = cs.client_id
@@ -1307,13 +1316,35 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
             AND (cs.end_date IS NULL OR cs.end_date >= $1)
             AND c.is_active = true
         `;
-        const currentDate = new Date();
-        const clientsResult = await client.query(clientsWithServicesQuery, [currentDate]);
+        
+        // Додаємо фільтр за клієнтом, якщо він вказаний
+        const params = [currentDate];
+        if (clientId) {
+            clientsWithServicesQuery += ' AND c.id = $2';
+            params.push(clientId);
+        }
+        
+        const clientsResult = await client.query(clientsWithServicesQuery, params);
         
         const createdInvoices = [];
         
         // Для кожного клієнта генеруємо рахунок
         for (const clientData of clientsResult.rows) {
+            // Перевіряємо, чи вже створено рахунок за цей період
+            const existingInvoiceQuery = `
+                SELECT id FROM services.invoices 
+                WHERE client_id = $1 AND billing_month = $2 AND billing_year = $3 AND status != 'cancelled'
+            `;
+            
+            const existingInvoiceResult = await client.query(existingInvoiceQuery, [
+                clientData.id, billingMonth, billingYear
+            ]);
+            
+            if (existingInvoiceResult.rows.length > 0) {
+                console.log(`Рахунок за період ${billingMonth}/${billingYear} для клієнта ${clientData.id} вже існує`);
+                continue;
+            }
+            
             // Знаходимо всі активні послуги клієнта
             const servicesQuery = `
                 SELECT s.id, s.name, s.service_type, s.fixed_price
@@ -1331,33 +1362,35 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                 continue;
             }
             
-            // Перевіряємо наявність заборгованості
-            const unpaidInvoicesQuery = `
-                SELECT i.id, i.billing_month, i.billing_year, i.total_amount, i.invoice_number
-                FROM services.invoices i
-                WHERE i.client_id = $1 
-                AND i.status = 'issued'
-                AND (i.billing_year < $2 OR (i.billing_year = $2 AND i.billing_month < $3))
-                ORDER BY i.billing_year, i.billing_month
-            `;
-            
-            const unpaidResult = await client.query(unpaidInvoicesQuery, [
-                clientData.id, 
-                billingYear, 
-                billingMonth
-            ]);
-            
-            // Формуємо інформацію про заборгованість
+            // Формуємо інформацію про заборгованість, якщо не генеруємо рахунок за майбутній період
             let debtNotes = '';
             let debtTotal = 0;
             
-            if (unpaidResult.rows.length > 0) {
-                debtTotal = unpaidResult.rows.reduce((sum, row) => sum + parseFloat(row.total_amount), 0);
+            if (!isFuturePeriod) {
+                // Перевіряємо наявність заборгованості
+                const unpaidInvoicesQuery = `
+                    SELECT i.id, i.billing_month, i.billing_year, i.total_amount, i.invoice_number
+                    FROM services.invoices i
+                    WHERE i.client_id = $1 
+                    AND i.status = 'issued'
+                    AND (i.billing_year < $2 OR (i.billing_year = $2 AND i.billing_month < $3))
+                    ORDER BY i.billing_year, i.billing_month
+                `;
                 
-                debtNotes = `Заборгованість за попередні періоди: ${debtTotal.toFixed(2)} грн.\n`;
-                debtNotes += unpaidResult.rows.map(row => 
-                    `Рахунок №${row.invoice_number} (${row.billing_month}/${row.billing_year}): ${parseFloat(row.total_amount).toFixed(2)} грн.`
-                ).join('\n');
+                const unpaidResult = await client.query(unpaidInvoicesQuery, [
+                    clientData.id, 
+                    billingYear, 
+                    billingMonth
+                ]);
+                
+                if (unpaidResult.rows.length > 0) {
+                    debtTotal = unpaidResult.rows.reduce((sum, row) => sum + parseFloat(row.total_amount), 0);
+                    
+                    debtNotes = `Заборгованість за попередні періоди: ${debtTotal.toFixed(2)} грн.\n`;
+                    debtNotes += unpaidResult.rows.map(row => 
+                        `Рахунок №${row.invoice_number} (${row.billing_month}/${row.billing_year}): ${parseFloat(row.total_amount).toFixed(2)} грн.`
+                    ).join('\n');
+                }
             }
             
             // Перевіряємо, за які об'єкти клієнта вже виставлені рахунки за поточний період
@@ -1451,13 +1484,19 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                             continue;
                         }
                         
-                        // Перевіряємо чи потрібно нараховувати оплату
-                        const shouldChargeResult = await client.query(
-                            `SELECT billing.should_charge_for_month($1, $2, $3, $4) as should_charge`,
-                            [obj.id, clientData.id, billingYear, billingMonth]
+                        // Перевіряємо чи оплачений цей період
+                        const isPeriodPaidResult = await client.query(
+                            'SELECT billing.is_period_paid($1, $2, $3) as is_paid',
+                            [obj.id, billingYear, billingMonth]
                         );
                         
-                        if (shouldChargeResult.rows[0].should_charge) {
+                        if (isPeriodPaidResult.rows[0].is_paid) {
+                            console.log(`Період ${billingMonth}/${billingYear} для об'єкта ${obj.id} вже оплачений`);
+                            continue;
+                        }
+                        
+                        // Для майбутніх періодів або для поточних періодів, які можна нараховувати
+                        if (isFuturePeriod || await shouldChargeForMonth(client, obj.id, clientData.id, billingYear, billingMonth)) {
                             objectBasedTotal += parseFloat(obj.price);
                             includedObjects.push(obj.name);
                             objectsMetadata.push({
@@ -1572,7 +1611,9 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                 client_id: clientData.id,
                 client_name: clientData.name,
                 total_amount: totalAmount,
-                item_count: invoiceItems.length
+                item_count: invoiceItems.length,
+                billing_month: billingMonth,
+                billing_year: billingYear
             });
             
             // Аудит
@@ -1587,7 +1628,8 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                     billing_year: billingYear,
                     total_amount: totalAmount,
                     items_count: invoiceItems.length,
-                    has_debt: debtTotal > 0
+                    has_debt: debtTotal > 0,
+                    is_future: isFuturePeriod
                 },
                 ipAddress: req.ip,
                 tableSchema: 'services',

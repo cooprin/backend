@@ -478,6 +478,73 @@ router.get('/invoices/:id/pdf', authenticate, checkPermission('invoices.read'), 
     }
 });
 
+// Генерація рахунків для конкретного клієнта за певний період
+router.post('/invoices/generate-for-client/:clientId', authenticate, checkPermission('invoices.create'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        const generatedInvoices = await ServiceService.generateMonthlyInvoices(
+            client, 
+            req.body.month,
+            req.body.year,
+            req.user.userId,
+            req,
+            req.params.clientId // передаємо clientId
+        );
+        
+        await client.query('COMMIT');
+        
+        res.status(201).json({
+            success: true,
+            invoices: generatedInvoices
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error generating invoices for client:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при створенні рахунків для клієнта'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// Перевірка можливості створення рахунку (перевірка неоплачених періодів)
+router.get('/invoices/check-pending/:clientId', authenticate, checkPermission('invoices.read'), async (req, res) => {
+    try {
+        const { year, month } = req.query;
+        
+        // Отримуємо об'єкти клієнта
+        const clientObjects = await PaymentService.getClientObjectsWithPayments(
+            req.params.clientId,
+            year,
+            month
+        );
+        
+        // Аналізуємо стан оплати
+        const pendingObjects = clientObjects.filter(obj => !obj.is_period_paid);
+        const hasPendingPayments = pendingObjects.length > 0;
+        
+        res.json({
+            success: true,
+            hasPendingPayments,
+            pendingObjects,
+            checkedPeriod: {
+                year,
+                month
+            }
+        });
+    } catch (error) {
+        console.error('Error checking pending payments:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при перевірці неоплачених періодів'
+        });
+    }
+});
+
 // Генерація рахунків за певний період
 router.post('/invoices/generate', authenticate, checkPermission('invoices.create'), async (req, res) => {
     const client = await pool.connect();

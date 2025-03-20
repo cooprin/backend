@@ -182,6 +182,111 @@ router.put('/:id', authenticate, checkPermission('payments.update'), async (req,
     }
 });
 
+// Отримання оплачених періодів для об'єкта
+router.get('/periods/:objectId', authenticate, checkPermission('payments.read'), async (req, res) => {
+    try {
+        const periods = await PaymentService.getObjectPaidPeriods(req.params.objectId);
+        
+        res.json({
+            success: true,
+            periods
+        });
+    } catch (error) {
+        console.error('Error fetching object paid periods:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні оплачених періодів'
+        });
+    }
+});
+
+// Перевірка чи період оплачений для об'єкта
+router.get('/is-period-paid/:objectId', authenticate, checkPermission('payments.read'), async (req, res) => {
+    try {
+        const { year, month } = req.query;
+        
+        if (!year || !month) {
+            return res.status(400).json({
+                success: false,
+                message: 'Необхідно вказати рік та місяць'
+            });
+        }
+        
+        const isPaid = await PaymentService.isPeriodPaid(req.params.objectId, year, month);
+        
+        res.json({
+            success: true,
+            isPaid
+        });
+    } catch (error) {
+        console.error('Error checking if period is paid:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при перевірці оплати періоду'
+        });
+    }
+});
+
+// Отримання наступного неоплаченого періоду для об'єкта
+router.get('/next-unpaid-period/:objectId', authenticate, checkPermission('payments.read'), async (req, res) => {
+    try {
+        const period = await PaymentService.getNextUnpaidPeriod(req.params.objectId);
+        
+        res.json({
+            success: true,
+            period
+        });
+    } catch (error) {
+        console.error('Error fetching next unpaid period:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні наступного неоплаченого періоду'
+        });
+    }
+});
+
+// Отримання об'єктів клієнта з інформацією про оплати
+router.get('/client-objects/:clientId', authenticate, checkPermission('payments.read'), async (req, res) => {
+    try {
+        const { year, month } = req.query;
+        const objects = await PaymentService.getClientObjectsWithPayments(
+            req.params.clientId,
+            year,
+            month
+        );
+        
+        res.json({
+            success: true,
+            objects
+        });
+    } catch (error) {
+        console.error('Error fetching client objects with payments:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні об\'єктів клієнта з інформацією про оплати'
+        });
+    }
+});
+
+// Отримання доступних періодів для оплати для об'єкта
+router.get('/available-periods/:objectId', authenticate, checkPermission('payments.read'), async (req, res) => {
+    try {
+        const count = req.query.count ? parseInt(req.query.count) : 12;
+        const periods = await PaymentService.getAvailablePaymentPeriods(req.params.objectId, count);
+        
+        res.json({
+            success: true,
+            periods
+        });
+    } catch (error) {
+        console.error('Error fetching available payment periods:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні доступних періодів для оплати'
+        });
+    }
+});
+
 // Видалення платежу
 router.delete('/:id', authenticate, checkPermission('payments.delete'), async (req, res) => {
     const client = await pool.connect();

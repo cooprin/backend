@@ -318,6 +318,351 @@ class TariffService {
             throw error;
         }
     }
+// Додавання методу для визначення оптимальної дати зміни тарифу
+static async getOptimalTariffChangeDate(objectId) {
+    try {
+        // Використовуємо функцію в БД для визначення дати
+        const result = await pool.query(
+            'SELECT billing.get_optimal_tariff_change_date($1) as change_date',
+            [objectId]
+        );
+        
+        return result.rows[0].change_date;
+    } catch (error) {
+        throw error;
+    }
+}
+
+// Модифікація методу для призначення тарифу з врахуванням оплачених періодів
+static async assignTariffToObject(client, data, userId, req) {
+    try {
+        const { object_id, tariff_id, effective_from, notes, use_optimal_date = false } = data;
+
+        if (!object_id || !tariff_id) {
+            throw new Error('ID об\'єкта та тарифу обов\'язкові');
+        }
+
+        // Перевірка наявності об'єкта
+        const objectExists = await client.query(
+            'SELECT id, status FROM wialon.objects WHERE id = $1',
+            [object_id]
+        );
+
+        if (objectExists.rows.length === 0) {
+            throw new Error('Вказаний об\'єкт не існує');
+        }
+
+        // Перевірка наявності тарифу
+        const tariffExists = await client.query(
+            'SELECT id, price FROM billing.tariffs WHERE id = $1',
+            [tariff_id]
+        );
+
+        if (tariffExists.rows.length === 0) {
+            throw new Error('Вказаний тариф не існує');
+        }
+
+        // Перевірка чи є вже активний тариф
+        const currentTariff = await client.query(
+            `SELECT id, tariff_id FROM billing.object_tariffs 
+             WHERE object_id = $1 AND effective_to IS NULL`,
+            [object_id]
+        );
+
+        // Якщо вказано use_optimal_date=true, визначаємо оптимальну дату зміни тарифу
+        let effectiveDate;
+        if (use_optimal_date) {
+            const optimalDateResult = await client.query(
+                'SELECT billing.get_optimal_tariff_change_date($1) as change_date',
+                [object_id]
+            );
+            
+            effectiveDate = optimalDateResult.rows[0].change_date;
+            
+            // Якщо оптимальна дата відсутня (помилка функції), використовуємо поточну дату
+            if (!effectiveDate) {
+                effectiveDate = new Date();
+            }
+        } else {
+            // Інакше використовуємо вказану дату або поточну
+            effectiveDate = effective_from ? new Date(effective_from) : new Date();
+        }
+
+        // Якщо є активний тариф і він такий самий як новий тариф, перевіряємо чи змінюється дата
+        if (currentTariff.rows.length > 0 && currentTariff.rows[0].tariff_id === tariff_id) {
+            // Отримуємо дату поточного тарифу
+            const currentTariffDate = await client.query(
+                `SELECT effective_from FROM billing.object_tariffs WHERE id = $1`,
+                [currentTariff.rows[0].id]
+            );
+
+            // Якщо дати збігаються, нічого не робимо
+            if (currentTariffDate.rows[0].effective_from.toISOString().split('T')[0] === 
+                effectiveDate.toISOString().split('T')[0]) {
+                throw new Error('Цей тариф вже призначений об\'єкту з вказаною датою');
+            }
+        }
+
+        // Перевіряємо, чи це майбутня дата
+        const isFutureDate = effectiveDate.getTime() > Date.now();
+        
+        // Якщо це майбутня дата і є активний тариф, то створюємо запланований перехід
+        if (isFutureDate && currentTariff.rows.length > 0) {
+            // Створюємо новий запис з майбутньою датою без закриття поточного тарифу
+            const result = await client.query(
+                `INSERT INTO billing.object_tariffs (
+                    object_id, tariff_id, effective_from, notes, created_by
+                )
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING *`,
+                [
+                    object_id, 
+                    tariff_id, 
+                    effectiveDate, 
+                    notes ? notes + ' (Заплановано)' : 'Заплановано', 
+                    userId
+                ]
+            );
+            
+            // Відзначаємо цей запис як запланований (можна додати атрибут або метадані)
+            await client.query(
+                `INSERT INTO wialon.object_attributes (
+                    object_id, attribute_name, attribute_value
+                )
+                VALUES ($1, $2, $3)
+                ON CONFLICT (object_id, attribute_name) 
+                DO UPDATE SET attribute_value = $3`,
+                [
+                    object_id, 
+                    'planned_tariff_change', 
+                    JSON.stringify({
+                        tariff_id: tariff_id,
+                        effective_from: effectiveDate.toISOString(),
+                        planned_by: userId
+                    })
+                ]
+            );
+            
+            // Аудит
+            await AuditService.log({
+                userId,
+                actionType: 'TARIFF_PLANNED',
+                entityType: 'OBJECT_TARIFF',
+                entityId: result.rows[0].id,
+                newValues: {...data, effective_from: effectiveDate, is_planned: true},
+                ipAddress: req.ip,
+                tableSchema: 'billing',
+                tableName: 'object_tariffs',
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+            
+            return { ...result.rows[0], is_planned: true };
+        } 
+        // Стандартний шлях для негайної зміни тарифу
+        else {
+            // Якщо є активний тариф, закриваємо його
+            if (currentTariff.rows.length > 0) {
+                await client.query(
+                    `UPDATE billing.object_tariffs 
+                     SET effective_to = $1
+                     WHERE id = $2`,
+                    [effectiveDate, currentTariff.rows[0].id]
+                );
+            }
+
+            // Додаємо новий запис тарифу
+            const result = await client.query(
+                `INSERT INTO billing.object_tariffs (
+                    object_id, tariff_id, effective_from, notes, created_by
+                )
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING *`,
+                [
+                    object_id, 
+                    tariff_id, 
+                    effectiveDate, 
+                    notes, 
+                    userId
+                ]
+            );
+
+            // Аудит
+            await AuditService.log({
+                userId,
+                actionType: 'TARIFF_ASSIGN',
+                entityType: 'OBJECT_TARIFF',
+                entityId: result.rows[0].id,
+                newValues: {...data, effective_from: effectiveDate},
+                ipAddress: req.ip,
+                tableSchema: 'billing',
+                tableName: 'object_tariffs',
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+
+            return result.rows[0];
+        }
+    } catch (error) {
+        throw error;
+    }
+}
+
+// Додаємо метод для відміни запланованої зміни тарифу
+static async cancelPlannedTariffChange(client, objectId, userId, req) {
+    try {
+        // Перевірка наявності об'єкта
+        const objectExists = await client.query(
+            'SELECT id FROM wialon.objects WHERE id = $1',
+            [objectId]
+        );
+
+        if (objectExists.rows.length === 0) {
+            throw new Error('Вказаний об\'єкт не існує');
+        }
+
+        // Перевірка наявності запланованої зміни
+        const plannedAttribute = await client.query(
+            `SELECT attribute_value FROM wialon.object_attributes 
+             WHERE object_id = $1 AND attribute_name = 'planned_tariff_change'`,
+            [objectId]
+        );
+
+        if (plannedAttribute.rows.length === 0) {
+            throw new Error('Немає запланованих змін тарифу для цього об\'єкта');
+        }
+
+        // Отримуємо дані запланованої зміни
+        const plannedChange = JSON.parse(plannedAttribute.rows[0].attribute_value);
+        const plannedDate = new Date(plannedChange.effective_from);
+
+        // Видалення запису запланованого тарифу
+        await client.query(
+            `DELETE FROM billing.object_tariffs 
+             WHERE object_id = $1 
+             AND tariff_id = $2 
+             AND effective_from = $3
+             AND effective_to IS NULL`,
+            [objectId, plannedChange.tariff_id, plannedDate]
+        );
+
+        // Видалення атрибуту з плануванням
+        await client.query(
+            `DELETE FROM wialon.object_attributes 
+             WHERE object_id = $1 AND attribute_name = 'planned_tariff_change'`,
+            [objectId]
+        );
+
+        // Аудит
+        await AuditService.log({
+            userId,
+            actionType: 'TARIFF_PLAN_CANCEL',
+            entityType: 'OBJECT_TARIFF',
+            entityId: objectId,
+            oldValues: plannedChange,
+            ipAddress: req.ip,
+            tableSchema: 'wialon',
+            tableName: 'object_attributes',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+
+        return { success: true, cancelled_plan: plannedChange };
+    } catch (error) {
+        throw error;
+    }
+}
+
+// Додавання методу для отримання запланованих змін тарифів
+static async getPlannedTariffChanges(filters = {}) {
+    const {
+        page = 1,
+        perPage = 10,
+        client_id = null
+    } = filters;
+
+    let whereClause = '';
+    let params = [];
+    let paramIndex = 1;
+
+    if (client_id) {
+        whereClause = `WHERE o.client_id = $${paramIndex}`;
+        params.push(client_id);
+        paramIndex++;
+    }
+
+    // Обробка опції "всі записи" для експорту
+    const limit = perPage === 'All' ? null : parseInt(perPage);
+    const offset = limit ? (parseInt(page) - 1) * limit : 0;
+
+    // Отримуємо всі об'єкти з запланованою зміною тарифу
+    let query = `
+        SELECT 
+            o.id as object_id, 
+            o.name as object_name,
+            c.id as client_id,
+            c.name as client_name,
+            oa.attribute_value::jsonb as planned_change,
+            t.name as tariff_name,
+            t.price as tariff_price,
+            ot.tariff_id as current_tariff_id,
+            current_t.name as current_tariff_name,
+            current_t.price as current_tariff_price
+        FROM wialon.objects o
+        JOIN clients.clients c ON o.client_id = c.id
+        JOIN wialon.object_attributes oa ON o.id = oa.object_id
+        JOIN billing.tariffs t ON (oa.attribute_value::jsonb->>'tariff_id')::uuid = t.id
+        LEFT JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
+        LEFT JOIN billing.tariffs current_t ON ot.tariff_id = current_t.id
+        WHERE oa.attribute_name = 'planned_tariff_change'
+        ${whereClause}
+        ORDER BY (oa.attribute_value::jsonb->>'effective_from')::timestamp
+    `;
+
+    if (limit !== null) {
+        query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        params.push(limit, offset);
+    }
+
+    const countQuery = `
+        SELECT COUNT(*) 
+        FROM wialon.objects o
+        JOIN wialon.object_attributes oa ON o.id = oa.object_id
+        WHERE oa.attribute_name = 'planned_tariff_change'
+        ${whereClause}
+    `;
+
+    const [changesResult, countResult] = await Promise.all([
+        pool.query(query, params),
+        pool.query(countQuery, client_id ? [client_id] : [])
+    ]);
+
+    // Перетворюємо результати для читабельності
+    const plannedChanges = changesResult.rows.map(row => {
+        const planned = row.planned_change;
+        const plannedDate = new Date(planned.effective_from);
+        
+        return {
+            object_id: row.object_id,
+            object_name: row.object_name,
+            client_id: row.client_id,
+            client_name: row.client_name,
+            current_tariff_id: row.current_tariff_id,
+            current_tariff_name: row.current_tariff_name,
+            current_tariff_price: row.current_tariff_price,
+            planned_tariff_id: planned.tariff_id,
+            planned_tariff_name: row.tariff_name,
+            planned_tariff_price: row.tariff_price,
+            effective_from: plannedDate,
+            planned_by: planned.planned_by
+        };
+    });
+
+    return {
+        planned_changes: plannedChanges,
+        total: parseInt(countResult.rows[0].count)
+    };
+}
 
     // Призначення тарифу об'єкту
     static async assignTariffToObject(client, data, userId, req) {

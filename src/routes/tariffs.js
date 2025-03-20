@@ -173,6 +173,74 @@ router.post('/assign', authenticate, checkPermission('tariffs.update'), async (r
     }
 });
 
+// Отримання оптимальної дати зміни тарифу
+router.get('/optimal-change-date/:objectId', authenticate, checkPermission('tariffs.read'), async (req, res) => {
+    try {
+        const changeDate = await TariffService.getOptimalTariffChangeDate(req.params.objectId);
+        
+        res.json({
+            success: true,
+            changeDate
+        });
+    } catch (error) {
+        console.error('Error fetching optimal tariff change date:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні оптимальної дати зміни тарифу'
+        });
+    }
+});
+
+// Отримання запланованих змін тарифів
+router.get('/planned-changes', authenticate, checkPermission('tariffs.read'), async (req, res) => {
+    try {
+        const result = await TariffService.getPlannedTariffChanges(req.query);
+        
+        res.json({
+            success: true,
+            planned_changes: result.planned_changes,
+            total: result.total
+        });
+    } catch (error) {
+        console.error('Error fetching planned tariff changes:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні запланованих змін тарифів'
+        });
+    }
+});
+
+// Скасування запланованої зміни тарифу
+router.post('/cancel-planned-change/:objectId', authenticate, checkPermission('tariffs.update'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        const result = await TariffService.cancelPlannedTariffChange(
+            client,
+            req.params.objectId,
+            req.user.userId,
+            req
+        );
+        
+        await client.query('COMMIT');
+        
+        res.json({
+            success: true,
+            result
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error cancelling planned tariff change:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при скасуванні запланованої зміни тарифу'
+        });
+    } finally {
+        client.release();
+    }
+});
+
 // Отримання історії тарифів для об'єкта
 router.get('/history/:objectId', authenticate, checkPermission('tariffs.read'), async (req, res) => {
     try {
