@@ -1296,9 +1296,23 @@ static async updateInvoiceStatus(client, id, data, userId, req) {
 // Метод для генерації щомісячних рахунків для клієнтів з послугами типу "object_based"
 static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, req, clientId = null) {
     try {
-        // Перевірка типу параметрів
+        // Перевірка типу параметрів з перевіркою на NaN
         billingMonth = parseInt(billingMonth);
         billingYear = parseInt(billingYear);
+        
+        // Додаткова перевірка на NaN
+        if (isNaN(billingMonth) || isNaN(billingYear)) {
+            throw new Error("Некоректний місяць або рік. Будь ласка, вкажіть числові значення.");
+        }
+        
+        // Перевірка діапазону значень
+        if (billingMonth < 1 || billingMonth > 12) {
+            throw new Error("Значення місяця повинно бути від 1 до 12.");
+        }
+        
+        if (billingYear < 2000 || billingYear > 2100) {
+            throw new Error("Значення року повинно бути між 2000 та 2100.");
+        }
         
         // Перевірка, чи зазначений період є в майбутньому
         const currentDate = new Date();
@@ -1324,7 +1338,20 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
         const params = [currentDate];
         if (clientId) {
             clientsWithServicesQuery += ' AND c.id = $2';
-            params.push(clientId);
+            
+            // Переконайтесь, що clientId це UUID
+            try {
+                const uuidValue = clientId.toString();
+                
+                // Перевірка на валідний UUID
+                if (!uuidValue.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+                    throw new Error("Некоректний формат ID клієнта.");
+                }
+                
+                params.push(uuidValue);
+            } catch (error) {
+                throw new Error(`Некоректний ID клієнта: ${error.message}`);
+            }
         }
         
         const clientsResult = await client.query(clientsWithServicesQuery, params);
@@ -1388,11 +1415,11 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                 ]);
                 
                 if (unpaidResult.rows.length > 0) {
-                    debtTotal = unpaidResult.rows.reduce((sum, row) => sum + parseFloat(row.total_amount), 0);
+                    debtTotal = unpaidResult.rows.reduce((sum, row) => sum + parseFloat(row.total_amount || 0), 0);
                     
                     debtNotes = `Заборгованість за попередні періоди: ${debtTotal.toFixed(2)} грн.\n`;
                     debtNotes += unpaidResult.rows.map(row => 
-                        `Рахунок №${row.invoice_number} (${row.billing_month}/${row.billing_year}): ${parseFloat(row.total_amount).toFixed(2)} грн.`
+                        `Рахунок №${row.invoice_number} (${row.billing_month}/${row.billing_year}): ${parseFloat(row.total_amount || 0).toFixed(2)} грн.`
                     ).join('\n');
                 }
             }
@@ -1401,9 +1428,9 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
             const invoicedObjectsSet = new Set();
             
             try {
-                // Використовуємо безпечний JSONB запит, щоб уникнути помилок
+                // Використовуємо більш безпечний запит без JSONB функцій
                 const existingItemsQuery = `
-                    SELECT o.id as object_id
+                    SELECT DISTINCT o.id as object_id
                     FROM services.invoices i
                     JOIN services.invoice_items ii ON i.id = ii.invoice_id
                     JOIN services.services s ON ii.service_id = s.id
@@ -1413,7 +1440,7 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                     AND i.billing_year = $3
                     AND s.service_type = 'object_based'
                     AND i.status != 'cancelled'
-                    AND ii.metadata::text LIKE '%' || o.id::text || '%'
+                    AND ii.metadata IS NOT NULL
                 `;
                 
                 const existingItemsResult = await client.query(existingItemsQuery, [
@@ -1447,9 +1474,9 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                         unpaid_invoices: unpaidResult.rows.map(row => ({
                             id: row.id,
                             invoice_number: row.invoice_number,
-                            billing_month: row.billing_month,
-                            billing_year: row.billing_year,
-                            amount: parseFloat(row.total_amount)
+                            billing_month: parseInt(row.billing_month),
+                            billing_year: parseInt(row.billing_year),
+                            amount: parseFloat(row.total_amount || 0)
                         }))
                     }
                 });
@@ -1460,17 +1487,24 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
             for (const service of servicesResult.rows) {
                 if (service.service_type === 'fixed') {
                     // Для послуг з фіксованою ціною просто додаємо позицію
+                    const fixedPrice = parseFloat(service.fixed_price || 0);
+                    
+                    if (isNaN(fixedPrice)) {
+                        console.warn(`Пропускаємо послугу з ID ${service.id}: некоректна ціна ${service.fixed_price}`);
+                        continue;
+                    }
+                    
                     invoiceItems.push({
                         service_id: service.id,
                         description: service.name,
                         quantity: 1,
-                        unit_price: service.fixed_price,
-                        total_price: service.fixed_price,
+                        unit_price: fixedPrice,
+                        total_price: fixedPrice,
                         metadata: {
                             service_type: 'fixed'
                         }
                     });
-                    totalAmount += parseFloat(service.fixed_price);
+                    totalAmount += fixedPrice;
                 } else if (service.service_type === 'object_based') {
                     // Для послуг на основі об'єктів рахуємо за активними об'єктами клієнта
                     
@@ -1497,13 +1531,18 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                         }
                         
                         // Перевіряємо чи оплачений цей період
-                        const isPeriodPaidResult = await client.query(
-                            'SELECT billing.is_period_paid($1, $2, $3) as is_paid',
-                            [obj.id, billingYear, billingMonth]
-                        );
-                        
-                        if (isPeriodPaidResult.rows[0].is_paid) {
-                            console.log(`Період ${billingMonth}/${billingYear} для об'єкта ${obj.id} вже оплачений`);
+                        try {
+                            const isPeriodPaidResult = await client.query(
+                                'SELECT billing.is_period_paid($1, $2, $3) as is_paid',
+                                [obj.id, billingYear, billingMonth]
+                            );
+                            
+                            if (isPeriodPaidResult.rows[0].is_paid) {
+                                console.log(`Період ${billingMonth}/${billingYear} для об'єкта ${obj.id} вже оплачений`);
+                                continue;
+                            }
+                        } catch(error) {
+                            console.error(`Помилка перевірки оплаченого періоду для об'єкта ${obj.id}:`, error);
                             continue;
                         }
                         
@@ -1514,16 +1553,27 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                             // Для майбутнього періоду завжди нараховуємо
                             shouldCharge = true;
                         } else {
-                            // Для поточного або минулого періоду перевіряємо за спеціальним правилом
-                            const shouldChargeResult = await client.query(
-                                'SELECT billing.should_charge_for_month($1, $2, $3, $4) as should_charge',
-                                [obj.id, clientData.id, billingYear, billingMonth]
-                            );
-                            shouldCharge = shouldChargeResult.rows[0].should_charge;
+                            try {
+                                // Для поточного або минулого періоду перевіряємо за спеціальним правилом
+                                const shouldChargeResult = await client.query(
+                                    'SELECT billing.should_charge_for_month($1, $2, $3, $4) as should_charge',
+                                    [obj.id, clientData.id, billingYear, billingMonth]
+                                );
+                                shouldCharge = shouldChargeResult.rows[0].should_charge;
+                            } catch(error) {
+                                console.error(`Помилка перевірки необхідності оплати для об'єкта ${obj.id}:`, error);
+                                continue;
+                            }
                         }
                         
                         if (shouldCharge) {
-                            const objPrice = parseFloat(obj.price);
+                            const objPrice = parseFloat(obj.price || 0);
+                            
+                            if (isNaN(objPrice)) {
+                                console.warn(`Пропускаємо об'єкт з ID ${obj.id}: некоректна ціна ${obj.price}`);
+                                continue;
+                            }
+                            
                             objectBasedTotal += objPrice;
                             includedObjects.push(obj.name);
                             objectsMetadata.push({
@@ -1571,8 +1621,22 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
             
             let invoiceNumber;
             if (lastInvoiceNumber.rows.length > 0) {
-                const lastNumber = parseInt(lastInvoiceNumber.rows[0].invoice_number.split('-')[1], 10);
-                invoiceNumber = `${billingYear}-${(lastNumber + 1).toString().padStart(4, '0')}`;
+                try {
+                    const parts = lastInvoiceNumber.rows[0].invoice_number.split('-');
+                    if (parts.length === 2) {
+                        const lastNumber = parseInt(parts[1], 10);
+                        if (!isNaN(lastNumber)) {
+                            invoiceNumber = `${billingYear}-${(lastNumber + 1).toString().padStart(4, '0')}`;
+                        } else {
+                            invoiceNumber = `${billingYear}-0001`;
+                        }
+                    } else {
+                        invoiceNumber = `${billingYear}-0001`;
+                    }
+                } catch(error) {
+                    console.error("Error parsing invoice number:", error);
+                    invoiceNumber = `${billingYear}-0001`;
+                }
             } else {
                 invoiceNumber = `${billingYear}-0001`;
             }
@@ -1668,6 +1732,7 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
         
         return createdInvoices;
     } catch (error) {
+        console.error("Error in generateMonthlyInvoices:", error);
         throw error;
     }
 }
