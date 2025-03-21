@@ -608,66 +608,131 @@ static async getClientObjectsWithPayments(clientId, year = null, month = null) {
 
 // Отримання доступних періодів для оплати для об'єкта
 static async getAvailablePaymentPeriods(objectId, count = 12) {
-    // Отримуємо дані про поточний тариф об'єкта
-    const tariffQuery = `
-        SELECT t.id, t.price
-        FROM billing.object_tariffs ot
-        JOIN billing.tariffs t ON ot.tariff_id = t.id
-        WHERE ot.object_id = $1 AND ot.effective_to IS NULL
-    `;
-    
-    const tariffResult = await pool.query(tariffQuery, [objectId]);
-    
-    if (tariffResult.rows.length === 0) {
-        return [];
-    }
-    
-    const tariff = tariffResult.rows[0];
-    
-    // Отримуємо наступний неоплачений період
-    const nextPeriodResult = await pool.query(
-        'SELECT * FROM billing.get_next_unpaid_period($1)',
-        [objectId]
-    );
-    
-    if (nextPeriodResult.rows.length === 0) {
-        return [];
-    }
-    
-    const startPeriod = nextPeriodResult.rows[0];
-    const periods = [];
-    
-    let currentYear = startPeriod.billing_year;
-    let currentMonth = startPeriod.billing_month;
-    
-    // Генеруємо доступні періоди
-    for (let i = 0; i < count; i++) {
-        // Перевіряємо, чи період уже оплачений
-        const isPaidResult = await pool.query(
-            'SELECT billing.is_period_paid($1, $2, $3) as is_paid',
-            [objectId, currentYear, currentMonth]
-        );
+    try {
+        // Отримуємо історію тарифів об'єкта
+        const tariffHistoryQuery = `
+            SELECT 
+                ot.tariff_id, 
+                t.name AS tariff_name, 
+                t.price,
+                ot.effective_from,
+                ot.effective_to
+            FROM billing.object_tariffs ot
+            JOIN billing.tariffs t ON ot.tariff_id = t.id
+            WHERE ot.object_id = $1
+            ORDER BY ot.effective_from ASC
+        `;
         
-        if (!isPaidResult.rows[0].is_paid) {
-            periods.push({
-                object_id: objectId,
-                billing_year: currentYear,
-                billing_month: currentMonth,
-                tariff_id: tariff.id,
-                price: tariff.price,
-                is_paid: false
+        const tariffHistoryResult = await pool.query(tariffHistoryQuery, [objectId]);
+        
+        if (tariffHistoryResult.rows.length === 0) {
+            return { periods: [] };
+        }
+        
+        // Отримуємо історію власності об'єкта
+        const ownershipQuery = `
+            SELECT 
+                start_date,
+                end_date,
+                client_id
+            FROM wialon.object_ownership_history
+            WHERE object_id = $1
+            ORDER BY start_date ASC
+        `;
+        
+        const ownershipResult = await pool.query(ownershipQuery, [objectId]);
+        
+        // Отримуємо інформацію про оплачені періоди
+        const paidPeriodsQuery = `
+            SELECT 
+                billing_month,
+                billing_year
+            FROM billing.object_payment_records
+            WHERE object_id = $1 AND status IN ('paid', 'partial')
+        `;
+        
+        const paidPeriodsResult = await pool.query(paidPeriodsQuery, [objectId]);
+        const paidPeriods = paidPeriodsResult.rows;
+        
+        // Визначаємо початкову дату аналізу (початок власності або найстаріший тариф)
+        let startDate;
+        
+        if (ownershipResult.rows.length > 0) {
+            startDate = new Date(ownershipResult.rows[0].start_date);
+        } else if (tariffHistoryResult.rows.length > 0) {
+            startDate = new Date(tariffHistoryResult.rows[0].effective_from);
+        } else {
+            // Якщо немає даних, повертаємо пустий масив
+            return { periods: [] };
+        }
+        
+        // Поточна дата
+        const currentDate = new Date();
+        
+        // Генеруємо всі місяці від початкової дати до поточної
+        const allPeriods = [];
+        const iterDate = new Date(startDate);
+        
+        // Скидаємо день до 1-го числа місяця
+        iterDate.setDate(1);
+        
+        // Проходимо по всіх місяцях від початкової дати до поточної
+        while (
+            iterDate.getFullYear() < currentDate.getFullYear() || 
+            (iterDate.getFullYear() === currentDate.getFullYear() && 
+            iterDate.getMonth() <= currentDate.getMonth())
+        ) {
+            const year = iterDate.getFullYear();
+            const month = iterDate.getMonth() + 1; // Місяці в JS починаються з 0
+            
+            // Знаходимо активний тариф для цього періоду
+            const activeTariff = tariffHistoryResult.rows.find(tariff => {
+                const effectiveFrom = new Date(tariff.effective_from);
+                const effectiveTo = tariff.effective_to ? new Date(tariff.effective_to) : new Date(9999, 11, 31);
+                
+                // Перше число поточного місяця
+                const periodDate = new Date(year, month - 1, 1);
+                
+                return effectiveFrom <= periodDate && periodDate <= effectiveTo;
             });
+            
+            // Перевіряємо, чи період оплачений
+            const isPaid = paidPeriods.some(period => 
+                period.billing_year === year && period.billing_month === month
+            );
+            
+            // Додаємо період, якщо є активний тариф і період не оплачений
+            if (activeTariff && !isPaid) {
+                allPeriods.push({
+                    billing_year: year,
+                    billing_month: month,
+                    tariff_id: activeTariff.tariff_id,
+                    tariff_name: activeTariff.tariff_name,
+                    price: activeTariff.price,
+                    is_paid: false
+                });
+            }
+            
+            // Переходимо до наступного місяця
+            iterDate.setMonth(iterDate.getMonth() + 1);
         }
         
-        // Переходимо до наступного місяця
-        currentMonth++;
-        if (currentMonth > 12) {
-            currentMonth = 1;
-            currentYear++;
-        }
+        // Сортуємо періоди (спершу найстаріші)
+        allPeriods.sort((a, b) => {
+            if (a.billing_year !== b.billing_year) {
+                return a.billing_year - b.billing_year;
+            }
+            return a.billing_month - b.billing_month;
+        });
+        
+        // Обмежуємо кількість періодів, якщо потрібно
+        const limitedPeriods = count ? allPeriods.slice(0, count) : allPeriods;
+        
+        return { periods: limitedPeriods };
+    } catch (error) {
+        console.error('Error getting available payment periods:', error);
+        throw error;
     }
-    
-    return periods;
 }
 
     // Видалення платежу
