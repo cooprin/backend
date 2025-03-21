@@ -681,10 +681,18 @@ static async getAvailablePaymentPeriods(objectId, count = 12) {
             return { periods: [] };
         }
         
-        // Визначаємо початкову дату для минулих періодів
-        const startDate = new Date();
-        startDate.setMonth(startDate.getMonth() - 24); // Дивимося на 24 місяці назад
-        startDate.setDate(1); // Перше число місяця
+        // Визначаємо початкову дату аналізу (початок власності або найстаріший тариф)
+        let startDate;
+        
+        if (ownershipResult.rows.length > 0) {
+            startDate = new Date(ownershipResult.rows[0].start_date);
+        } else if (tariffHistoryResult.rows.length > 0) {
+            startDate = new Date(tariffHistoryResult.rows[0].effective_from);
+        } else {
+            // Якщо немає даних, повертаємо пустий масив
+            return { periods: [] };
+        }
+        
         
         // Визначаємо кінцеву дату для майбутніх періодів
         const endDate = new Date();
