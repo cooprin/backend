@@ -1294,6 +1294,8 @@ static async updateInvoiceStatus(client, id, data, userId, req) {
 
 
 // Метод для генерації щомісячних рахунків для клієнтів з послугами типу "object_based"
+// Повний код модифікованого методу generateMonthlyInvoices
+
 static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, req, clientId = null) {
     try {
         // Перевірка типу параметрів з перевіркою на NaN
@@ -1370,9 +1372,66 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                 clientData.id, billingMonth, billingYear
             ]);
             
+            // Створюємо множину об'єктів, за які вже виставлені рахунки за вказаний період
+            const invoicedObjectsSet = new Set();
+            
+            // Якщо є існуючі рахунки, отримуємо об'єкти, які вже включені в ці рахунки
             if (existingInvoiceResult.rows.length > 0) {
-                console.log(`Рахунок за період ${billingMonth}/${billingYear} для клієнта ${clientData.id} вже існує`);
-                continue;
+                console.log(`Рахунок за період ${billingMonth}/${billingYear} для клієнта ${clientData.id} вже існує, перевіримо нові об'єкти`);
+                
+                try {
+                    // Отримуємо об'єкти з metadata.objects з існуючих рахунків
+                    const existingObjectsQuery = `
+                        SELECT obj->>'id' as object_id
+                        FROM services.invoices i
+                        JOIN services.invoice_items ii ON i.id = ii.invoice_id
+                        JOIN services.services s ON ii.service_id = s.id,
+                        jsonb_array_elements(ii.metadata->'objects') as obj
+                        WHERE i.client_id = $1
+                        AND i.billing_month = $2
+                        AND i.billing_year = $3
+                        AND s.service_type = 'object_based'
+                        AND i.status != 'cancelled'
+                    `;
+                    
+                    const existingObjectsResult = await client.query(existingObjectsQuery, [
+                        clientData.id, billingMonth, billingYear
+                    ]);
+                    
+                    existingObjectsResult.rows.forEach(row => {
+                        if (row.object_id) {
+                            invoicedObjectsSet.add(row.object_id);
+                        }
+                    });
+                    
+                    // Якщо не отримали об'єкти з JSON (можливо старі рахунки без metadata), використовуємо запасний варіант
+                    if (invoicedObjectsSet.size === 0) {
+                        const fallbackQuery = `
+                            SELECT DISTINCT o.id as object_id
+                            FROM services.invoices i
+                            JOIN services.invoice_items ii ON i.id = ii.invoice_id
+                            JOIN services.services s ON ii.service_id = s.id
+                            JOIN wialon.objects o ON o.client_id = i.client_id
+                            WHERE i.client_id = $1
+                            AND i.billing_month = $2
+                            AND i.billing_year = $3
+                            AND s.service_type = 'object_based'
+                            AND i.status != 'cancelled'
+                            AND ii.metadata IS NOT NULL
+                        `;
+                        
+                        const fallbackResult = await client.query(fallbackQuery, [
+                            clientData.id, billingMonth, billingYear
+                        ]);
+                        
+                        fallbackResult.rows.forEach(row => {
+                            invoicedObjectsSet.add(row.object_id);
+                        });
+                    }
+                } catch (error) {
+                    console.error("Error fetching existing invoice objects:", error);
+                    // Продовжуємо виконання навіть при помилці
+                }
             }
             
             // Знаходимо всі активні послуги клієнта
@@ -1422,39 +1481,6 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                         `Рахунок №${row.invoice_number} (${row.billing_month}/${row.billing_year}): ${parseFloat(row.total_amount || 0).toFixed(2)} грн.`
                     ).join('\n');
                 }
-            }
-            
-            // Створюємо множину об'єктів, за які вже виставлені рахунки за вказаний період
-            const invoicedObjectsSet = new Set();
-            
-            try {
-                // Використовуємо більш безпечний запит без JSONB функцій
-                const existingItemsQuery = `
-                    SELECT DISTINCT o.id as object_id
-                    FROM services.invoices i
-                    JOIN services.invoice_items ii ON i.id = ii.invoice_id
-                    JOIN services.services s ON ii.service_id = s.id
-                    JOIN wialon.objects o ON o.client_id = i.client_id
-                    WHERE i.client_id = $1
-                    AND i.billing_month = $2
-                    AND i.billing_year = $3
-                    AND s.service_type = 'object_based'
-                    AND i.status != 'cancelled'
-                    AND ii.metadata IS NOT NULL
-                `;
-                
-                const existingItemsResult = await client.query(existingItemsQuery, [
-                    clientData.id, 
-                    billingMonth,
-                    billingYear
-                ]);
-                
-                existingItemsResult.rows.forEach(row => {
-                    invoicedObjectsSet.add(row.object_id);
-                });
-            } catch (error) {
-                console.error("Error fetching existing invoice items:", error);
-                // Продовжуємо виконання навіть при помилці
             }
             
             // Створюємо позиції рахунку
