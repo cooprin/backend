@@ -220,7 +220,7 @@ class TariffService {
             let paramIndex = 1;
 
             const fieldsToUpdate = [
-                'name', 'description', 'price', 'is_active'
+                'name', 'description', 'is_active'
             ];
 
             for (const field of fieldsToUpdate) {
