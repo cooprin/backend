@@ -145,6 +145,51 @@ router.get('/invoices/client/:clientId', authenticate, checkPermission('invoices
     }
 });
 
+router.get('/invoices/check-existence', authenticate, checkPermission('invoices.read'), async (req, res) => {
+    try {
+      const { objectId, year, month } = req.query;
+      
+      // Перевірка наявності рахунку для об'єкта за вказаний період
+      const invoiceQuery = `
+        SELECT i.id, i.invoice_number
+        FROM services.invoices i
+        JOIN services.invoice_items ii ON i.id = ii.invoice_id
+        JOIN services.services s ON ii.service_id = s.id,
+        jsonb_array_elements(ii.metadata->'objects') as obj_data
+        WHERE i.billing_year = $1 
+        AND i.billing_month = $2
+        AND i.status = 'issued'
+        AND s.service_type = 'object_based'
+        AND obj_data->>'id' = $3
+        LIMIT 1
+      `;
+      
+      const result = await pool.query(invoiceQuery, [
+        parseInt(year), 
+        parseInt(month), 
+        objectId
+      ]);
+      
+      if (result.rows.length > 0) {
+        res.json({
+          exists: true,
+          invoice_number: result.rows[0].invoice_number,
+          invoice_id: result.rows[0].id
+        });
+      } else {
+        res.json({
+          exists: false
+        });
+      }
+    } catch (error) {
+      console.error('Error checking invoice existence:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Помилка перевірки наявності рахунку'
+      });
+    }
+  });
+
 // Отримання деталей рахунку
 router.get('/invoices/:id', authenticate, checkPermission('invoices.read'), async (req, res) => {
     try {
@@ -544,51 +589,8 @@ router.get('/invoices/check-pending/:clientId', authenticate, checkPermission('i
         });
     }
 });
-// Додати цей маршрут в routes/services.js або подібний файл
-router.get('/invoices/check-existence', authenticate, checkPermission('invoices.read'), async (req, res) => {
-    try {
-      const { objectId, year, month } = req.query;
-      
-      // Перевірка наявності рахунку для об'єкта за вказаний період
-      const invoiceQuery = `
-        SELECT i.id, i.invoice_number
-        FROM services.invoices i
-        JOIN services.invoice_items ii ON i.id = ii.invoice_id
-        JOIN services.services s ON ii.service_id = s.id,
-        jsonb_array_elements(ii.metadata->'objects') as obj_data
-        WHERE i.billing_year = $1 
-        AND i.billing_month = $2
-        AND i.status = 'issued'
-        AND s.service_type = 'object_based'
-        AND obj_data->>'id' = $3
-        LIMIT 1
-      `;
-      
-      const result = await pool.query(invoiceQuery, [
-        parseInt(year), 
-        parseInt(month), 
-        objectId
-      ]);
-      
-      if (result.rows.length > 0) {
-        res.json({
-          exists: true,
-          invoice_number: result.rows[0].invoice_number,
-          invoice_id: result.rows[0].id
-        });
-      } else {
-        res.json({
-          exists: false
-        });
-      }
-    } catch (error) {
-      console.error('Error checking invoice existence:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Помилка перевірки наявності рахунку'
-      });
-    }
-  });
+
+
 
 // Генерація рахунків за певний період
 router.post('/invoices/generate', authenticate, checkPermission('invoices.create'), async (req, res) => {
