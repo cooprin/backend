@@ -654,6 +654,26 @@ static async getAvailablePaymentPeriods(objectId, count = 12) {
         const paidPeriodsResult = await pool.query(paidPeriodsQuery, [objectId]);
         const paidPeriods = paidPeriodsResult.rows;
         
+        // Отримуємо інформацію про виставлені рахунки для об'єкта
+        const invoicesQuery = `
+            SELECT 
+                i.billing_month,
+                i.billing_year,
+                i.id as invoice_id,
+                i.invoice_number,
+                i.status
+            FROM services.invoices i
+            JOIN services.invoice_items ii ON i.id = ii.invoice_id
+            JOIN services.services s ON ii.service_id = s.id,
+            jsonb_array_elements(ii.metadata->'objects') as obj_data
+            WHERE obj_data->>'id' = $1
+            AND s.service_type = 'object_based'
+            AND i.status = 'issued'
+        `;
+        
+        const invoicesResult = await pool.query(invoicesQuery, [objectId]);
+        const existingInvoices = invoicesResult.rows;
+        
         // Визначаємо початкову дату аналізу (початок власності або найстаріший тариф)
         let startDate;
         
@@ -701,6 +721,11 @@ static async getAvailablePaymentPeriods(objectId, count = 12) {
                 period.billing_year === year && period.billing_month === month
             );
             
+            // Перевіряємо, чи є виставлений рахунок за цей період
+            const existingInvoice = existingInvoices.find(invoice =>
+                invoice.billing_year == year && invoice.billing_month == month
+            );
+            
             // Додаємо період, якщо є активний тариф і період не оплачений
             if (activeTariff && !isPaid) {
                 allPeriods.push({
@@ -709,7 +734,10 @@ static async getAvailablePaymentPeriods(objectId, count = 12) {
                     tariff_id: activeTariff.tariff_id,
                     tariff_name: activeTariff.tariff_name,
                     price: activeTariff.price,
-                    is_paid: false
+                    is_paid: false,
+                    has_invoice: !!existingInvoice,
+                    invoice_id: existingInvoice ? existingInvoice.invoice_id : null,
+                    invoice_number: existingInvoice ? existingInvoice.invoice_number : null
                 });
             }
             
