@@ -126,9 +126,7 @@ router.post('/:id/change-owner', authenticate, checkPermission('wialon_objects.u
         const updatedObject = await WialonService.changeOwner(
             client, 
             req.params.id, 
-            client_id,
-            notes,
-            operation_date,
+            req.body,
             req.user.userId,
             req
         );
