@@ -297,28 +297,28 @@ class WialonService {
                 'SELECT * FROM wialon.objects WHERE id = $1',
                 [id]
             );
-
+    
             if (currentObject.rows.length === 0) {
                 throw new Error('Об\'єкт не знайдений');
             }
-
+    
             const oldData = currentObject.rows[0];
-
+    
             // Перевірка унікальності Wialon ID
             if (data.wialon_id && data.wialon_id !== oldData.wialon_id) {
                 const existingObject = await client.query(
                     'SELECT id FROM wialon.objects WHERE wialon_id = $1 AND id != $2',
                     [data.wialon_id, id]
                 );
-
+    
                 if (existingObject.rows.length > 0) {
                     throw new Error('Об\'єкт з таким Wialon ID вже існує');
                 }
             }
-
+    
             // Використовуємо вказану дату операції або поточну дату
             const effectiveDate = data.operation_date ? new Date(data.operation_date) : new Date();
-
+    
             // Якщо змінюється клієнт, додаємо запис в історію власників
             if (data.client_id && data.client_id !== oldData.client_id) {
                 // Закриваємо попередній запис
@@ -328,7 +328,7 @@ class WialonService {
                      WHERE object_id = $2 AND end_date IS NULL`,
                     [effectiveDate, id]
                 );
-
+    
                 // Додаємо новий запис
                 await client.query(
                     `INSERT INTO wialon.object_ownership_history (
@@ -338,27 +338,27 @@ class WialonService {
                     [id, data.client_id, effectiveDate, userId]
                 );
             }
-
+    
             // Підготовка оновлених даних
             const updateFields = [];
             const updateValues = [];
             let paramIndex = 1;
-
+    
             const fieldsToUpdate = [
                 'name', 'wialon_id', 'description', 'client_id', 'status'
             ];
-
+    
             for (const field of fieldsToUpdate) {
                 if (data[field] !== undefined) {
                     updateFields.push(`${field} = $${paramIndex++}`);
                     updateValues.push(data[field]);
                 }
             }
-
+    
             updateFields.push(`updated_at = $${paramIndex++}`);
             updateValues.push(effectiveDate);
             updateValues.push(id);
-
+    
             // Оновлення об'єкта
             const result = await client.query(
                 `UPDATE wialon.objects 
@@ -367,20 +367,40 @@ class WialonService {
                  RETURNING *`,
                 updateValues
             );
-
+    
             // Оновлення тарифу, якщо вказано
             if (data.tariff_id) {
                 // Використовуємо вказану дату для тарифу або дату операції
                 const tariffDate = data.tariff_effective_from ? 
                     new Date(data.tariff_effective_from) : effectiveDate;
-
+    
+                // Перевіряємо, чи період вже оплачений
+                const effectiveMonth = tariffDate.getMonth() + 1;
+                const effectiveYear = tariffDate.getFullYear();
+    
+                const isPeriodPaidResult = await client.query(
+                    'SELECT billing.is_period_paid($1, $2, $3) as is_paid',
+                    [id, effectiveYear, effectiveMonth]
+                );
+    
+                if (isPeriodPaidResult.rows[0].is_paid) {
+                    // Отримуємо оптимальну дату
+                    const optimalDateResult = await client.query(
+                        'SELECT billing.get_optimal_tariff_change_date($1) as optimal_date',
+                        [id]
+                    );
+                    const optimalDate = optimalDateResult.rows[0].optimal_date;
+                    
+                    throw new Error(`Період ${effectiveMonth}/${effectiveYear} вже оплачений. Рекомендована дата початку дії: ${optimalDate.toLocaleDateString()}`);
+                }
+    
                 // Перевіряємо чи є вже активний тариф
                 const currentTariff = await client.query(
                     `SELECT id FROM billing.object_tariffs 
                      WHERE object_id = $1 AND effective_to IS NULL`,
                     [id]
                 );
-
+    
                 // Якщо є активний тариф, закриваємо його
                 if (currentTariff.rows.length > 0) {
                     await client.query(
@@ -390,22 +410,23 @@ class WialonService {
                         [tariffDate, currentTariff.rows[0].id]
                     );
                 }
-
+    
                 // Додаємо новий тариф
                 await client.query(
                     `INSERT INTO billing.object_tariffs (
-                        object_id, tariff_id, effective_from, created_by
+                        object_id, tariff_id, effective_from, notes, created_by
                     )
-                    VALUES ($1, $2, $3, $4)`,
+                    VALUES ($1, $2, $3, $4, $5)`,
                     [
                         id, 
                         data.tariff_id, 
                         tariffDate, 
+                        data.tariff_notes || null, 
                         userId
                     ]
                 );
             }
-
+    
             // Оновлення атрибутів, якщо вказано
             if (data.attributes && typeof data.attributes === 'object') {
                 // Видалення всіх атрибутів
@@ -413,7 +434,7 @@ class WialonService {
                     'DELETE FROM wialon.object_attributes WHERE object_id = $1',
                     [id]
                 );
-
+    
                 // Додавання нових атрибутів
                 for (const [key, value] of Object.entries(data.attributes)) {
                     await client.query(
@@ -425,7 +446,7 @@ class WialonService {
                     );
                 }
             }
-
+    
             // Аудит
             await AuditService.log({
                 userId,
@@ -440,7 +461,7 @@ class WialonService {
                 auditType: AUDIT_TYPES.BUSINESS,
                 req
             });
-
+    
             return result.rows[0];
         } catch (error) {
             throw error;
