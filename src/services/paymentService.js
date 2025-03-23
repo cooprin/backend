@@ -1201,8 +1201,8 @@ static async getOverdueClients() {
             SELECT 
                 c.id,
                 c.name,
-                COUNT(DISTINCT o.id) as "objectsCount", -- змінюємо на objectsCount з подвійними лапками
-                COALESCE(SUM(t.price), 0) as totalOverdue
+                COUNT(DISTINCT o.id) as "objectsCount",
+                COALESCE(SUM(t.price), 0) as "totalOverdue"  -- Змінено на "totalOverdue" з подвійними лапками
             FROM clients.clients c
             JOIN wialon.objects o ON c.id = o.client_id
             JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
@@ -1216,7 +1216,7 @@ static async getOverdueClients() {
                 AND opr.status IN ('paid', 'partial')
             )
             GROUP BY c.id, c.name
-            ORDER BY totalOverdue DESC
+            ORDER BY "totalOverdue" DESC  -- Також змінено тут
             LIMIT 20
         `;
 
