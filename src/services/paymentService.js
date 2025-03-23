@@ -1201,7 +1201,7 @@ static async getOverdueClients() {
             SELECT 
                 c.id,
                 c.name,
-                COUNT(DISTINCT o.id) as objectsCount,
+                COUNT(DISTINCT o.id) as "objectsCount", -- змінюємо на objectsCount з подвійними лапками
                 COALESCE(SUM(t.price), 0) as totalOverdue
             FROM clients.clients c
             JOIN wialon.objects o ON c.id = o.client_id
