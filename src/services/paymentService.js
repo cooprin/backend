@@ -1108,51 +1108,110 @@ static async getAvailablePaymentPeriods(objectId, count = 12) {
     // Отримання метрик прострочених платежів
 static async getOverdueMetrics() {
     try {
-        // Загальна сума прострочених платежів
+        // Загальна сума прострочених платежів (включно з попередніми періодами)
         const totalAmountQuery = `
-            SELECT COALESCE(SUM(t.price), 0) as total_amount
-            FROM wialon.objects o
-            JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
-            JOIN billing.tariffs t ON ot.tariff_id = t.id
-            WHERE o.status = 'active'
-            AND NOT EXISTS (
-                SELECT 1 FROM billing.object_payment_records opr
-                WHERE opr.object_id = o.id
-                AND opr.billing_year = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND opr.billing_month = EXTRACT(MONTH FROM CURRENT_DATE)
-                AND opr.status IN ('paid', 'partial')
+            WITH overdue_periods AS (
+                -- Генеруємо всі періоди з початку року до поточного місяця
+                SELECT 
+                    o.id as object_id,
+                    generate_series(
+                        date_trunc('year', current_date), 
+                        date_trunc('month', current_date),
+                        interval '1 month'
+                    ) as period_date,
+                    t.price
+                FROM wialon.objects o
+                JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
+                JOIN billing.tariffs t ON ot.tariff_id = t.id
+                WHERE o.status = 'active'
+            ),
+            paid_periods AS (
+                -- Всі оплачені періоди
+                SELECT 
+                    opr.object_id,
+                    make_date(opr.billing_year, opr.billing_month, 1) as period_date
+                FROM billing.object_payment_records opr
+                WHERE opr.status IN ('paid', 'partial')
             )
+            SELECT COALESCE(SUM(op.price), 0) as total_amount
+            FROM overdue_periods op
+            WHERE NOT EXISTS (
+                -- Перевіряємо, чи період оплачений
+                SELECT 1 FROM paid_periods pp
+                WHERE pp.object_id = op.object_id AND pp.period_date = op.period_date
+            )
+            AND op.period_date < date_trunc('month', current_date + interval '1 month')
         `;
 
-        // Кількість клієнтів з простроченими платежами
+        // Кількість клієнтів з простроченими платежами (включно з попередніми періодами)
         const clientsCountQuery = `
-            SELECT COUNT(DISTINCT o.client_id) as clients_count
-            FROM wialon.objects o
-            WHERE o.status = 'active'
-            AND NOT EXISTS (
-                SELECT 1 FROM billing.object_payment_records opr
-                WHERE opr.object_id = o.id
-                AND opr.billing_year = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND opr.billing_month = EXTRACT(MONTH FROM CURRENT_DATE)
-                AND opr.status IN ('paid', 'partial')
+            WITH overdue_periods AS (
+                -- Генеруємо всі періоди з початку року до поточного місяця
+                SELECT 
+                    o.id as object_id,
+                    o.client_id,
+                    generate_series(
+                        date_trunc('year', current_date), 
+                        date_trunc('month', current_date),
+                        interval '1 month'
+                    ) as period_date
+                FROM wialon.objects o
+                WHERE o.status = 'active'
+            ),
+            paid_periods AS (
+                -- Всі оплачені періоди
+                SELECT 
+                    opr.object_id,
+                    make_date(opr.billing_year, opr.billing_month, 1) as period_date
+                FROM billing.object_payment_records opr
+                WHERE opr.status IN ('paid', 'partial')
             )
+            SELECT COUNT(DISTINCT op.client_id) as clients_count
+            FROM overdue_periods op
+            WHERE NOT EXISTS (
+                -- Перевіряємо, чи період оплачений
+                SELECT 1 FROM paid_periods pp
+                WHERE pp.object_id = op.object_id AND pp.period_date = op.period_date
+            )
+            AND op.period_date < date_trunc('month', current_date + interval '1 month')
         `;
 
-        // Кількість об'єктів з простроченими платежами
+        // Кількість об'єктів з простроченими платежами (включно з попередніми періодами)
         const objectsCountQuery = `
-            SELECT COUNT(o.id) as objects_count
-            FROM wialon.objects o
-            WHERE o.status = 'active'
-            AND NOT EXISTS (
-                SELECT 1 FROM billing.object_payment_records opr
-                WHERE opr.object_id = o.id
-                AND opr.billing_year = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND opr.billing_month = EXTRACT(MONTH FROM CURRENT_DATE)
-                AND opr.status IN ('paid', 'partial')
+            WITH overdue_periods AS (
+                -- Генеруємо всі періоди з початку року до поточного місяця
+                SELECT 
+                    o.id as object_id,
+                    generate_series(
+                        date_trunc('year', current_date), 
+                        date_trunc('month', current_date),
+                        interval '1 month'
+                    ) as period_date
+                FROM wialon.objects o
+                WHERE o.status = 'active'
+            ),
+            paid_periods AS (
+                -- Всі оплачені періоди
+                SELECT 
+                    opr.object_id,
+                    make_date(opr.billing_year, opr.billing_month, 1) as period_date
+                FROM billing.object_payment_records opr
+                WHERE opr.status IN ('paid', 'partial')
+            ),
+            overdue_objects AS (
+                SELECT DISTINCT op.object_id
+                FROM overdue_periods op
+                WHERE NOT EXISTS (
+                    -- Перевіряємо, чи період оплачений
+                    SELECT 1 FROM paid_periods pp
+                    WHERE pp.object_id = op.object_id AND pp.period_date = op.period_date
+                )
+                AND op.period_date < date_trunc('month', current_date + interval '1 month')
             )
+            SELECT COUNT(object_id) as objects_count FROM overdue_objects
         `;
 
-        // Відсоток оплачених періодів
+        // Відсоток оплачених періодів залишаємо як є
         const paymentRateQuery = `
             WITH total_objects AS (
                 SELECT COUNT(id) as count
@@ -1194,29 +1253,59 @@ static async getOverdueMetrics() {
     }
 }
 
-// Отримання клієнтів з простроченими платежами
+// Отримання клієнтів з простроченими платежами (включно з попередніми періодами)
 static async getOverdueClients() {
     try {
         const query = `
-            SELECT 
-                c.id,
-                c.name,
-                COUNT(DISTINCT o.id) as "objectsCount",
-                COALESCE(SUM(t.price), 0) as "totalOverdue"  -- Змінено на "totalOverdue" з подвійними лапками
-            FROM clients.clients c
-            JOIN wialon.objects o ON c.id = o.client_id
-            JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
-            JOIN billing.tariffs t ON ot.tariff_id = t.id
-            WHERE o.status = 'active'
-            AND NOT EXISTS (
-                SELECT 1 FROM billing.object_payment_records opr
-                WHERE opr.object_id = o.id
-                AND opr.billing_year = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND opr.billing_month = EXTRACT(MONTH FROM CURRENT_DATE)
-                AND opr.status IN ('paid', 'partial')
+            WITH overdue_periods AS (
+                -- Генеруємо всі періоди з початку року до поточного місяця
+                SELECT 
+                    o.id as object_id,
+                    o.client_id,
+                    c.name as client_name,
+                    generate_series(
+                        date_trunc('year', current_date), 
+                        date_trunc('month', current_date),
+                        interval '1 month'
+                    ) as period_date,
+                    t.price
+                FROM wialon.objects o
+                JOIN clients.clients c ON o.client_id = c.id
+                JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
+                JOIN billing.tariffs t ON ot.tariff_id = t.id
+                WHERE o.status = 'active'
+            ),
+            paid_periods AS (
+                -- Всі оплачені періоди
+                SELECT 
+                    opr.object_id,
+                    make_date(opr.billing_year, opr.billing_month, 1) as period_date
+                FROM billing.object_payment_records opr
+                WHERE opr.status IN ('paid', 'partial')
+            ),
+            overdue_amounts AS (
+                SELECT 
+                    op.client_id,
+                    op.client_name,
+                    op.object_id,
+                    SUM(op.price) as total_overdue
+                FROM overdue_periods op
+                WHERE NOT EXISTS (
+                    -- Перевіряємо, чи період оплачений
+                    SELECT 1 FROM paid_periods pp
+                    WHERE pp.object_id = op.object_id AND pp.period_date = op.period_date
+                )
+                AND op.period_date < date_trunc('month', current_date + interval '1 month')
+                GROUP BY op.client_id, op.client_name, op.object_id
             )
-            GROUP BY c.id, c.name
-            ORDER BY "totalOverdue" DESC  -- Також змінено тут
+            SELECT 
+                oa.client_id as id,
+                oa.client_name as name,
+                COUNT(DISTINCT oa.object_id) as "objectsCount",
+                SUM(oa.total_overdue) as "totalOverdue"
+            FROM overdue_amounts oa
+            GROUP BY oa.client_id, oa.client_name
+            ORDER BY "totalOverdue" DESC
             LIMIT 20
         `;
 
@@ -1228,31 +1317,61 @@ static async getOverdueClients() {
     }
 }
 
-// Отримання об'єктів з простроченими платежами
+// Отримання об'єктів з простроченими платежами (включно з попередніми періодами)
 static async getOverdueObjects() {
     try {
         const query = `
-            SELECT 
-                o.id,
-                o.name,
-                o.client_id,
-                c.name as client_name,
-                t.price as amount,
-                EXTRACT(MONTH FROM CURRENT_DATE) as billing_month,
-                EXTRACT(YEAR FROM CURRENT_DATE) as billing_year
-            FROM wialon.objects o
-            JOIN clients.clients c ON o.client_id = c.id
-            JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
-            JOIN billing.tariffs t ON ot.tariff_id = t.id
-            WHERE o.status = 'active'
-            AND NOT EXISTS (
-                SELECT 1 FROM billing.object_payment_records opr
-                WHERE opr.object_id = o.id
-                AND opr.billing_year = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND opr.billing_month = EXTRACT(MONTH FROM CURRENT_DATE)
-                AND opr.status IN ('paid', 'partial')
+            WITH overdue_periods AS (
+                -- Генеруємо всі періоди з початку року до поточного місяця
+                SELECT 
+                    o.id as object_id,
+                    o.name as object_name,
+                    o.client_id,
+                    c.name as client_name,
+                    extract(month from period_date) as billing_month,
+                    extract(year from period_date) as billing_year,
+                    t.id as tariff_id,
+                    t.name as tariff_name,
+                    t.price as amount,
+                    period_date
+                FROM wialon.objects o
+                JOIN clients.clients c ON o.client_id = c.id
+                JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
+                JOIN billing.tariffs t ON ot.tariff_id = t.id,
+                LATERAL (
+                    SELECT generate_series(
+                        date_trunc('year', current_date), 
+                        date_trunc('month', current_date),
+                        interval '1 month'
+                    ) as period_date
+                ) dates
+                WHERE o.status = 'active'
+            ),
+            paid_periods AS (
+                -- Всі оплачені періоди
+                SELECT 
+                    opr.object_id,
+                    make_date(opr.billing_year, opr.billing_month, 1) as period_date
+                FROM billing.object_payment_records opr
+                WHERE opr.status IN ('paid', 'partial')
             )
-            ORDER BY t.price DESC
+            SELECT 
+                op.object_id as id,
+                op.object_name as name,
+                op.client_id,
+                op.client_name,
+                op.billing_month::int,
+                op.billing_year::int,
+                op.amount,
+                op.period_date
+            FROM overdue_periods op
+            WHERE NOT EXISTS (
+                -- Перевіряємо, чи період оплачений
+                SELECT 1 FROM paid_periods pp
+                WHERE pp.object_id = op.object_id AND pp.period_date = op.period_date
+            )
+            AND op.period_date < date_trunc('month', current_date + interval '1 month')
+            ORDER BY op.period_date ASC, op.amount DESC
             LIMIT 50
         `;
 
