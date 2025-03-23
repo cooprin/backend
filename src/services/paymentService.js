@@ -1105,6 +1105,220 @@ static async getAvailablePaymentPeriods(objectId, count = 12) {
         const buffer = await workbook.xlsx.writeBuffer();
         return buffer;
     }
+    // Отримання метрик прострочених платежів
+static async getOverdueMetrics() {
+    try {
+        // Загальна сума прострочених платежів
+        const totalAmountQuery = `
+            SELECT COALESCE(SUM(t.price), 0) as total_amount
+            FROM wialon.objects o
+            JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
+            JOIN billing.tariffs t ON ot.tariff_id = t.id
+            WHERE o.status = 'active'
+            AND NOT EXISTS (
+                SELECT 1 FROM billing.object_payment_records opr
+                WHERE opr.object_id = o.id
+                AND opr.billing_year = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND opr.billing_month = EXTRACT(MONTH FROM CURRENT_DATE)
+                AND opr.status IN ('paid', 'partial')
+            )
+        `;
+
+        // Кількість клієнтів з простроченими платежами
+        const clientsCountQuery = `
+            SELECT COUNT(DISTINCT o.client_id) as clients_count
+            FROM wialon.objects o
+            WHERE o.status = 'active'
+            AND NOT EXISTS (
+                SELECT 1 FROM billing.object_payment_records opr
+                WHERE opr.object_id = o.id
+                AND opr.billing_year = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND opr.billing_month = EXTRACT(MONTH FROM CURRENT_DATE)
+                AND opr.status IN ('paid', 'partial')
+            )
+        `;
+
+        // Кількість об'єктів з простроченими платежами
+        const objectsCountQuery = `
+            SELECT COUNT(o.id) as objects_count
+            FROM wialon.objects o
+            WHERE o.status = 'active'
+            AND NOT EXISTS (
+                SELECT 1 FROM billing.object_payment_records opr
+                WHERE opr.object_id = o.id
+                AND opr.billing_year = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND opr.billing_month = EXTRACT(MONTH FROM CURRENT_DATE)
+                AND opr.status IN ('paid', 'partial')
+            )
+        `;
+
+        // Відсоток оплачених періодів
+        const paymentRateQuery = `
+            WITH total_objects AS (
+                SELECT COUNT(id) as count
+                FROM wialon.objects
+                WHERE status = 'active'
+            ),
+            paid_objects AS (
+                SELECT COUNT(DISTINCT o.id) as count
+                FROM wialon.objects o
+                JOIN billing.object_payment_records opr ON o.id = opr.object_id
+                WHERE o.status = 'active'
+                AND opr.billing_year = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND opr.billing_month = EXTRACT(MONTH FROM CURRENT_DATE)
+                AND opr.status IN ('paid', 'partial')
+            )
+            SELECT 
+                CASE 
+                    WHEN (SELECT count FROM total_objects) = 0 THEN 100
+                    ELSE ROUND((SELECT count FROM paid_objects) * 100.0 / (SELECT count FROM total_objects))
+                END as payment_rate
+        `;
+
+        const [totalAmountResult, clientsCountResult, objectsCountResult, paymentRateResult] = await Promise.all([
+            pool.query(totalAmountQuery),
+            pool.query(clientsCountQuery),
+            pool.query(objectsCountQuery),
+            pool.query(paymentRateQuery)
+        ]);
+
+        return {
+            totalAmount: parseFloat(totalAmountResult.rows[0].total_amount || 0),
+            clientsCount: parseInt(clientsCountResult.rows[0].clients_count || 0),
+            objectsCount: parseInt(objectsCountResult.rows[0].objects_count || 0),
+            paymentRate: parseInt(paymentRateResult.rows[0].payment_rate || 0)
+        };
+    } catch (error) {
+        console.error('Error getting overdue metrics:', error);
+        throw error;
+    }
+}
+
+// Отримання клієнтів з простроченими платежами
+static async getOverdueClients() {
+    try {
+        const query = `
+            SELECT 
+                c.id,
+                c.name,
+                COUNT(DISTINCT o.id) as objectsCount,
+                COALESCE(SUM(t.price), 0) as totalOverdue
+            FROM clients.clients c
+            JOIN wialon.objects o ON c.id = o.client_id
+            JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
+            JOIN billing.tariffs t ON ot.tariff_id = t.id
+            WHERE o.status = 'active'
+            AND NOT EXISTS (
+                SELECT 1 FROM billing.object_payment_records opr
+                WHERE opr.object_id = o.id
+                AND opr.billing_year = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND opr.billing_month = EXTRACT(MONTH FROM CURRENT_DATE)
+                AND opr.status IN ('paid', 'partial')
+            )
+            GROUP BY c.id, c.name
+            ORDER BY totalOverdue DESC
+            LIMIT 20
+        `;
+
+        const result = await pool.query(query);
+        return result.rows;
+    } catch (error) {
+        console.error('Error getting overdue clients:', error);
+        throw error;
+    }
+}
+
+// Отримання об'єктів з простроченими платежами
+static async getOverdueObjects() {
+    try {
+        const query = `
+            SELECT 
+                o.id,
+                o.name,
+                o.client_id,
+                c.name as client_name,
+                t.price as amount,
+                EXTRACT(MONTH FROM CURRENT_DATE) as billing_month,
+                EXTRACT(YEAR FROM CURRENT_DATE) as billing_year
+            FROM wialon.objects o
+            JOIN clients.clients c ON o.client_id = c.id
+            JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
+            JOIN billing.tariffs t ON ot.tariff_id = t.id
+            WHERE o.status = 'active'
+            AND NOT EXISTS (
+                SELECT 1 FROM billing.object_payment_records opr
+                WHERE opr.object_id = o.id
+                AND opr.billing_year = EXTRACT(YEAR FROM CURRENT_DATE)
+                AND opr.billing_month = EXTRACT(MONTH FROM CURRENT_DATE)
+                AND opr.status IN ('paid', 'partial')
+            )
+            ORDER BY t.price DESC
+            LIMIT 50
+        `;
+
+        const result = await pool.query(query);
+        return result.rows;
+    } catch (error) {
+        console.error('Error getting overdue objects:', error);
+        throw error;
+    }
+}
+
+// Отримання щомісячних даних про прострочені платежі
+static async getOverdueByMonth() {
+    try {
+        // Отримуємо дані за останні 6 місяців
+        const query = `
+            WITH months AS (
+                SELECT 
+                    generate_series(
+                        date_trunc('month', current_date) - interval '5 months',
+                        date_trunc('month', current_date),
+                        interval '1 month'
+                    ) as month_start
+            ),
+            monthly_data AS (
+                SELECT 
+                    EXTRACT(MONTH FROM m.month_start) as month,
+                    EXTRACT(YEAR FROM m.month_start) as year,
+                    (
+                        SELECT COALESCE(SUM(t.price), 0)
+                        FROM wialon.objects o
+                        JOIN billing.object_tariffs ot ON o.id = ot.object_id 
+                        JOIN billing.tariffs t ON ot.tariff_id = t.id
+                        WHERE o.status = 'active'
+                        AND ot.effective_from <= m.month_start + interval '1 month' - interval '1 day'
+                        AND (ot.effective_to IS NULL OR ot.effective_to >= m.month_start)
+                        AND NOT EXISTS (
+                            SELECT 1 FROM billing.object_payment_records opr
+                            WHERE opr.object_id = o.id
+                            AND opr.billing_year = EXTRACT(YEAR FROM m.month_start)
+                            AND opr.billing_month = EXTRACT(MONTH FROM m.month_start)
+                            AND opr.status IN ('paid', 'partial')
+                        )
+                    ) as amount,
+                    (
+                        SELECT COALESCE(SUM(opr.amount), 0)
+                        FROM billing.object_payment_records opr
+                        JOIN wialon.objects o ON opr.object_id = o.id
+                        WHERE opr.billing_year = EXTRACT(YEAR FROM m.month_start)
+                        AND opr.billing_month = EXTRACT(MONTH FROM m.month_start)
+                        AND opr.status IN ('paid', 'partial')
+                        AND o.status = 'active'
+                    ) as paidAmount
+                FROM months m
+            )
+            SELECT * FROM monthly_data
+            ORDER BY year, month
+        `;
+
+        const result = await pool.query(query);
+        return result.rows;
+    } catch (error) {
+        console.error('Error getting monthly overdue data:', error);
+        throw error;
+    }
+}
 }
 
 module.exports = PaymentService;

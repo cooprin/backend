@@ -318,4 +318,72 @@ router.delete('/:id', authenticate, checkPermission('payments.delete'), async (r
     }
 });
 
+// Отримання метрик прострочених платежів
+router.get('/statistics/overdue/metrics', authenticate, checkPermission('payments.read'), async (req, res) => {
+    try {
+        const metrics = await PaymentService.getOverdueMetrics();
+        res.json({
+            success: true,
+            metrics
+        });
+    } catch (error) {
+        console.error('Error fetching overdue metrics:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні метрик прострочених платежів'
+        });
+    }
+});
+
+// Отримання клієнтів з простроченими платежами
+router.get('/statistics/overdue/clients', authenticate, checkPermission('payments.read'), async (req, res) => {
+    try {
+        const clients = await PaymentService.getOverdueClients();
+        res.json({
+            success: true,
+            clients
+        });
+    } catch (error) {
+        console.error('Error fetching overdue clients:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні клієнтів з простроченими платежами'
+        });
+    }
+});
+
+// Отримання об'єктів з простроченими платежами
+router.get('/statistics/overdue/objects', authenticate, checkPermission('payments.read'), async (req, res) => {
+    try {
+        const objects = await PaymentService.getOverdueObjects();
+        res.json({
+            success: true,
+            objects
+        });
+    } catch (error) {
+        console.error('Error fetching overdue objects:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні об\'єктів з простроченими платежами'
+        });
+    }
+});
+
+// Отримання щомісячних даних про прострочені платежі
+router.get('/statistics/overdue/monthly', authenticate, checkPermission('payments.read'), async (req, res) => {
+    try {
+        const monthlyData = await PaymentService.getOverdueByMonth();
+        res.json({
+            success: true,
+            monthlyData
+        });
+    } catch (error) {
+        console.error('Error fetching monthly overdue data:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні щомісячних даних про прострочені платежі'
+        });
+    }
+});
+
 module.exports = router;
