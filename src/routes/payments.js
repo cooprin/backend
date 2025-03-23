@@ -319,7 +319,7 @@ router.delete('/:id', authenticate, checkPermission('payments.delete'), async (r
 });
 
 // Отримання метрик прострочених платежів
-router.get('/statistics/overdue/metrics', authenticate, checkPermission('payments.read'), async (req, res) => {
+router.get('/overdue/metrics', authenticate, checkPermission('payments.read'), async (req, res) => {
     try {
         const metrics = await PaymentService.getOverdueMetrics();
         res.json({
@@ -336,7 +336,7 @@ router.get('/statistics/overdue/metrics', authenticate, checkPermission('payment
 });
 
 // Отримання клієнтів з простроченими платежами
-router.get('/statistics/overdue/clients', authenticate, checkPermission('payments.read'), async (req, res) => {
+router.get('/overdue/clients', authenticate, checkPermission('payments.read'), async (req, res) => {
     try {
         const clients = await PaymentService.getOverdueClients();
         res.json({
@@ -353,7 +353,7 @@ router.get('/statistics/overdue/clients', authenticate, checkPermission('payment
 });
 
 // Отримання об'єктів з простроченими платежами
-router.get('/statistics/overdue/objects', authenticate, checkPermission('payments.read'), async (req, res) => {
+router.get('/overdue/objects', authenticate, checkPermission('payments.read'), async (req, res) => {
     try {
         const objects = await PaymentService.getOverdueObjects();
         res.json({
@@ -370,7 +370,7 @@ router.get('/statistics/overdue/objects', authenticate, checkPermission('payment
 });
 
 // Отримання щомісячних даних про прострочені платежі
-router.get('/statistics/overdue/monthly', authenticate, checkPermission('payments.read'), async (req, res) => {
+router.get('/overdue/monthly', authenticate, checkPermission('payments.read'), async (req, res) => {
     try {
         const monthlyData = await PaymentService.getOverdueByMonth();
         res.json({
