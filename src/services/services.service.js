@@ -556,7 +556,6 @@ class ServiceService {
         return result.rows;
     }
 
-    // Створення рахунку
 // Створення рахунку
 static async createInvoice(client, data, userId, req) {
     try {
@@ -585,21 +584,8 @@ static async createInvoice(client, data, userId, req) {
         const year = billing_year || invoiceDate.getFullYear();
         
         // Отримуємо останній номер рахунку
-        const lastInvoiceNumber = await client.query(
-            `SELECT invoice_number FROM services.invoices
-             WHERE client_id = $1 AND billing_year = $2
-             ORDER BY invoice_number DESC
-             LIMIT 1`,
-            [client_id, year]
-        );
-        
-        let invoiceNumber;
-        if (lastInvoiceNumber.rows.length > 0) {
-            const lastNumber = parseInt(lastInvoiceNumber.rows[0].invoice_number.split('-')[1], 10);
-            invoiceNumber = `${year}-${(lastNumber + 1).toString().padStart(4, '0')}`;
-        } else {
-            invoiceNumber = `${year}-0001`;
-        }
+// Безпечна генерація номера рахунку
+const invoiceNumber = await this.generateInvoiceNumberSafely(client, client_id, year);
 
         // Розрахунок загальної суми
         let totalAmount = 0;
@@ -1636,37 +1622,9 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                 continue;
             }
             
-            // Генеруємо номер рахунку
-            const lastInvoiceNumber = await client.query(
-                `SELECT invoice_number FROM services.invoices
-                 WHERE client_id = $1 AND billing_year = $2
-                 ORDER BY invoice_number DESC
-                 LIMIT 1`,
-                [clientData.id, billingYear]
-            );
-            
-            let invoiceNumber;
-            if (lastInvoiceNumber.rows.length > 0) {
-                try {
-                    const parts = lastInvoiceNumber.rows[0].invoice_number.split('-');
-                    if (parts.length === 2) {
-                        const lastNumber = parseInt(parts[1], 10);
-                        if (!isNaN(lastNumber)) {
-                            invoiceNumber = `${billingYear}-${(lastNumber + 1).toString().padStart(4, '0')}`;
-                        } else {
-                            invoiceNumber = `${billingYear}-0001`;
-                        }
-                    } else {
-                        invoiceNumber = `${billingYear}-0001`;
-                    }
-                } catch(error) {
-                    console.error("Error parsing invoice number:", error);
-                    invoiceNumber = `${billingYear}-0001`;
-                }
-            } else {
-                invoiceNumber = `${billingYear}-0001`;
-            }
-            
+// ЗМІНЕНА ЧАСТИНА: Генерація номеру рахунку більш надійним способом
+// Використовуємо функцію для безпечної генерації номера рахунку
+const invoiceNumber = await this.generateInvoiceNumberSafely(client, clientData.id, billingYear);
             // Створюємо рахунок з примітками про заборгованість
             const invoiceResult = await client.query(
                 `INSERT INTO services.invoices (
@@ -1762,37 +1720,60 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
         throw error;
     }
 }
-}
-// Допоміжна функція для перевірки, чи потрібно нараховувати оплату
-async function shouldChargeForMonth(client, objectId, clientId, billingYear, billingMonth) {
-    const result = await client.query(
-        'SELECT billing.should_charge_for_month($1, $2, $3, $4) as should_charge',
-        [objectId, clientId, billingYear, billingMonth]
-    );
-    return result.rows[0].should_charge;
+// Додайте цей метод до класу ServiceService перед рядком module.exports
+static async generateInvoiceNumberSafely(client, clientId, year) {
+    try {
+      // Використовуємо FOR UPDATE для блокування при читанні, щоб запобігти конкурентним запитам
+      const result = await client.query(
+        `SELECT MAX(COALESCE(
+          NULLIF(
+            REGEXP_REPLACE(invoice_number, '^${year}-', '', 'g'), 
+            ''
+          )::integer, 
+          0
+        )) as max_num
+        FROM services.invoices
+        WHERE client_id = $1 AND billing_year = $2
+        FOR UPDATE`,
+        [clientId, year]
+      );
+      
+      // Отримуємо максимальний номер
+      let maxNum = 0;
+      if (result.rows.length > 0 && result.rows[0].max_num !== null) {
+        maxNum = parseInt(result.rows[0].max_num, 10);
+      }
+      
+      // Генеруємо новий номер
+      const nextNum = maxNum + 1;
+      const invoiceNumber = `${year}-${nextNum.toString().padStart(4, '0')}`;
+      
+      // Перевіряємо, що такого номера ще немає (додаткова перевірка)
+      const checkResult = await client.query(
+        `SELECT id FROM services.invoices WHERE invoice_number = $1`,
+        [invoiceNumber]
+      );
+      
+      // Якщо такий номер вже існує, збільшуємо maxNum і пробуємо ще раз
+      if (checkResult.rows.length > 0) {
+        console.log(`Номер рахунку ${invoiceNumber} вже існує, генеруємо новий`);
+        // Збільшуємо maxNum і пробуємо ще раз, щоб уникнути безкінечної рекурсії
+        return `${year}-${(maxNum + 2).toString().padStart(4, '0')}`;
+      }
+      
+      return invoiceNumber;
+    } catch (error) {
+      console.error('Помилка при генерації номера рахунку:', error);
+      // Якщо сталася помилка, створюємо унікальний номер з використанням timestamp
+      const timestamp = Date.now().toString().slice(-6);
+      return `${year}-${timestamp}`;
+    }
+  }
 }
 
-// Допоміжна функція для генерації номера рахунку
-async function generateInvoiceNumber(client, clientId, year) {
-    // Отримуємо останній номер рахунку
-    const lastInvoiceNumber = await client.query(
-        `SELECT invoice_number FROM services.invoices
-         WHERE client_id = $1 AND billing_year = $2
-         ORDER BY invoice_number DESC
-         LIMIT 1`,
-        [clientId, year]
-    );
-    
-    let invoiceNumber;
-    if (lastInvoiceNumber.rows.length > 0) {
-        const lastNumber = parseInt(lastInvoiceNumber.rows[0].invoice_number.split('-')[1], 10);
-        invoiceNumber = `${year}-${(lastNumber + 1).toString().padStart(4, '0')}`;
-    } else {
-        invoiceNumber = `${year}-0001`;
-    }
-    
-    return invoiceNumber;
-}
+
+
+
 
 
 
