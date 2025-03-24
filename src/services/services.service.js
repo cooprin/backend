@@ -1723,41 +1723,40 @@ const invoiceNumber = await this.generateInvoiceNumberSafely(client, clientData.
 // Додайте цей метод до класу ServiceService перед рядком module.exports
 static async generateInvoiceNumberSafely(client, clientId, year) {
     try {
-      // Запит без агрегатних функцій, але з сортуванням для отримання максимального номера
+      // Використовуємо блокування на рівні транзакції з advisory lock
+      // Це гарантує, що тільки один процес буде генерувати номер одночасно
+      await client.query('SELECT pg_advisory_xact_lock(123456)');
+      
+      // Запит для отримання глобального максимального номера для року
       const result = await client.query(
-        `SELECT invoice_number 
+        `SELECT MAX(CAST(REGEXP_REPLACE(invoice_number, '^${year}-', '', 'g') AS INTEGER)) as max_num
          FROM services.invoices
-         WHERE client_id = $1 AND billing_year = $2
-         ORDER BY CAST(REGEXP_REPLACE(invoice_number, '^${year}-', '', 'g') AS INTEGER) DESC
-         LIMIT 1
-         FOR UPDATE`,
-        [clientId, year]
+         WHERE billing_year = $1`,
+        [year]
       );
       
       // Отримуємо максимальний номер
       let maxNum = 0;
-      if (result.rows.length > 0) {
-        const parts = result.rows[0].invoice_number.split('-');
-        if (parts.length === 2) {
-          maxNum = parseInt(parts[1], 10);
-        }
+      if (result.rows.length > 0 && result.rows[0].max_num !== null) {
+        maxNum = parseInt(result.rows[0].max_num, 10);
       }
       
       // Генеруємо новий номер
       const nextNum = maxNum + 1;
       const invoiceNumber = `${year}-${nextNum.toString().padStart(4, '0')}`;
       
-      // Перевіряємо, що такого номера ще немає (додаткова перевірка)
+      // Додаткова перевірка унікальності
       const checkResult = await client.query(
         `SELECT id FROM services.invoices WHERE invoice_number = $1`,
         [invoiceNumber]
       );
       
-      // Якщо такий номер вже існує, збільшуємо maxNum і пробуємо ще раз
+      // Якщо номер вже існує (що малоймовірно, але можливо), 
+      // генеруємо альтернативний номер на основі timestamp
       if (checkResult.rows.length > 0) {
-        console.log(`Номер рахунку ${invoiceNumber} вже існує, генеруємо новий`);
-        // Збільшуємо maxNum і пробуємо ще раз, щоб уникнути безкінечної рекурсії
-        return `${year}-${(maxNum + 2).toString().padStart(4, '0')}`;
+        console.log(`Номер рахунку ${invoiceNumber} вже існує, генеруємо унікальний альтернативний номер`);
+        const timestamp = Date.now().toString().slice(-6);
+        return `${year}-${timestamp}`;
       }
       
       return invoiceNumber;
