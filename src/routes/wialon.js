@@ -85,7 +85,7 @@ router.put('/:id', authenticate, checkPermission('wialon_objects.update'), async
     try {
         await client.query('BEGIN');
 
-        const updatedObject = await WialonService.updateObject(
+        const result = await WialonService.updateObject(
             client, 
             req.params.id, 
             req.body, 
@@ -97,7 +97,8 @@ router.put('/:id', authenticate, checkPermission('wialon_objects.update'), async
         
         res.json({
             success: true,
-            object: updatedObject
+            object: result.object,
+            warnings: result.warnings // Передаємо попередження на фронтенд
         });
     } catch (error) {
         await client.query('ROLLBACK');
