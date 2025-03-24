@@ -1723,25 +1723,24 @@ const invoiceNumber = await this.generateInvoiceNumberSafely(client, clientData.
 // Додайте цей метод до класу ServiceService перед рядком module.exports
 static async generateInvoiceNumberSafely(client, clientId, year) {
     try {
-      // Використовуємо FOR UPDATE для блокування при читанні, щоб запобігти конкурентним запитам
+      // Запит без агрегатних функцій, але з сортуванням для отримання максимального номера
       const result = await client.query(
-        `SELECT MAX(COALESCE(
-          NULLIF(
-            REGEXP_REPLACE(invoice_number, '^${year}-', '', 'g'), 
-            ''
-          )::integer, 
-          0
-        )) as max_num
-        FROM services.invoices
-        WHERE client_id = $1 AND billing_year = $2
-        FOR UPDATE`,
+        `SELECT invoice_number 
+         FROM services.invoices
+         WHERE client_id = $1 AND billing_year = $2
+         ORDER BY CAST(REGEXP_REPLACE(invoice_number, '^${year}-', '', 'g') AS INTEGER) DESC
+         LIMIT 1
+         FOR UPDATE`,
         [clientId, year]
       );
       
       // Отримуємо максимальний номер
       let maxNum = 0;
-      if (result.rows.length > 0 && result.rows[0].max_num !== null) {
-        maxNum = parseInt(result.rows[0].max_num, 10);
+      if (result.rows.length > 0) {
+        const parts = result.rows[0].invoice_number.split('-');
+        if (parts.length === 2) {
+          maxNum = parseInt(parts[1], 10);
+        }
       }
       
       // Генеруємо новий номер
