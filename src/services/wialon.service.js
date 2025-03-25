@@ -411,8 +411,8 @@ static async updateObject(client, id, data, userId, req) {
             updateValues
         );
 
-        // Оновлення тарифу, якщо вказано
-        if (data.tariff_id) {
+        // Оновлення тарифу, якщо вказано і якщо статус активний
+        if (data.tariff_id && data.status === 'active') {
             // Використовуємо вказану дату для тарифу або дату операції
             const tariffDate = data.tariff_effective_from ? 
                 new Date(data.tariff_effective_from) : effectiveDate;
