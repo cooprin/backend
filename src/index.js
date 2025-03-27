@@ -22,6 +22,9 @@ const wialonRouter = require('./routes/wialon');
 const tariffsRouter = require('./routes/tariffs');
 const servicesRouter = require('./routes/services');
 const paymentsRoutes = require('./routes/payments');
+const companyRouter = require('./routes/company');
+const wialonIntegrationRouter = require('./routes/wialon-integration');
+const invoiceTemplatesRouter = require('./routes/invoice-templates');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -56,6 +59,10 @@ app.use('/wialon', wialonRouter);
 app.use('/tariffs', tariffsRouter);
 app.use('/services', servicesRouter);
 app.use('/billing/payments', paymentsRoutes);
+app.use('/company', companyRouter);
+app.use('/wialon-integration', wialonIntegrationRouter);
+app.use('/invoice-templates', invoiceTemplatesRouter);
+
 
 // Health check endpoint
 app.get('/health', async (req, res) => {

@@ -1055,7 +1055,6 @@ static async getAllInvoices(filters) {
         };
     }
 
-    // Отримання деталей рахунку
 // Отримання деталей рахунку
 static async getInvoiceDetails(id) {
     const query = `
@@ -1622,7 +1621,7 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                 continue;
             }
             
-// ЗМІНЕНА ЧАСТИНА: Генерація номеру рахунку більш надійним способом
+
 // Використовуємо функцію для безпечної генерації номера рахунку
 const invoiceNumber = await this.generateInvoiceNumberSafely(client, clientData.id, billingYear);
             // Створюємо рахунок з примітками про заборгованість
@@ -1767,6 +1766,11 @@ static async generateInvoiceNumberSafely(client, clientId, year) {
       return `${year}-${timestamp}`;
     }
   }
+
+  // Генерація PDF для рахунку
+static async generateInvoicePdf(invoice, templateId = null) {
+    return PDFService.generateInvoicePdf(invoice, templateId);
+}
 }
 
 
