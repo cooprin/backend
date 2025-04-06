@@ -5,15 +5,22 @@ const CompanyService = require('./company.service');
 const InvoiceTemplatesService = require('./invoice-templates.service');
 
 class PDFService {
-    // Генерація PDF для рахунку
 // Генерація PDF для рахунку
 static async generateInvoicePdf(invoice, templateId = null) {
     try {
         // Отримуємо дані компанії
-        const companyData = await CompanyService.getOrganizationDetails();
+        const companyDataRaw = await CompanyService.getOrganizationDetails();
         
-        if (!companyData) {
+        if (!companyDataRaw) {
             throw new Error('Дані компанії не знайдено');
+        }
+        
+        // Створюємо копію даних, щоб не модифікувати оригінал
+        const companyData = {...companyDataRaw};
+        
+        // Додавання повного URL до логотипу, якщо він є
+        if (companyData.logo_path) {
+            companyData.logo_path = `${process.env.API_URL}/uploads/${companyData.logo_path}`;
         }
         
         // Отримуємо шаблон
