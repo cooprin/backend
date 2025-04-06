@@ -4,6 +4,16 @@ ENV NODE_OPTIONS="--max-http-header-size=32768"
 
 WORKDIR /app
 
+# Встановлюємо Chrome і залежності
+RUN apt-get update && apt-get install -y \
+    chromium \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Налаштовуємо змінні для Puppeteer
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
 # Копіюємо package.json і встановлюємо залежності
 COPY package*.json ./
 RUN npm install

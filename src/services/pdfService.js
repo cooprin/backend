@@ -80,7 +80,8 @@ class PDFService {
             // Генерація PDF
             const browser = await puppeteer.launch({
                 args: ['--no-sandbox', '--disable-setuid-sandbox'],
-                headless: 'new'
+                headless: 'new',
+                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium'
             });
             
             const page = await browser.newPage();
