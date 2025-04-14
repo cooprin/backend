@@ -45,7 +45,12 @@ class AuditService {
                     formattedBrowserInfo) : 
                 null;
 
-            const cleanedIpAddress = cleanIPv6(ipAddress || req?.ip);    
+            const cleanedIpAddress = cleanIPv6(
+                    ipAddress || 
+                    req?.headers['x-real-ip'] || 
+                    (req?.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0] : null) ||
+                    req?.ip
+            );    
             const { rows } = await pool.query(
                 `INSERT INTO audit.audit_logs
                  (user_id, action_type, entity_type, entity_id, 
