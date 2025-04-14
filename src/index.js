@@ -27,6 +27,7 @@ const wialonIntegrationRouter = require('./routes/wialon-integration');
 const invoiceTemplatesRouter = require('./routes/invoice-templates');
 
 const app = express();
+app.set('trust proxy', true);
 const port = process.env.PORT || 3000;
 
 // Middleware

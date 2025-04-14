@@ -3,6 +3,23 @@ const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/con
 function cleanIPv6(ip) {
     return ip ? ip.replace('::ffff:', '') : ip;
 }
+function getClientIp(req) {
+    if (!req) return null;
+    
+    // Спочатку перевіряємо X-Real-IP (встановлюється Nginx)
+    if (req.headers['x-real-ip']) {
+        return cleanIPv6(req.headers['x-real-ip']);
+    }
+    
+    // Потім перевіряємо X-Forwarded-For (може містити список IP)
+    if (req.headers['x-forwarded-for']) {
+        const ips = req.headers['x-forwarded-for'].split(',');
+        return cleanIPv6(ips[0].trim());
+    }
+    
+    // Використовуємо req.ip, який тепер має працювати правильно з trust proxy
+    return cleanIPv6(req.ip);
+}
 class AuditService {
     static async log({ 
         userId, 
@@ -45,12 +62,7 @@ class AuditService {
                     formattedBrowserInfo) : 
                 null;
 
-            const cleanedIpAddress = cleanIPv6(
-                    ipAddress || 
-                    req?.headers['x-real-ip'] || 
-                    (req?.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0] : null) ||
-                    req?.ip
-            );    
+            const cleanedIpAddress = ipAddress || (req ? getClientIp(req) : null);   
             const { rows } = await pool.query(
                 `INSERT INTO audit.audit_logs
                  (user_id, action_type, entity_type, entity_id, 
