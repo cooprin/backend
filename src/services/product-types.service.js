@@ -69,16 +69,31 @@ static async getProductTypes(filters) {
     const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
     
     // Оновлений запит з правильним ORDER BY
-    const query = `
-        ${this.getBaseQuery()}
-        ${whereClause}
-        GROUP BY pt.id
-        ORDER BY ${sortByColumn} ${orderDirection}
-        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
-    `;
+    let query, queryParams;
 
+    if (perPage === 'All') {
+        // Запит без обмеження, якщо perPage === 'All'
+        query = `
+            ${this.getBaseQuery()}
+            ${whereClause}
+            GROUP BY pt.id
+            ORDER BY ${sortByColumn} ${orderDirection}
+        `;
+        queryParams = params;
+    } else {
+        // Запит з обмеженням для звичайної пагінації
+        query = `
+            ${this.getBaseQuery()}
+            ${whereClause}
+            GROUP BY pt.id
+            ORDER BY ${sortByColumn} ${orderDirection}
+            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+        `;
+        queryParams = [...params, parseInt(perPage), (parseInt(page) - 1) * parseInt(perPage)];
+    }
+    
     const [productTypes, total] = await Promise.all([
-        pool.query(query, [...params, perPage, (page - 1) * perPage]),
+        pool.query(query, queryParams),
         pool.query(`
             SELECT COUNT(*)
             FROM products.product_types pt
