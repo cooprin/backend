@@ -671,5 +671,40 @@ router.get('/by-model', authenticate, checkPermission('warehouses.read'), async 
         });
     }
 });
+// Отримання неліквідних товарів
+router.get('/non-liquid', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    try {
+        const items = await StockService.getNonLiquidStock(req.query);
+        
+        res.json({
+            success: true,
+            items
+        });
+    } catch (error) {
+        console.error('Error fetching non-liquid stock:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching non-liquid stock'
+        });
+    }
+});
+
+// Отримання прогнозу запасів
+router.get('/forecast', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    try {
+        const forecast = await StockService.getStockForecast(req.query);
+        
+        res.json({
+            success: true,
+            forecast
+        });
+    } catch (error) {
+        console.error('Error fetching stock forecast:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching stock forecast'
+        });
+    }
+});
 
 module.exports = router;
