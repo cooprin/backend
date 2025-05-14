@@ -459,6 +459,198 @@ router.get('/movements/export', authenticate, checkPermission('warehouses.read')
             message: 'Server error while exporting stock movements'
         });
     }
+    
+});
+
+
+// Отримання загальних метрик про запаси
+router.get('/metrics', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    try {
+        const metrics = await StockService.getStockMetrics();
+        
+        res.json({
+            success: true,
+            metrics
+        });
+    } catch (error) {
+        console.error('Error fetching stock metrics:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching stock metrics'
+        });
+    }
+});
+
+// Отримання розподілу запасів по складах
+router.get('/by-warehouse', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    try {
+        const warehouses = await StockService.getStockByWarehouse();
+        
+        res.json({
+            success: true,
+            warehouses
+        });
+    } catch (error) {
+        console.error('Error fetching stock by warehouse:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching stock by warehouse'
+        });
+    }
+});
+
+// Отримання розподілу запасів за типами товарів
+router.get('/by-type', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    try {
+        const types = await StockService.getStockByType();
+        
+        res.json({
+            success: true,
+            types
+        });
+    } catch (error) {
+        console.error('Error fetching stock by type:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching stock by type'
+        });
+    }
+});
+
+// Отримання списку товарів з критично малим залишком
+router.get('/critical', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    try {
+        const { limit = 50 } = req.query;
+        const items = await StockService.getCriticalStock(parseInt(limit));
+        
+        res.json({
+            success: true,
+            items
+        });
+    } catch (error) {
+        console.error('Error fetching critical stock:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching critical stock'
+        });
+    }
+});
+
+// Отримання товарів з малим залишком (для повної таблиці з пагінацією)
+router.get('/low-stock', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    try {
+        const { 
+            page = 1, 
+            perPage = 10,
+            sortBy = 'quantity',
+            descending = false,
+            search = '',
+            warehouse = '',
+            manufacturer = '',
+            model = '',
+            maxQuantity = 10 // За замовчуванням показувати товари з кількістю <= 10
+        } = req.query;
+        
+        // Будуємо умови для WHERE
+        let conditions = ['s.quantity > 0 AND s.quantity <= $1 AND p.is_active = true AND w.is_active = true'];
+        let params = [parseInt(maxQuantity)];
+        let paramIndex = 2;
+        
+        if (search) {
+            conditions.push(`(
+                p.sku ILIKE $${paramIndex} OR 
+                m.name ILIKE $${paramIndex} OR 
+                man.name ILIKE $${paramIndex} OR
+                w.name ILIKE $${paramIndex}
+            )`);
+            params.push(`%${search}%`);
+            paramIndex++;
+        }
+        
+        if (warehouse) {
+            conditions.push(`w.id = $${paramIndex}`);
+            params.push(warehouse);
+            paramIndex++;
+        }
+        
+        if (manufacturer) {
+            conditions.push(`man.id = $${paramIndex}`);
+            params.push(manufacturer);
+            paramIndex++;
+        }
+        
+        if (model) {
+            conditions.push(`m.id = $${paramIndex}`);
+            params.push(model);
+            paramIndex++;
+        }
+        
+        const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+        
+        // Визначаємо сортування
+        const sortMapping = {
+            'sku': 'p.sku',
+            'model_name': 'm.name',
+            'manufacturer_name': 'man.name',
+            'warehouse_name': 'w.name',
+            'quantity': 's.quantity'
+        };
+        
+        const sortByColumn = sortMapping[sortBy] || 's.quantity';
+        const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
+        
+        // Формуємо SQL запит
+        const query = `
+            SELECT 
+                s.id,
+                s.product_id,
+                s.warehouse_id,
+                s.quantity,
+                p.sku,
+                w.name as warehouse_name,
+                m.name as model_name,
+                man.name as manufacturer_name
+            FROM warehouses.stock s
+            JOIN warehouses.warehouses w ON s.warehouse_id = w.id
+            JOIN products.products p ON s.product_id = p.id
+            JOIN products.models m ON p.model_id = m.id
+            JOIN products.manufacturers man ON m.manufacturer_id = man.id
+            ${whereClause}
+            ORDER BY ${sortByColumn} ${orderDirection}
+            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+        `;
+        
+        const countQuery = `
+            SELECT COUNT(*) 
+            FROM warehouses.stock s
+            JOIN warehouses.warehouses w ON s.warehouse_id = w.id
+            JOIN products.products p ON s.product_id = p.id
+            JOIN products.models m ON p.model_id = m.id
+            JOIN products.manufacturers man ON m.manufacturer_id = man.id
+            ${whereClause}
+        `;
+        
+        // Додаємо параметри для ліміту та офсету
+        params.push(parseInt(perPage), (parseInt(page) - 1) * parseInt(perPage));
+        
+        // Виконуємо запити
+        const [itemsResult, totalResult] = await Promise.all([
+            pool.query(query, params),
+            pool.query(countQuery, params.slice(0, paramIndex - 1))
+        ]);
+        
+        res.json({
+            success: true,
+            items: itemsResult.rows,
+            total: parseInt(totalResult.rows[0].count)
+        });
+    } catch (error) {
+        console.error('Error fetching low stock items:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching low stock items'
+        });
+    }
 });
 
 module.exports = router;

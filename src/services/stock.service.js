@@ -1070,6 +1070,153 @@ static async validateInstallation(client, { product_id, warehouse_id, object_id 
 
         return movement.rows[0];
     }
+    // Додайте ці методи в клас StockService у файлі stock.service.js, перед останнім закриваючим дужкою класу
+
+// Виправлені методи для stock.service.js
+
+static async getStockMetrics() {
+    try {
+        // Отримання загальної кількості одиниць (враховуємо лише активні товари)
+        const totalItemsQuery = `
+            SELECT COALESCE(SUM(s.quantity), 0) as total_items
+            FROM warehouses.stock s
+            JOIN products.products p ON s.product_id = p.id
+            WHERE p.is_active = true
+        `;
+        
+        // Отримання загальної кількості товарів (різних найменувань)
+        const totalProductsQuery = `
+            SELECT COUNT(DISTINCT s.product_id) as total_products
+            FROM warehouses.stock s
+            JOIN products.products p ON s.product_id = p.id
+            WHERE s.quantity > 0 AND p.is_active = true
+        `;
+        
+        // Отримання кількості з малим залишком (<5)
+        const lowStockQuery = `
+            SELECT COUNT(*) as low_stock_count
+            FROM warehouses.stock s
+            JOIN products.products p ON s.product_id = p.id
+            WHERE s.quantity > 0 AND s.quantity < 5 AND p.is_active = true
+        `;
+        
+        // Отримання кількості з середнім залишком (5-10)
+        const mediumStockQuery = `
+            SELECT COUNT(*) as medium_stock_count
+            FROM warehouses.stock s
+            JOIN products.products p ON s.product_id = p.id
+            WHERE s.quantity >= 5 AND s.quantity <= 10 AND p.is_active = true
+        `;
+        
+        // Отримання кількості активних складів
+        const warehousesQuery = `
+            SELECT COUNT(*) as warehouses_count
+            FROM warehouses.warehouses
+            WHERE is_active = true
+        `;
+        
+        // Виконання всіх запитів паралельно
+        const [totalItems, totalProducts, lowStock, mediumStock, warehouses] = await Promise.all([
+            pool.query(totalItemsQuery),
+            pool.query(totalProductsQuery),
+            pool.query(lowStockQuery),
+            pool.query(mediumStockQuery),
+            pool.query(warehousesQuery)
+        ]);
+        
+        return {
+            totalItems: parseInt(totalItems.rows[0].total_items) || 0,
+            totalProducts: parseInt(totalProducts.rows[0].total_products) || 0,
+            lowStockCount: parseInt(lowStock.rows[0].low_stock_count) || 0,
+            mediumStockCount: parseInt(mediumStock.rows[0].medium_stock_count) || 0,
+            warehousesCount: parseInt(warehouses.rows[0].warehouses_count) || 0
+        };
+    } catch (error) {
+        console.error('Error getting stock metrics:', error);
+        throw error;
+    }
+}
+
+static async getStockByWarehouse() {
+    try {
+        const query = `
+            SELECT 
+                w.id as warehouse_id,
+                w.name as warehouse_name,
+                COUNT(CASE WHEN s.quantity < 5 AND s.quantity > 0 THEN 1 END) as low_stock_count,
+                COUNT(CASE WHEN s.quantity >= 5 AND s.quantity <= 10 THEN 1 END) as medium_stock_count,
+                COUNT(CASE WHEN s.quantity > 10 THEN 1 END) as high_stock_count,
+                COALESCE(SUM(s.quantity), 0) as total_quantity
+            FROM warehouses.warehouses w
+            LEFT JOIN warehouses.stock s ON w.id = s.warehouse_id
+            LEFT JOIN products.products p ON s.product_id = p.id
+            WHERE w.is_active = true AND (p.is_active = true OR p.id IS NULL)
+            GROUP BY w.id, w.name
+            ORDER BY w.name
+        `;
+        
+        const result = await pool.query(query);
+        return result.rows;
+    } catch (error) {
+        console.error('Error getting stock by warehouse:', error);
+        throw error;
+    }
+}
+
+static async getStockByType() {
+    try {
+        const query = `
+            SELECT 
+                pt.id as product_type_id,
+                pt.name as product_type_name,
+                COUNT(DISTINCT s.product_id) as product_count,
+                COALESCE(SUM(s.quantity), 0) as quantity
+            FROM products.product_types pt
+            JOIN products.models m ON pt.id = m.product_type_id
+            JOIN products.products p ON m.id = p.model_id
+            JOIN warehouses.stock s ON p.id = s.product_id
+            WHERE pt.is_active = true AND p.is_active = true AND s.quantity > 0
+            GROUP BY pt.id, pt.name
+            ORDER BY quantity DESC
+        `;
+        
+        const result = await pool.query(query);
+        return result.rows;
+    } catch (error) {
+        console.error('Error getting stock by type:', error);
+        throw error;
+    }
+}
+
+static async getCriticalStock(limit = 50) {
+    try {
+        const query = `
+            SELECT 
+                s.id,
+                s.product_id,
+                s.warehouse_id,
+                s.quantity,
+                p.sku,
+                w.name as warehouse_name,
+                m.name as model_name,
+                man.name as manufacturer_name
+            FROM warehouses.stock s
+            JOIN warehouses.warehouses w ON s.warehouse_id = w.id
+            JOIN products.products p ON s.product_id = p.id
+            JOIN products.models m ON p.model_id = m.id
+            JOIN products.manufacturers man ON m.manufacturer_id = man.id
+            WHERE s.quantity > 0 AND s.quantity <= 10 AND p.is_active = true AND w.is_active = true
+            ORDER BY s.quantity ASC
+            LIMIT $1
+        `;
+        
+        const result = await pool.query(query, [limit]);
+        return result.rows;
+    } catch (error) {
+        console.error('Error getting critical stock:', error);
+        throw error;
+    }
+}
 }
 
 module.exports = StockService;
