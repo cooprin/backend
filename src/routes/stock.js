@@ -653,4 +653,23 @@ router.get('/low-stock', authenticate, checkPermission('warehouses.read'), async
     }
 });
 
+// Отримання розподілу запасів за моделями
+router.get('/by-model', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    try {
+        const { limit = 20 } = req.query;
+        const models = await StockService.getStockByModel(parseInt(limit));
+        
+        res.json({
+            success: true,
+            models
+        });
+    } catch (error) {
+        console.error('Error fetching stock by model:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching stock by model'
+        });
+    }
+});
+
 module.exports = router;
