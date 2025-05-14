@@ -1070,6 +1070,68 @@ static async validateInstallation(client, { product_id, warehouse_id, object_id 
 
         return movement.rows[0];
     }
+    static async getStockMetrics() {
+        try {
+            // Отримання загальної кількості одиниць (враховуємо лише активні товари)
+            const totalItemsQuery = `
+                SELECT COALESCE(SUM(s.quantity), 0) as total_items
+                FROM warehouses.stock s
+                JOIN products.products p ON s.product_id = p.id
+                WHERE p.is_active = true
+            `;
+            
+            // Отримання загальної кількості товарів (різних найменувань)
+            const totalProductsQuery = `
+                SELECT COUNT(DISTINCT s.product_id) as total_products
+                FROM warehouses.stock s
+                JOIN products.products p ON s.product_id = p.id
+                WHERE s.quantity > 0 AND p.is_active = true
+            `;
+            
+            // Отримання кількості з малим залишком (<5)
+            const lowStockQuery = `
+                SELECT COUNT(*) as low_stock_count
+                FROM warehouses.stock s
+                JOIN products.products p ON s.product_id = p.id
+                WHERE s.quantity > 0 AND s.quantity < 5 AND p.is_active = true
+            `;
+            
+            // Отримання кількості з середнім залишком (5-10)
+            const mediumStockQuery = `
+                SELECT COUNT(*) as medium_stock_count
+                FROM warehouses.stock s
+                JOIN products.products p ON s.product_id = p.id
+                WHERE s.quantity >= 5 AND s.quantity <= 10 AND p.is_active = true
+            `;
+            
+            // Отримання кількості активних складів
+            const warehousesQuery = `
+                SELECT COUNT(*) as warehouses_count
+                FROM warehouses.warehouses
+                WHERE is_active = true
+            `;
+            
+            // Виконання всіх запитів паралельно
+            const [totalItems, totalProducts, lowStock, mediumStock, warehouses] = await Promise.all([
+                pool.query(totalItemsQuery),
+                pool.query(totalProductsQuery),
+                pool.query(lowStockQuery),
+                pool.query(mediumStockQuery),
+                pool.query(warehousesQuery)
+            ]);
+            
+            return {
+                totalItems: parseInt(totalItems.rows[0].total_items) || 0,
+                totalProducts: parseInt(totalProducts.rows[0].total_products) || 0,
+                lowStockCount: parseInt(lowStock.rows[0].low_stock_count) || 0,
+                mediumStockCount: parseInt(mediumStock.rows[0].medium_stock_count) || 0,
+                warehousesCount: parseInt(warehouses.rows[0].warehouses_count) || 0
+            };
+        } catch (error) {
+            console.error('Error getting stock metrics:', error);
+            throw error;
+        }
+    }
     static async getStockByModel(limit = 20) {
         try {
             const query = `
