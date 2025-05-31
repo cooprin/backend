@@ -37,7 +37,7 @@ class WialonIntegrationService {
                     throw new Error(`Поле ${field} є обов'язковим`);
                 }
             }
-
+    
             let integrationId;
             let actionType = 'WIALON_INTEGRATION_CREATE';
             
@@ -45,28 +45,36 @@ class WialonIntegrationService {
             const existingRecord = await client.query(
                 'SELECT id FROM company.wialon_integration LIMIT 1'
             );
-
+    
             if (existingRecord.rows.length > 0) {
                 actionType = 'WIALON_INTEGRATION_UPDATE';
                 integrationId = existingRecord.rows[0].id;
             }
-
+    
             // Якщо є токен, використовуємо PostgreSQL функцію для збереження
             if (data.token_value) {
+                // Отримуємо ключ шифрування з змінної оточення
+                const encryptionKey = process.env.WIALON_ENCRYPTION_KEY;
+                
+                if (!encryptionKey) {
+                    throw new Error('WIALON_ENCRYPTION_KEY не встановлено в змінних оточення');
+                }
+                
                 const result = await client.query(
-                    'SELECT company.set_wialon_token($1, $2, $3, $4, $5, $6) as integration_id',
+                    'SELECT company.set_wialon_token($1, $2, $3, $4, $5, $6, $7) as integration_id',
                     [
                         data.api_url,
                         data.token_name,
                         data.token_value,
                         data.sync_interval || 60,
                         data.additional_settings ? JSON.stringify(data.additional_settings) : '{}',
-                        userId
+                        userId,
+                        encryptionKey  // Передаємо ключ як параметр
                     ]
                 );
                 integrationId = result.rows[0].integration_id;
             } else if (existingRecord.rows.length > 0) {
-                // Оновлення без токена
+                // Оновлення без токена (залишається без змін)
                 const fields = [];
                 const values = [];
                 let paramIndex = 1;
@@ -113,7 +121,7 @@ class WialonIntegrationService {
                 actionType,
                 entityType: 'WIALON_INTEGRATION',
                 entityId: integrationId,
-                oldValues: null, // Можна додати логіку отримання старих значень якщо потрібно
+                oldValues: null,
                 newValues: auditData,
                 ipAddress: req.ip,
                 tableSchema: 'company',
@@ -128,7 +136,6 @@ class WialonIntegrationService {
             throw error;
         }
     }
-
 // Тестування підключення до Wialon
 static async testConnection() {
     try {
