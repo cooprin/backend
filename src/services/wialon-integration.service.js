@@ -202,27 +202,24 @@ static async testConnection() {
 }
 
     // Отримання розшифрованого токена через PostgreSQL функцію
-    static async getWialonToken() {
-        try {
-            // Отримуємо ключ шифрування з змінної оточення
-            const encryptionKey = process.env.WIALON_ENCRYPTION_KEY;
-            
-            let result;
-            if (encryptionKey) {
-                // Якщо є ключ, передаємо його до функції
-                result = await pool.query('SELECT * FROM company.get_wialon_token($1)', [encryptionKey]);
-            } else {
-                // Якщо немає ключа, викликаємо без параметрів (fallback)
-                result = await pool.query('SELECT * FROM company.get_wialon_token()');
-            }
-            
-            return result.rows.length > 0 ? result.rows[0] : null;
-        } catch (error) {
-            console.error('Error getting wialon token:', error);
-            throw error;
-        }
-    }
 
+static async getWialonToken() {
+    try {
+        // Отримуємо ключ шифрування з змінної оточення
+        const encryptionKey = process.env.WIALON_ENCRYPTION_KEY;
+        
+        if (!encryptionKey) {
+            throw new Error('WIALON_ENCRYPTION_KEY не встановлено в змінних оточення');
+        }
+        
+        // ПЕРЕДАЄМО КЛЮЧ при читанні токена
+        const result = await pool.query('SELECT * FROM company.get_wialon_token($1)', [encryptionKey]);
+        return result.rows.length > 0 ? result.rows[0] : null;
+    } catch (error) {
+        console.error('Error getting wialon token:', error);
+        throw error;
+    }
+}
     // Синхронізація об'єктів з Wialon (оновлена версія)
     static async syncObjects(client, userId, req) {
         try {
