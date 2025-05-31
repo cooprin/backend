@@ -25,6 +25,7 @@ const paymentsRoutes = require('./routes/payments');
 const companyRouter = require('./routes/company');
 const wialonIntegrationRouter = require('./routes/wialon-integration');
 const invoiceTemplatesRouter = require('./routes/invoice-templates');
+const wialonSyncRouter = require('./routes/wialon-sync');
 
 const app = express();
 app.set('trust proxy', true);
@@ -62,6 +63,7 @@ app.use('/services', servicesRouter);
 app.use('/billing/payments', paymentsRoutes);
 app.use('/company', companyRouter);
 app.use('/wialon-integration', wialonIntegrationRouter);
+app.use('/wialon-sync', wialonSyncRouter); 
 app.use('/invoice-templates', invoiceTemplatesRouter);
 
 

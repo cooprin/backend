@@ -2,7 +2,6 @@ const axios = require('axios');
 const { pool } = require('../database');
 const AuditService = require('./auditService');
 const { ENTITY_TYPES, AUDIT_TYPES } = require('../constants/constants');
-const crypto = require('crypto');
 
 class WialonIntegrationService {
     // Отримання налаштувань інтеграції
@@ -10,7 +9,7 @@ class WialonIntegrationService {
         try {
             const query = `
                 SELECT 
-                    id, api_url, token_name, 
+                    id, api_url, token_name, encryption_method,
                     CASE WHEN token_value IS NOT NULL THEN true ELSE false END as has_token,
                     is_active, last_sync_time, sync_interval, additional_settings,
                     created_at, updated_at
@@ -38,41 +37,41 @@ class WialonIntegrationService {
                     throw new Error(`Поле ${field} є обов'язковим`);
                 }
             }
+
+            let integrationId;
+            let actionType = 'WIALON_INTEGRATION_CREATE';
             
             // Перевірка, чи вже є запис для інтеграції
             const existingRecord = await client.query(
-                'SELECT id, token_value FROM company.wialon_integration LIMIT 1'
+                'SELECT id FROM company.wialon_integration LIMIT 1'
             );
 
-            let integrationId;
-            let oldData = null;
-            let actionType = 'WIALON_INTEGRATION_CREATE';
-            let encryptedToken = null;
-
-            // Шифруємо токен, якщо він вказаний
-            if (data.token_value) {
-                encryptedToken = this.encryptToken(data.token_value);
+            if (existingRecord.rows.length > 0) {
+                actionType = 'WIALON_INTEGRATION_UPDATE';
+                integrationId = existingRecord.rows[0].id;
             }
 
-            if (existingRecord.rows.length > 0) {
-                // Оновлення існуючого запису
-                integrationId = existingRecord.rows[0].id;
-                oldData = await client.query(
-                    'SELECT * FROM company.wialon_integration WHERE id = $1',
-                    [integrationId]
+            // Якщо є токен, використовуємо PostgreSQL функцію для збереження
+            if (data.token_value) {
+                const result = await client.query(
+                    'SELECT company.set_wialon_token($1, $2, $3, $4, $5, $6) as integration_id',
+                    [
+                        data.api_url,
+                        data.token_name,
+                        data.token_value,
+                        data.sync_interval || 60,
+                        data.additional_settings ? JSON.stringify(data.additional_settings) : '{}',
+                        userId
+                    ]
                 );
-                oldData = oldData.rows[0];
-                actionType = 'WIALON_INTEGRATION_UPDATE';
-
-                // Підготовка полів для оновлення
+                integrationId = result.rows[0].integration_id;
+            } else if (existingRecord.rows.length > 0) {
+                // Оновлення без токена
                 const fields = [];
                 const values = [];
                 let paramIndex = 1;
                 
-                // Доступні поля для оновлення
-                const updateableFields = [
-                    'api_url', 'token_name', 'is_active', 'sync_interval', 'additional_settings'
-                ];
+                const updateableFields = ['api_url', 'token_name', 'is_active', 'sync_interval', 'additional_settings'];
                 
                 updateableFields.forEach(field => {
                     if (data[field] !== undefined) {
@@ -86,61 +85,22 @@ class WialonIntegrationService {
                     }
                 });
                 
-                // Додаємо token_value, якщо він був переданий
-                if (encryptedToken) {
-                    fields.push(`token_value = $${paramIndex++}`);
-                    values.push(encryptedToken);
+                if (fields.length > 0) {
+                    fields.push(`updated_at = $${paramIndex++}`);
+                    values.push(new Date());
+                    values.push(integrationId);
+                    
+                    const query = `
+                        UPDATE company.wialon_integration 
+                        SET ${fields.join(', ')} 
+                        WHERE id = $${paramIndex}
+                        RETURNING id
+                    `;
+                    
+                    await client.query(query, values);
                 }
-                
-                // Додаємо updated_at
-                fields.push(`updated_at = $${paramIndex++}`);
-                values.push(new Date());
-                
-                // Додаємо id для WHERE
-                values.push(integrationId);
-                
-                if (fields.length === 0) {
-                    throw new Error('Не вказано полів для оновлення');
-                }
-                
-                const query = `
-                    UPDATE company.wialon_integration 
-                    SET ${fields.join(', ')} 
-                    WHERE id = $${paramIndex}
-                    RETURNING id, api_url, token_name, 
-                            CASE WHEN token_value IS NOT NULL THEN true ELSE false END as has_token,
-                            is_active, last_sync_time, sync_interval, additional_settings,
-                            created_at, updated_at
-                `;
-                
-                const result = await client.query(query, values);
-                integrationId = result.rows[0].id;
             } else {
-                // Створення нового запису
-                const query = `
-                    INSERT INTO company.wialon_integration (
-                        api_url, token_name, token_value, is_active, sync_interval, 
-                        additional_settings, created_by
-                    ) VALUES (
-                        $1, $2, $3, $4, $5, $6, $7
-                    )
-                    RETURNING id, api_url, token_name, 
-                             CASE WHEN token_value IS NOT NULL THEN true ELSE false END as has_token,
-                             is_active, last_sync_time, sync_interval, additional_settings,
-                             created_at, updated_at
-                `;
-                
-                const result = await client.query(query, [
-                    data.api_url,
-                    data.token_name,
-                    encryptedToken,
-                    data.is_active !== undefined ? data.is_active : true,
-                    data.sync_interval || 60, // За замовчуванням 60 хвилин
-                    data.additional_settings ? JSON.stringify(data.additional_settings) : null,
-                    userId
-                ]);
-                
-                integrationId = result.rows[0].id;
+                throw new Error('Токен є обов\'язковим для створення нової інтеграції');
             }
             
             // Для аудиту зберігаємо все, крім токену
@@ -153,13 +113,7 @@ class WialonIntegrationService {
                 actionType,
                 entityType: 'WIALON_INTEGRATION',
                 entityId: integrationId,
-                oldValues: oldData ? {
-                    api_url: oldData.api_url,
-                    token_name: oldData.token_name,
-                    is_active: oldData.is_active,
-                    sync_interval: oldData.sync_interval,
-                    additional_settings: oldData.additional_settings
-                } : null,
+                oldValues: null, // Можна додати логіку отримання старих значень якщо потрібно
                 newValues: auditData,
                 ipAddress: req.ip,
                 tableSchema: 'company',
@@ -176,21 +130,16 @@ class WialonIntegrationService {
     }
 
     // Тестування підключення до Wialon
-    static async testConnection(integrationId) {
+    static async testConnection() {
         try {
-            const settings = await this.getIntegrationSettingsWithToken(integrationId);
+            const tokenData = await this.getWialonToken();
             
-            if (!settings) {
+            if (!tokenData) {
                 throw new Error('Налаштування інтеграції не знайдено');
             }
             
-            if (!settings.token_value) {
-                throw new Error('Токен не налаштовано');
-            }
-            
             // Формуємо URL для тестового запиту
-            const tokenValue = this.decryptToken(settings.token_value);
-            const testUrl = `${settings.api_url}/wialon/ajax.html?svc=token/login&params={"token":"${tokenValue}"}`;
+            const testUrl = `${tokenData.api_url}/wialon/ajax.html?svc=token/login&params={"token":"${tokenData.decrypted_token}"}`;
             
             // Виконуємо запит до Wialon
             const response = await axios.get(testUrl);
@@ -198,10 +147,7 @@ class WialonIntegrationService {
             // Перевіряємо відповідь
             if (response.data && response.data.error === 0) {
                 // Оновлюємо час останньої синхронізації
-                await pool.query(
-                    'UPDATE company.wialon_integration SET last_sync_time = $1 WHERE id = $2',
-                    [new Date(), settings.id]
-                );
+                await pool.query('SELECT company.update_wialon_sync_time()');
                 
                 return {
                     success: true,
@@ -223,47 +169,28 @@ class WialonIntegrationService {
         }
     }
 
-    // Отримання налаштувань з токеном
-    static async getIntegrationSettingsWithToken(integrationId) {
+    // Отримання розшифрованого токена через PostgreSQL функцію
+    static async getWialonToken() {
         try {
-            let query = `
-                SELECT * FROM company.wialon_integration
-            `;
-            
-            const params = [];
-            if (integrationId) {
-                query += ' WHERE id = $1';
-                params.push(integrationId);
-            } else {
-                query += ' ORDER BY created_at DESC LIMIT 1';
-            }
-            
-            const result = await pool.query(query, params);
+            const result = await pool.query('SELECT * FROM company.get_wialon_token()');
             return result.rows.length > 0 ? result.rows[0] : null;
         } catch (error) {
-            console.error('Error fetching wialon integration settings with token:', error);
+            console.error('Error getting wialon token:', error);
             throw error;
         }
     }
 
-    // Синхронізація об'єктів з Wialon
+    // Синхронізація об'єктів з Wialon (оновлена версія)
     static async syncObjects(client, userId, req) {
         try {
-            const settings = await this.getIntegrationSettingsWithToken();
+            const tokenData = await this.getWialonToken();
             
-            if (!settings) {
+            if (!tokenData) {
                 throw new Error('Налаштування інтеграції не знайдено');
             }
             
-            if (!settings.token_value) {
-                throw new Error('Токен не налаштовано');
-            }
-            
-            // Отримуємо токен
-            const tokenValue = this.decryptToken(settings.token_value);
-            
-            // Спочатку авторизуємось
-            const loginUrl = `${settings.api_url}/wialon/ajax.html?svc=token/login&params={"token":"${tokenValue}"}`;
+            // Спочатку авторизуємся
+            const loginUrl = `${tokenData.api_url}/wialon/ajax.html?svc=token/login&params={"token":"${tokenData.decrypted_token}"}`;
             
             const loginResponse = await axios.get(loginUrl);
             
@@ -280,7 +207,7 @@ class WialonIntegrationService {
             }
             
             // Отримуємо список об'єктів
-            const searchUrl = `${settings.api_url}/wialon/ajax.html?svc=core/search_items&params={"spec":{"itemsType":"avl_unit","propName":"sys_name","propValueMask":"*","sortType":"sys_name"},"force":1,"flags":1025,"from":0,"to":0}&sid=${eid}`;
+            const searchUrl = `${tokenData.api_url}/wialon/ajax.html?svc=core/search_items&params={"spec":{"itemsType":"avl_unit","propName":"sys_name","propValueMask":"*","sortType":"sys_name"},"force":1,"flags":1025,"from":0,"to":0}&sid=${eid}`;
             
             const searchResponse = await axios.get(searchUrl);
             
@@ -375,17 +302,14 @@ class WialonIntegrationService {
             }
             
             // Оновлюємо час останньої синхронізації
-            await client.query(
-                'UPDATE company.wialon_integration SET last_sync_time = $1 WHERE id = $2',
-                [new Date(), settings.id]
-            );
+            await pool.query('SELECT company.update_wialon_sync_time()');
             
             // Логування
             await AuditService.log({
                 userId,
                 actionType: 'WIALON_SYNC',
                 entityType: 'WIALON_INTEGRATION',
-                entityId: settings.id,
+                entityId: tokenData.integration_id,
                 newValues: {
                     created,
                     updated,
@@ -412,7 +336,7 @@ class WialonIntegrationService {
         }
     }
 
-    // Допоміжний метод для оновлення атрибуту об'єкта
+    // Допоміжний метод для оновлення атрибуту об'єкта (без змін)
     static async updateObjectAttribute(client, wialonId, attrName, attrValue) {
         try {
             // Спочатку знаходимо об'єкт за wialonId
@@ -467,56 +391,8 @@ class WialonIntegrationService {
         }
     }
 
-    // Шифрування та дешифрування токену
-    static encryptToken(token) {
-        try {
-            // Використовуємо змінні середовища для секретного ключа і IV
-            // В реальному додатку ці значення мають бути в .env файлі
-            const encryptionKey = process.env.ENCRYPTION_KEY;
-            
-            // Створюємо шифр
-            const iv = crypto.randomBytes(16);
-            const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(encryptionKey.padEnd(32).slice(0, 32)), iv);
-            
-            // Шифруємо
-            let encrypted = cipher.update(token, 'utf8', 'hex');
-            encrypted += cipher.final('hex');
-            
-            // Повертаємо IV + зашифрований токен
-            return iv.toString('hex') + ':' + encrypted;
-        } catch (error) {
-            console.error('Error encrypting token:', error);
-            throw new Error('Помилка шифрування токену');
-        }
-    }
-
-    static decryptToken(encryptedToken) {
-        try {
-            // Розбиваємо на IV та шифрований текст
-            const parts = encryptedToken.split(':');
-            if (parts.length !== 2) {
-                throw new Error('Невірний формат зашифрованого токену');
-            }
-            
-            const iv = Buffer.from(parts[0], 'hex');
-            const encrypted = parts[1];
-            
-            // Використовуємо той самий ключ
-            const encryptionKey = process.env.ENCRYPTION_KEY || 'mySecretKey12345';
-            
-            // Створюємо дешифратор
-            const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(encryptionKey.padEnd(32).slice(0, 32)), iv);
-            
-            // Дешифруємо
-            let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-            decrypted += decipher.final('utf8');
-            
-            return decrypted;
-        } catch (error) {
-            console.error('Error decrypting token:', error);
-            throw new Error('Помилка дешифрування токену');
-        }
-    }
+    // Видаляємо старі методи шифрування (encryptToken та decryptToken)
+    // Тепер використовуємо PostgreSQL функції
 }
 
 module.exports = WialonIntegrationService;
