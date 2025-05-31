@@ -60,18 +60,18 @@ class WialonIntegrationService {
                     throw new Error('WIALON_ENCRYPTION_KEY не встановлено в змінних оточення');
                 }
                 
-                const result = await client.query(
-                    'SELECT company.set_wialon_token($1, $2, $3, $4, $5, $6, $7) as integration_id',
-                    [
-                        data.api_url,
-                        data.token_name,
-                        data.token_value,
-                        data.sync_interval || 60,
-                        data.additional_settings ? JSON.stringify(data.additional_settings) : '{}',
-                        userId,
-                        encryptionKey  // Передаємо ключ як параметр
-                    ]
-                );
+const result = await client.query(
+    'SELECT company.set_wialon_token($1, $2, $3, $4, $5, $6, $7) as integration_id',
+    [
+        data.api_url,
+        data.token_name,
+        data.token_value,
+        encryptionKey,  // ← Перемістили на 4-е місце
+        data.sync_interval || 60,
+        data.additional_settings ? JSON.stringify(data.additional_settings) : '{}',
+        userId
+    ]
+);
                 integrationId = result.rows[0].integration_id;
             } else if (existingRecord.rows.length > 0) {
                 // Оновлення без токена (залишається без змін)
