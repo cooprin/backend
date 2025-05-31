@@ -129,45 +129,70 @@ class WialonIntegrationService {
         }
     }
 
-    // Тестування підключення до Wialon
-    static async testConnection() {
-        try {
-            const tokenData = await this.getWialonToken();
-            
-            if (!tokenData) {
-                throw new Error('Налаштування інтеграції не знайдено');
-            }
-            
-            // Формуємо URL для тестового запиту
-            const testUrl = `${tokenData.api_url}/wialon/ajax.html?svc=token/login&params={"token":"${tokenData.decrypted_token}"}`;
-            
-            // Виконуємо запит до Wialon
-            const response = await axios.get(testUrl);
-            
-            // Перевіряємо відповідь
-            if (response.data && response.data.error === 0) {
-                // Оновлюємо час останньої синхронізації
-                await pool.query('SELECT company.update_wialon_sync_time()');
-                
-                return {
-                    success: true,
-                    message: 'Підключення успішне',
-                    userData: response.data.user || {},
-                    time: new Date()
-                };
-            } else {
-                throw new Error('Помилка авторизації: ' + 
-                    (response.data && response.data.error_text ? response.data.error_text : 'Невідома помилка'));
-            }
-        } catch (error) {
-            console.error('Error testing wialon connection:', error);
-            return {
-                success: false,
-                message: error.message || 'Помилка підключення до Wialon',
-                error: error
-            };
+// Тестування підключення до Wialon
+static async testConnection() {
+    try {
+        const tokenData = await this.getWialonToken();
+        
+        if (!tokenData) {
+            throw new Error('Налаштування інтеграції не знайдено');
         }
+        
+        console.log('Testing Wialon connection...');
+        console.log('API URL:', tokenData.api_url);
+        console.log('Token name:', tokenData.token_name);
+        console.log('Token length:', tokenData.decrypted_token?.length);
+        
+        // Формуємо URL для тестового запиту
+        const testUrl = `${tokenData.api_url}/wialon/ajax.html?svc=token/login&params={"token":"${tokenData.decrypted_token}"}`;
+        
+        console.log('Making request to Wialon...');
+        
+        // Виконуємо запит до Wialon
+        const response = await axios.get(testUrl, {
+            timeout: 10000, // 10 секунд таймаут
+            headers: {
+                'User-Agent': 'ERP-System/1.0'
+            }
+        });
+        
+        console.log('Wialon response status:', response.status);
+        console.log('Wialon response data:', JSON.stringify(response.data, null, 2));
+        
+        // Перевіряємо відповідь
+        if (response.data && response.data.error === 0) {
+            // Оновлюємо час останньої синхронізації
+            await pool.query('SELECT company.update_wialon_sync_time()');
+            
+            return {
+                success: true,
+                message: 'Підключення успішне',
+                userData: response.data.user || {},
+                time: new Date()
+            };
+        } else {
+            console.log('Wialon error code:', response.data?.error);
+            console.log('Wialon error text:', response.data?.error_text);
+            
+            const errorText = response.data?.error_text || 'Невідома помилка';
+            throw new Error('Помилка авторизації: ' + errorText);
+        }
+    } catch (error) {
+        console.error('Error testing wialon connection:', error.message);
+        console.error('Full error:', error);
+        
+        if (error.response) {
+            console.error('Response status:', error.response.status);
+            console.error('Response data:', error.response.data);
+        }
+        
+        return {
+            success: false,
+            message: error.message || 'Помилка підключення до Wialon',
+            error: error
+        };
     }
+}
 
     // Отримання розшифрованого токена через PostgreSQL функцію
     static async getWialonToken() {
