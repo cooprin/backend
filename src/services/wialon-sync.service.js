@@ -115,9 +115,10 @@ class WialonSyncService {
             const axios = require('axios');
             const loginResponse = await axios.get(loginUrl);
 
-            if (!loginResponse.data || loginResponse.data.error !== 0) {
+            // ВИПРАВЛЕНО: перевірка на наявність помилки замість error !== 0
+            if (!loginResponse.data || loginResponse.data.error) {
                 throw new Error('Wialon authorization failed: ' + 
-                    (loginResponse.data?.error_text || 'Unknown error'));
+                    (loginResponse.data?.reason || loginResponse.data?.error_text || 'Unknown error'));
             }
 
             const eid = loginResponse.data.eid;
@@ -151,9 +152,10 @@ class WialonSyncService {
             
             const response = await axios.get(searchUrl);
 
-            if (!response.data || response.data.error !== 0) {
+            // ВИПРАВЛЕНО: перевірка на наявність помилки замість error !== 0
+            if (!response.data || response.data.error) {
                 throw new Error('Failed to fetch clients from Wialon: ' + 
-                    (response.data?.error_text || 'Unknown error'));
+                    (response.data?.reason || response.data?.error_text || 'Unknown error'));
             }
 
             const clients = response.data.items || [];
@@ -198,9 +200,10 @@ class WialonSyncService {
             
             const response = await axios.get(searchUrl);
 
-            if (!response.data || response.data.error !== 0) {
+            // ВИПРАВЛЕНО: перевірка на наявність помилки замість error !== 0
+            if (!response.data || response.data.error) {
                 throw new Error('Failed to fetch objects from Wialon: ' + 
-                    (response.data?.error_text || 'Unknown error'));
+                    (response.data?.reason || response.data?.error_text || 'Unknown error'));
             }
 
             const objects = response.data.items || [];
