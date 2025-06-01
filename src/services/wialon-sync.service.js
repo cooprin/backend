@@ -196,7 +196,7 @@ class WialonSyncService {
             const axios = require('axios');
             
             // Отримуємо список об'єктів
-            const searchUrl = `${apiUrl}/wialon/ajax.html?svc=core/search_items&params={"spec":{"itemsType":"avl_unit","propName":"sys_name","propValueMask":"*","sortType":"sys_name"},"force":1,"flags":1025,"from":0,"to":0}&sid=${eid}`;
+            const searchUrl = `${apiUrl}/wialon/ajax.html?svc=core/search_items&params={"spec":{"itemsType":"avl_unit","propName":"sys_name","propValueMask":"*","sortType":"sys_name"},"force":1,"flags":257,"from":0,"to":0}&sid=${eid}`;
             
             const response = await axios.get(searchUrl);
 
@@ -501,7 +501,7 @@ class WialonSyncService {
             // Логіка витягування номерів телефонів з об'єкта Wialon
             // Це залежить від структури даних Wialon
             if (wialonObject.phone) {
-                phones.push(wialonObject.phone);
+                phones.push(wialonObject.ph);
             }
         } catch (error) {
             console.error('Error extracting phone numbers:', error);
