@@ -142,6 +142,7 @@ const result = await client.query(
             throw error;
         }
     }
+
 // Тестування підключення до Wialon
 static async testConnection() {
     try {
@@ -150,16 +151,11 @@ static async testConnection() {
         if (!tokenData) {
             throw new Error('Налаштування інтеграції не знайдено');
         }
-        
-        console.log('Testing Wialon connection...');
-        console.log('API URL:', tokenData.api_url);
-        console.log('Token name:', tokenData.token_name);
-        console.log('Token length:', tokenData.decrypted_token?.length);
+
         
         // Формуємо URL для тестового запиту
         const testUrl = `${tokenData.api_url}/wialon/ajax.html?svc=token/login&params={"token":"${tokenData.decrypted_token}"}`;
         
-        console.log('Making request to Wialon...');
         
         // Виконуємо запит до Wialon
         const response = await axios.get(testUrl, {
@@ -169,26 +165,29 @@ static async testConnection() {
             }
         });
         
-        console.log('Wialon response status:', response.status);
-        console.log('Wialon response data:', JSON.stringify(response.data, null, 2));
         
-        // Перевіряємо відповідь
-        if (response.data && response.data.error === 0) {
-            // Оновлюємо час останньої синхронізації
+        // Перевіряємо відповідь - виправлена логіка
+        if (response.data && response.data.eid && response.data.user) {
+            // Успіх - є session ID та дані користувача
             await pool.query('SELECT company.update_wialon_sync_time()');
             
             return {
                 success: true,
                 message: 'Підключення успішне',
-                userData: response.data.user || {},
+                userData: response.data.user,
+                sessionId: response.data.eid,
                 time: new Date()
             };
-        } else {
-            console.log('Wialon error code:', response.data?.error);
-            console.log('Wialon error text:', response.data?.error_text);
+        } else if (response.data && response.data.error) {
+            // Помилка від Wialon
+            console.log('Wialon error code:', response.data.error);
+            console.log('Wialon error reason:', response.data.reason);
             
-            const errorText = response.data?.error_text || 'Невідома помилка';
+            const errorText = response.data.reason || 'Невідома помилка';
             throw new Error('Помилка авторизації: ' + errorText);
+        } else {
+            // Неочікувана відповідь
+            throw new Error('Неочікувана відповідь від Wialon API');
         }
     } catch (error) {
         console.error('Error testing wialon connection:', error.message);
@@ -214,11 +213,6 @@ static async getWialonToken() {
         // Отримуємо ключ шифрування з змінної оточення
         const encryptionKey = process.env.WIALON_ENCRYPTION_KEY;
 
-        console.log('=== GET TOKEN DEBUG ===');
-        console.log('Key exists:', !!encryptionKey);
-        console.log('Key value:', encryptionKey);
-        console.log('Key length:', encryptionKey?.length);
-        console.log('======================');
         
         if (!encryptionKey) {
             throw new Error('WIALON_ENCRYPTION_KEY не встановлено в змінних оточення');
