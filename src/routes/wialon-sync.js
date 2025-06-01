@@ -80,6 +80,180 @@ router.get('/sessions/:sessionId', authenticate, checkPermission('wialon_sync.re
     }
 });
 
+// НОВИЙ ЕНДПОІНТ: Отримання логів синхронізації
+router.get('/logs', authenticate, checkPermission('wialon_sync.read'), async (req, res) => {
+    try {
+        const { 
+            sessionId, 
+            level, 
+            dateFrom, 
+            dateTo,
+            limit = 50, 
+            offset = 0 
+        } = req.query;
+        
+        let query = `
+            SELECT 
+                sl.*,
+                ss.id as session_id,
+                ss.created_by,
+                u.email as created_by_email
+            FROM wialon_sync.sync_logs sl
+            JOIN wialon_sync.sync_sessions ss ON sl.session_id = ss.id
+            LEFT JOIN users u ON ss.created_by = u.id
+            WHERE 1=1
+        `;
+        
+        const params = [];
+        let paramIndex = 1;
+        
+        // Фільтр по сесії
+        if (sessionId) {
+            query += ` AND sl.session_id = $${paramIndex++}`;
+            params.push(sessionId);
+        }
+        
+        // Фільтр по рівню логу
+        if (level) {
+            query += ` AND sl.log_level = $${paramIndex++}`;
+            params.push(level);
+        }
+        
+        // Фільтр по даті від
+        if (dateFrom) {
+            query += ` AND sl.created_at >= $${paramIndex++}`;
+            params.push(dateFrom + ' 00:00:00');
+        }
+        
+        // Фільтр по даті до
+        if (dateTo) {
+            query += ` AND sl.created_at <= $${paramIndex++}`;
+            params.push(dateTo + ' 23:59:59');
+        }
+        
+        query += ` ORDER BY sl.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+        params.push(parseInt(limit), parseInt(offset));
+        
+        const result = await pool.query(query, params);
+        
+        // Отримання загальної кількості записів для пагінації
+        let countQuery = `
+            SELECT COUNT(*) as total
+            FROM wialon_sync.sync_logs sl
+            JOIN wialon_sync.sync_sessions ss ON sl.session_id = ss.id
+            WHERE 1=1
+        `;
+        
+        const countParams = [];
+        let countParamIndex = 1;
+        
+        if (sessionId) {
+            countQuery += ` AND sl.session_id = $${countParamIndex++}`;
+            countParams.push(sessionId);
+        }
+        
+        if (level) {
+            countQuery += ` AND sl.log_level = $${countParamIndex++}`;
+            countParams.push(level);
+        }
+        
+        if (dateFrom) {
+            countQuery += ` AND sl.created_at >= $${countParamIndex++}`;
+            countParams.push(dateFrom + ' 00:00:00');
+        }
+        
+        if (dateTo) {
+            countQuery += ` AND sl.created_at <= $${countParamIndex++}`;
+            countParams.push(dateTo + ' 23:59:59');
+        }
+        
+        const countResult = await pool.query(countQuery, countParams);
+        const totalCount = parseInt(countResult.rows[0].total);
+        
+        res.json({
+            success: true,
+            logs: result.rows,
+            pagination: {
+                limit: parseInt(limit),
+                offset: parseInt(offset),
+                total: totalCount,
+                hasMore: (parseInt(offset) + parseInt(limit)) < totalCount
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching sync logs:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні логів синхронізації'
+        });
+    }
+});
+
+// НОВИЙ ЕНДПОІНТ: Очищення логів синхронізації
+router.delete('/logs', authenticate, checkPermission('wialon_sync.delete'), async (req, res) => {
+    const client = await pool.connect();
+    
+    try {
+        await client.query('BEGIN');
+        
+        const { sessionId, olderThan } = req.body;
+        
+        let deleteQuery = 'DELETE FROM wialon_sync.sync_logs WHERE 1=1';
+        const params = [];
+        let paramIndex = 1;
+        
+        // Видалити логи конкретної сесії
+        if (sessionId) {
+            deleteQuery += ` AND session_id = $${paramIndex++}`;
+            params.push(sessionId);
+        }
+        
+        // Видалити логи старші за вказану дату
+        if (olderThan) {
+            deleteQuery += ` AND created_at < $${paramIndex++}`;
+            params.push(olderThan);
+        }
+        
+        const result = await client.query(deleteQuery, params);
+        
+        await client.query('COMMIT');
+        
+        // Аудит
+        await AuditService.log({
+            userId: req.user.userId,
+            actionType: 'WIALON_SYNC_LOGS_CLEAR',
+            entityType: 'SYNC_LOGS',
+            entityId: sessionId || 'all',
+            newValues: {
+                deletedCount: result.rowCount,
+                sessionId,
+                olderThan
+            },
+            ipAddress: req.ip,
+            tableSchema: 'wialon_sync',
+            tableName: 'sync_logs',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+        
+        res.json({
+            success: true,
+            message: `Видалено ${result.rowCount} записів логів`,
+            deletedCount: result.rowCount
+        });
+        
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error clearing sync logs:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при очищенні логів синхронізації'
+        });
+    } finally {
+        client.release();
+    }
+});
+
 // Запуск нової синхронізації
 router.post('/start', authenticate, checkPermission('wialon_sync.create'), async (req, res) => {
     const client = await pool.connect();
@@ -285,7 +459,7 @@ router.post('/discrepancies/resolve', authenticate, checkPermission('wialon_sync
         
         // Якщо дія "схвалено", додаємо записи до основних таблиць
         if (action === 'approved') {
-            await this.processApprovedDiscrepancies(client, result.rows, req.user.userId);
+            await processApprovedDiscrepancies(client, result.rows, req.user.userId);
         }
         
         await client.query('COMMIT');
