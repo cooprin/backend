@@ -11,8 +11,8 @@ const { AUDIT_TYPES } = require('../constants/constants');
 router.get('/sessions', authenticate, checkPermission('wialon_sync.read'), async (req, res) => {
     try {
         const { 
-            limit = 20, 
-            offset = 0, 
+            page = 1,
+            perPage = 20,
             sortBy = 'start_time',
             descending = true,
             search 
@@ -42,8 +42,10 @@ router.get('/sessions', authenticate, checkPermission('wialon_sync.read'), async
         query += ` ORDER BY ${sortBy} ${orderDirection}`;
         
         // Пагінація
+        const limit = parseInt(perPage);
+        const offset = (parseInt(page) - 1) * limit;
         query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-        params.push(parseInt(limit), parseInt(offset));
+        params.push(limit, offset);
         
         // Запит на загальну кількість
         let countQuery = `
@@ -71,8 +73,8 @@ router.get('/sessions', authenticate, checkPermission('wialon_sync.read'), async
             sessions: sessionsResult.rows,
             total: parseInt(countResult.rows[0].total),
             pagination: {
-                limit: parseInt(limit),
-                offset: parseInt(offset),
+                page: parseInt(page),
+                perPage: limit,
                 total: parseInt(countResult.rows[0].total)
             }
         });
@@ -127,7 +129,7 @@ router.get('/sessions/:sessionId', authenticate, checkPermission('wialon_sync.re
     }
 });
 
-// НОВИЙ ЕНДПОІНТ: Отримання логів синхронізації
+// Отримання логів синхронізації
 router.get('/logs', authenticate, checkPermission('wialon_sync.read'), async (req, res) => {
     try {
         const { 
@@ -138,9 +140,13 @@ router.get('/logs', authenticate, checkPermission('wialon_sync.read'), async (re
             search,
             sortBy = 'created_at',
             descending = true,
-            limit = 50, 
-            offset = 0 
+            page = 1,
+            perPage = 50
         } = req.query;
+        
+        console.log('=== LOGS REQUEST DEBUG ===');
+        console.log('Query params:', req.query);
+        console.log('========================');
         
         let query = `
             SELECT 
@@ -196,8 +202,10 @@ router.get('/logs', authenticate, checkPermission('wialon_sync.read'), async (re
         query += ` ORDER BY sl.${sortBy} ${orderDirection}`;
         
         // Пагінація
+        const limit = parseInt(perPage);
+        const offset = (parseInt(page) - 1) * limit;
         query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-        params.push(parseInt(limit), parseInt(offset));
+        params.push(limit, offset);
         
         // Отримання загальної кількості записів для пагінації
         let countQuery = `
@@ -246,15 +254,20 @@ router.get('/logs', authenticate, checkPermission('wialon_sync.read'), async (re
         
         const totalCount = parseInt(countResult.rows[0].total);
         
+        console.log('=== LOGS RESPONSE DEBUG ===');
+        console.log('Logs count:', logsResult.rows.length);
+        console.log('Total count:', totalCount);
+        console.log('==========================');
+        
         res.json({
             success: true,
             logs: logsResult.rows,
             total: totalCount,
             pagination: {
-                limit: parseInt(limit),
-                offset: parseInt(offset),
+                page: parseInt(page),
+                perPage: limit,
                 total: totalCount,
-                hasMore: (parseInt(offset) + parseInt(limit)) < totalCount
+                hasMore: (parseInt(page) * limit) < totalCount
             }
         });
     } catch (error) {
@@ -266,7 +279,7 @@ router.get('/logs', authenticate, checkPermission('wialon_sync.read'), async (re
     }
 });
 
-// НОВИЙ ЕНДПОІНТ: Очищення логів синхронізації
+// Очищення логів синхронізації
 router.delete('/logs', authenticate, checkPermission('wialon_sync.delete'), async (req, res) => {
     const client = await pool.connect();
     
@@ -426,8 +439,8 @@ router.get('/discrepancies', authenticate, checkPermission('wialon_sync.read'), 
             search,
             sortBy = 'created_at',
             descending = true,
-            limit = 50, 
-            offset = 0 
+            page = 1,
+            perPage = 50
         } = req.query;
         
         let query = `
@@ -468,8 +481,10 @@ router.get('/discrepancies', authenticate, checkPermission('wialon_sync.read'), 
         query += ` ORDER BY ${sortBy} ${orderDirection}`;
         
         // Пагінація
+        const limit = parseInt(perPage);
+        const offset = (parseInt(page) - 1) * limit;
         query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-        params.push(parseInt(limit), parseInt(offset));
+        params.push(limit, offset);
         
         // Запит на загальну кількість
         let countQuery = `
@@ -523,15 +538,17 @@ router.get('/discrepancies', authenticate, checkPermission('wialon_sync.read'), 
             pool.query(statsQuery, sessionId ? [sessionId] : [])
         ]);
         
+        const totalCount = countResult.rows.length > 0 ? parseInt(countResult.rows[0].total) : 0;
+        
         res.json({
             success: true,
             discrepancies: discrepanciesResult.rows,
-            total: parseInt(countResult.rows[0].total),
+            total: totalCount,
             stats: statsResult.rows,
             pagination: {
-                limit: parseInt(limit),
-                offset: parseInt(offset),
-                total: parseInt(countResult.rows[0].total)
+                page: parseInt(page),
+                perPage: limit,
+                total: totalCount
             }
         });
     } catch (error) {
@@ -542,6 +559,7 @@ router.get('/discrepancies', authenticate, checkPermission('wialon_sync.read'), 
         });
     }
 });
+
 // Вирішення розбіжностей (масове оновлення)
 router.post('/discrepancies/resolve', authenticate, checkPermission('wialon_sync.update'), async (req, res) => {
     const client = await pool.connect();
@@ -752,7 +770,7 @@ async function updateObjectOwner(client, discrepancy) {
     ]);
 }
 
-// Отримання налаштувань синхронізації
+// Отримання правил синхронізації
 router.get('/rules', authenticate, checkPermission('wialon_sync.read'), async (req, res) => {
     try {
         const {
@@ -761,8 +779,8 @@ router.get('/rules', authenticate, checkPermission('wialon_sync.read'), async (r
             search,
             sortBy = 'execution_order',
             descending = false,
-            limit = 20,
-            offset = 0
+            page = 1,
+            perPage = 20
         } = req.query;
         
         let query = `
@@ -797,8 +815,10 @@ router.get('/rules', authenticate, checkPermission('wialon_sync.read'), async (r
         query += ` ORDER BY ${sortBy} ${orderDirection}`;
         
         // Пагінація
+        const limit = parseInt(perPage);
+        const offset = (parseInt(page) - 1) * limit;
         query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-        params.push(parseInt(limit), parseInt(offset));
+        params.push(limit, offset);
         
         // Запит на загальну кількість
         let countQuery = `
@@ -838,8 +858,8 @@ router.get('/rules', authenticate, checkPermission('wialon_sync.read'), async (r
             rules: rulesResult.rows,
             total: parseInt(countResult.rows[0].total),
             pagination: {
-                limit: parseInt(limit),
-                offset: parseInt(offset),
+                page: parseInt(page),
+                perPage: limit,
                 total: parseInt(countResult.rows[0].total)
             }
         });
@@ -849,6 +869,66 @@ router.get('/rules', authenticate, checkPermission('wialon_sync.read'), async (r
             success: false,
             message: 'Помилка при отриманні правил синхронізації'
         });
+    }
+});
+
+// Створення нового правила синхронізації
+router.post('/rules', authenticate, checkPermission('wialon_sync.create'), async (req, res) => {
+    const client = await pool.connect();
+    
+    try {
+        await client.query('BEGIN');
+        
+        const { name, description, rule_type, sql_query, parameters, execution_order, is_active } = req.body;
+        
+        const query = `
+            INSERT INTO wialon_sync.sync_rules
+            (name, description, rule_type, sql_query, parameters, execution_order, is_active, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING *
+        `;
+        
+        const result = await client.query(query, [
+            name,
+            description,
+            rule_type,
+            sql_query,
+            parameters ? JSON.stringify(parameters) : null,
+            execution_order || 1,
+            is_active !== undefined ? is_active : true,
+            req.user.userId
+        ]);
+        
+        await client.query('COMMIT');
+        
+        // Аудит
+        await AuditService.log({
+            userId: req.user.userId,
+            actionType: 'SYNC_RULE_CREATE',
+            entityType: 'SYNC_RULE',
+            entityId: result.rows[0].id,
+            newValues: req.body,
+            ipAddress: req.ip,
+            tableSchema: 'wialon_sync',
+            tableName: 'sync_rules',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+        
+        res.status(201).json({
+            success: true,
+            rule: result.rows[0]
+        });
+        
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error creating sync rule:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при створенні правила синхронізації'
+        });
+    } finally {
+        client.release();
     }
 });
 
@@ -919,6 +999,141 @@ router.put('/rules/:ruleId', authenticate, checkPermission('wialon_sync.update')
         res.status(400).json({
             success: false,
             message: error.message || 'Помилка при оновленні правила синхронізації'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// Видалення правила синхронізації
+router.delete('/rules/:ruleId', authenticate, checkPermission('wialon_sync.delete'), async (req, res) => {
+    const client = await pool.connect();
+    
+    try {
+        await client.query('BEGIN');
+        
+        const { ruleId } = req.params;
+        
+        // Отримання даних правила для аудиту
+        const ruleData = await client.query('SELECT * FROM wialon_sync.sync_rules WHERE id = $1', [ruleId]);
+        
+        if (ruleData.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Правило синхронізації не знайдено'
+            });
+        }
+        
+        // Видалення правила
+        await client.query('DELETE FROM wialon_sync.sync_rules WHERE id = $1', [ruleId]);
+        
+        await client.query('COMMIT');
+        
+        // Аудит
+        await AuditService.log({
+            userId: req.user.userId,
+            actionType: 'SYNC_RULE_DELETE',
+            entityType: 'SYNC_RULE',
+            entityId: ruleId,
+            oldValues: ruleData.rows[0],
+            ipAddress: req.ip,
+            tableSchema: 'wialon_sync',
+            tableName: 'sync_rules',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+        
+        res.json({
+            success: true,
+            message: 'Правило синхронізації успішно видалено'
+        });
+        
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error deleting sync rule:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при видаленні правила синхронізації'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// Виконання конкретного правила
+router.post('/rules/:ruleId/execute', authenticate, checkPermission('wialon_sync.update'), async (req, res) => {
+    const client = await pool.connect();
+    
+    try {
+        await client.query('BEGIN');
+        
+        const { ruleId } = req.params;
+        
+        // Отримання правила
+        const ruleResult = await client.query(
+            'SELECT * FROM wialon_sync.sync_rules WHERE id = $1 AND is_active = true',
+            [ruleId]
+        );
+        
+        if (ruleResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Активне правило синхронізації не знайдено'
+            });
+        }
+        
+        const rule = ruleResult.rows[0];
+        
+        // Виконання SQL запиту правила
+        const executionResult = await client.query(rule.sql_query, rule.parameters ? Object.values(rule.parameters) : []);
+        
+        // Запис виконання правила
+        await client.query(`
+            INSERT INTO wialon_sync.sync_rule_executions (rule_id, executed_by, execution_result)
+            VALUES ($1, $2, $3)
+        `, [
+            ruleId,
+            req.user.userId,
+            JSON.stringify({
+                rowCount: executionResult.rowCount,
+                rows: executionResult.rows
+            })
+        ]);
+        
+        await client.query('COMMIT');
+        
+        // Аудит
+        await AuditService.log({
+            userId: req.user.userId,
+            actionType: 'SYNC_RULE_EXECUTE',
+            entityType: 'SYNC_RULE',
+            entityId: ruleId,
+            newValues: {
+                ruleName: rule.name,
+                executionResult: executionResult.rowCount
+            },
+            ipAddress: req.ip,
+            tableSchema: 'wialon_sync',
+            tableName: 'sync_rule_executions',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+        
+        res.json({
+            success: true,
+            message: `Правило "${rule.name}" успішно виконано`,
+            result: {
+                rowCount: executionResult.rowCount,
+                ruleName: rule.name
+            }
+        });
+        
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error executing sync rule:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при виконанні правила синхронізації'
         });
     } finally {
         client.release();
