@@ -57,7 +57,7 @@ router.post('/', authenticate, checkPermission('wialon_integration.update'), asy
 // Тестування підключення до Wialon
 router.post('/test-connection', authenticate, checkPermission('wialon_integration.read'), async (req, res) => {
     try {
-        const result = await WialonIntegrationService.testConnection(req.body.id);
+        const result = await WialonIntegrationService.testConnection();
         
         res.json(result);
     } catch (error) {
@@ -69,34 +69,7 @@ router.post('/test-connection', authenticate, checkPermission('wialon_integratio
     }
 });
 
-// Синхронізація об'єктів з Wialon
-router.post('/sync', authenticate, checkPermission('wialon_integration.update'), async (req, res) => {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        
-        const result = await WialonIntegrationService.syncObjects(
-            client, 
-            req.user.userId,
-            req
-        );
-        
-        await client.query('COMMIT');
-        
-        res.json({
-            success: true,
-            ...result
-        });
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error('Error syncing wialon objects:', error);
-        res.status(400).json({
-            success: false,
-            message: error.message || 'Помилка при синхронізації об\'єктів Wialon'
-        });
-    } finally {
-        client.release();
-    }
-});
+// ВИДАЛЕНО: /sync ендпоінт
+// Тепер синхронізація відбувається через /wialon-sync/start
 
 module.exports = router;
