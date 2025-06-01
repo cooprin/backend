@@ -55,6 +55,12 @@ class WialonIntegrationService {
             if (data.token_value) {
                 // Отримуємо ключ шифрування з змінної оточення
                 const encryptionKey = process.env.WIALON_ENCRYPTION_KEY;
+
+                console.log('=== SAVE TOKEN DEBUG ===');
+                console.log('Key exists:', !!encryptionKey);
+                console.log('Key value:', encryptionKey);
+                console.log('Key length:', encryptionKey?.length);
+                console.log('========================');
                 
                 if (!encryptionKey) {
                     throw new Error('WIALON_ENCRYPTION_KEY не встановлено в змінних оточення');
@@ -207,6 +213,12 @@ static async getWialonToken() {
     try {
         // Отримуємо ключ шифрування з змінної оточення
         const encryptionKey = process.env.WIALON_ENCRYPTION_KEY;
+
+        console.log('=== GET TOKEN DEBUG ===');
+        console.log('Key exists:', !!encryptionKey);
+        console.log('Key value:', encryptionKey);
+        console.log('Key length:', encryptionKey?.length);
+        console.log('======================');
         
         if (!encryptionKey) {
             throw new Error('WIALON_ENCRYPTION_KEY не встановлено в змінних оточення');
