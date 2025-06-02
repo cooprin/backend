@@ -385,38 +385,39 @@ static async findObjectNameChanges(client, sessionId) {
 }
 
 
-    // Пошук нових клієнтів
-    static async findNewClients(client, sessionId) {
-        try {
-            const query = `
-                INSERT INTO wialon_sync.sync_discrepancies 
-                (session_id, discrepancy_type, entity_type, wialon_entity_data, status)
-                SELECT 
-                    $1,
-                    'new_client',
-                    'client',
-                    jsonb_build_object(
-                        'wialon_id', twc.wialon_id,
-                        'name', twc.name,
-                        'full_name', twc.full_name,
-                        'description', twc.description
-                    ),
-                    'pending'
-                FROM wialon_sync.temp_wialon_clients twc
-                WHERE twc.session_id = $1
-                AND NOT EXISTS (
-                    SELECT 1 FROM clients.clients c 
-                    WHERE c.wialon_id = twc.wialon_id
-                )
-            `;
+// Пошук нових клієнтів
+static async findNewClients(client, sessionId) {
+    try {
+        const query = `
+            INSERT INTO wialon_sync.sync_discrepancies 
+            (session_id, discrepancy_type, entity_type, wialon_entity_data, status)
+            SELECT 
+                $1,
+                'new_client',
+                'client',
+                jsonb_build_object(
+                    'wialon_id', twc.wialon_id,
+                    'name', twc.name,
+                    'full_name', twc.full_name,
+                    'description', twc.description,
+                    'wialon_username', twc.wialon_username
+                ),
+                'pending'
+            FROM wialon_sync.temp_wialon_clients twc
+            WHERE twc.session_id = $1
+            AND NOT EXISTS (
+                SELECT 1 FROM clients.clients c 
+                WHERE c.wialon_id = twc.wialon_id
+            )
+        `;
 
-            const result = await client.query(query, [sessionId]);
-            return result.rowCount;
-        } catch (error) {
-            console.error('Error finding new clients:', error);
-            return 0;
-        }
+        const result = await client.query(query, [sessionId]);
+        return result.rowCount;
+    } catch (error) {
+        console.error('Error finding new clients:', error);
+        return 0;
     }
+}
 
 
     // Пошук змін назв клієнтів

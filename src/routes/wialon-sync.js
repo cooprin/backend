@@ -680,17 +680,19 @@ async function processApprovedDiscrepancies(client, discrepancies, userId) {
 }
 
 // Додавання нового клієнта
+// Додавання нового клієнта
 async function addNewClient(client, discrepancy, userId) {
     const wialonData = discrepancy.wialon_entity_data;
     
     await client.query(`
-        INSERT INTO clients.clients (wialon_id, name, full_name, description, is_active)
-        VALUES ($1, $2, $3, $4, true)
+        INSERT INTO clients.clients (wialon_id, name, full_name, description, wialon_username, is_active)
+        VALUES ($1, $2, $3, $4, $5, true)
     `, [
         wialonData.wialon_id,
         wialonData.name,
         wialonData.full_name || wialonData.name,
-        wialonData.description
+        wialonData.description,
+        wialonData.wialon_username
     ]);
 }
 
