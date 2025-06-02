@@ -142,7 +142,7 @@ class WialonSyncService {
         }
     }
 
-// Завантаження клієнтів з Wialon (фінальна версія)
+    // Завантаження клієнтів з Wialon
 static async loadClientsFromWialon(sessionId, apiUrl, eid) {
     try {
         const axios = require('axios');
@@ -229,6 +229,7 @@ static async loadClientsFromWialon(sessionId, apiUrl, eid) {
 }
 
 // Завантаження об'єктів з Wialon (оновлена версія)
+
 static async loadObjectsFromWialon(sessionId, apiUrl, eid) {
     try {
         const axios = require('axios');
@@ -254,7 +255,6 @@ static async loadObjectsFromWialon(sessionId, apiUrl, eid) {
                 const phones = this.extractPhoneNumbers(wialonObject);
                 const trackerId = this.extractTrackerId(wialonObject);
 
-                // НЕ ВИКОРИСТОВУЄМО owner_wialon_id, оскільки ці дані недоступні
                 await client.query(`
                     INSERT INTO wialon_sync.temp_wialon_objects 
                     (session_id, wialon_id, name, description, tracker_id, phone_numbers, additional_data)
@@ -283,6 +283,7 @@ static async loadObjectsFromWialon(sessionId, apiUrl, eid) {
 }
 
 // Пошук нових об'єктів (оновлена версія)
+
 static async findNewObjects(client, sessionId) {
     try {
         const query = `
@@ -317,6 +318,7 @@ static async findNewObjects(client, sessionId) {
 }
 
 // Аналіз розбіжностей (оновлена версія без перевірки власника)
+
 static async analyzeDiscrepancies(client, sessionId, userId) {
     try {
         await this.addSyncLog(sessionId, 'info', 'Starting discrepancy analysis');
@@ -332,14 +334,13 @@ static async analyzeDiscrepancies(client, sessionId, userId) {
         // Аналіз змін назв клієнтів
         totalDiscrepancies += await this.findClientNameChanges(client, sessionId);
 
+        // Аналіз змін username клієнтів
+        totalDiscrepancies += await this.findClientUsernameChanges(client, sessionId);
+
         // Аналіз змін назв об'єктів
         totalDiscrepancies += await this.findObjectNameChanges(client, sessionId);
 
-        // ВИДАЛЕНО: Аналіз змін власників об'єктів
-        // totalDiscrepancies += await this.findOwnershipChanges(client, sessionId);
-
         await this.addSyncLog(sessionId, 'info', `Discrepancy analysis completed. Found ${totalDiscrepancies} discrepancies`);
-        await this.addSyncLog(sessionId, 'info', 'Note: Ownership changes analysis skipped - owner data not available from Wialon');
         
         return totalDiscrepancies;
     } catch (error) {
@@ -383,35 +384,6 @@ static async findObjectNameChanges(client, sessionId) {
     }
 }
 
-    // Аналіз розбіжностей
-    static async analyzeDiscrepancies(client, sessionId, userId) {
-        try {
-            await this.addSyncLog(sessionId, 'info', 'Starting discrepancy analysis');
-
-            let totalDiscrepancies = 0;
-
-            // Аналіз нових клієнтів
-            totalDiscrepancies += await this.findNewClients(client, sessionId);
-
-            // Аналіз нових об'єктів
-            totalDiscrepancies += await this.findNewObjects(client, sessionId);
-
-            // Аналіз змін назв клієнтів
-            totalDiscrepancies += await this.findClientNameChanges(client, sessionId);
-
-            // Аналіз змін назв об'єктів
-            totalDiscrepancies += await this.findObjectNameChanges(client, sessionId);
-
-            // Аналіз змін власників об'єктів
-            totalDiscrepancies += await this.findOwnershipChanges(client, sessionId);
-
-            await this.addSyncLog(sessionId, 'info', `Discrepancy analysis completed. Found ${totalDiscrepancies} discrepancies`);
-            return totalDiscrepancies;
-        } catch (error) {
-            await this.addSyncLog(sessionId, 'error', 'Discrepancy analysis failed', { error: error.message });
-            throw error;
-        }
-    }
 
     // Пошук нових клієнтів
     static async findNewClients(client, sessionId) {
@@ -446,49 +418,6 @@ static async findObjectNameChanges(client, sessionId) {
         }
     }
 
-    // Пошук нових об'єктів
-    static async findNewObjects(client, sessionId) {
-        try {
-            const query = `
-                INSERT INTO wialon_sync.sync_discrepancies 
-                (session_id, discrepancy_type, entity_type, wialon_entity_data, suggested_client_id, suggested_action, status)
-                SELECT 
-                    $1,
-                    CASE 
-                        WHEN c.id IS NOT NULL THEN 'new_object_with_known_client'
-                        ELSE 'new_object'
-                    END,
-                    'object',
-                    jsonb_build_object(
-                        'wialon_id', two.wialon_id,
-                        'name', two.name,
-                        'description', two.description,
-                        'owner_wialon_id', two.owner_wialon_id,
-                        'tracker_id', two.tracker_id,
-                        'phone_numbers', two.phone_numbers
-                    ),
-                    c.id,
-                    CASE 
-                        WHEN c.id IS NOT NULL THEN 'assign_to_existing_client'
-                        ELSE NULL
-                    END,
-                    'pending'
-                FROM wialon_sync.temp_wialon_objects two
-                LEFT JOIN clients.clients c ON two.owner_wialon_id = c.wialon_id
-                WHERE two.session_id = $1
-                AND NOT EXISTS (
-                    SELECT 1 FROM wialon.objects o 
-                    WHERE o.wialon_id = two.wialon_id
-                )
-            `;
-
-            const result = await client.query(query, [sessionId]);
-            return result.rowCount;
-        } catch (error) {
-            console.error('Error finding new objects:', error);
-            return 0;
-        }
-    }
 
     // Пошук змін назв клієнтів
     static async findClientNameChanges(client, sessionId) {
@@ -525,6 +454,45 @@ static async findObjectNameChanges(client, sessionId) {
         }
     }
 
+
+static async findClientUsernameChanges(client, sessionId) {
+    try {
+        const query = `
+            INSERT INTO wialon_sync.sync_discrepancies 
+            (session_id, discrepancy_type, entity_type, system_client_id, wialon_entity_data, system_entity_data, status)
+            SELECT 
+                $1,
+                'client_username_changed',
+                'client',
+                c.id,
+                jsonb_build_object(
+                    'wialon_id', twc.wialon_id,
+                    'name', twc.name,
+                    'wialon_username', twc.wialon_username
+                ),
+                jsonb_build_object(
+                    'id', c.id,
+                    'name', c.name,
+                    'wialon_id', c.wialon_id,
+                    'wialon_username', c.wialon_username
+                ),
+                'pending'
+            FROM wialon_sync.temp_wialon_clients twc
+            JOIN clients.clients c ON twc.wialon_id = c.wialon_id
+            WHERE twc.session_id = $1
+            AND (
+                COALESCE(LOWER(TRIM(twc.wialon_username)), '') != COALESCE(LOWER(TRIM(c.wialon_username)), '')
+            )
+        `;
+
+        const result = await client.query(query, [sessionId]);
+        return result.rowCount;
+    } catch (error) {
+        console.error('Error finding client username changes:', error);
+        return 0;
+    }
+}
+
     // Пошук змін назв об'єктів
     static async findObjectNameChanges(client, sessionId) {
         try {
@@ -560,47 +528,6 @@ static async findObjectNameChanges(client, sessionId) {
         }
     }
 
-    // Пошук змін власників об'єктів
-    static async findOwnershipChanges(client, sessionId) {
-        try {
-            const query = `
-                INSERT INTO wialon_sync.sync_discrepancies 
-                (session_id, discrepancy_type, entity_type, system_object_id, suggested_client_id, wialon_entity_data, system_entity_data, suggested_action, status)
-                SELECT 
-                    $1,
-                    'owner_changed',
-                    'object',
-                    o.id,
-                    c_wialon.id,
-                    jsonb_build_object(
-                        'wialon_id', two.wialon_id,
-                        'name', two.name,
-                        'owner_wialon_id', two.owner_wialon_id
-                    ),
-                    jsonb_build_object(
-                        'id', o.id,
-                        'name', o.name,
-                        'current_client_id', o.client_id,
-                        'current_client_name', c_current.name
-                    ),
-                    'change_owner',
-                    'pending'
-                FROM wialon_sync.temp_wialon_objects two
-                JOIN wialon.objects o ON two.wialon_id = o.wialon_id
-                JOIN clients.clients c_current ON o.client_id = c_current.id
-                LEFT JOIN clients.clients c_wialon ON two.owner_wialon_id = c_wialon.wialon_id
-                WHERE two.session_id = $1
-                AND c_current.wialon_id != two.owner_wialon_id
-                AND c_wialon.id IS NOT NULL
-            `;
-
-            const result = await client.query(query, [sessionId]);
-            return result.rowCount;
-        } catch (error) {
-            console.error('Error finding ownership changes:', error);
-            return 0;
-        }
-    }
 
     // Отримання списку розбіжностей
     static async getDiscrepancies(sessionId = null, status = null, limit = 100, offset = 0) {
