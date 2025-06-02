@@ -148,7 +148,7 @@ class WialonSyncService {
             const axios = require('axios');
             
             // Отримуємо список користувачів (клієнтів)
-            const searchUrl = `${apiUrl}/wialon/ajax.html?svc=core/search_items&params={"spec":{"itemsType":"user","propName":"sys_name","propValueMask":"*","sortType":"sys_name"},"force":1,"flags":1,"from":0,"to":0}&sid=${eid}`;
+            const searchUrl = `${apiUrl}/wialon/ajax.html?svc=core/search_items&params={"spec":{"itemsType":"avl_resource","propName":"sys_name","propValueMask":"*","sortType":"sys_name"},"force":1,"flags":5,"from":0,"to":0}&sid=${eid}`;
             
             const response = await axios.get(searchUrl);
 

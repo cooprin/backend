@@ -154,8 +154,12 @@ class ClientService {
     static async createClient(client, data, userId, req) {
         try {
             // Перевірка наявності клієнта з такою ж назвою чи контактною інформацією
+            // Блокування для запобігання паралельним запитам
+            await client.query('LOCK TABLE clients.clients IN SHARE ROW EXCLUSIVE MODE');
+
+            // Перевірка наявності клієнта з такою ж назвою чи контактною інформацією
             const existingClient = await client.query(
-                'SELECT id FROM clients.clients WHERE name = $1 OR email = $2',
+                'SELECT id FROM clients.clients WHERE name = $1 OR (email = $2 AND email IS NOT NULL AND email != \'\')',
                 [data.name, data.email]
             );
 
