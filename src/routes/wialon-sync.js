@@ -797,7 +797,7 @@ router.get('/rules', authenticate, checkPermission('wialon_sync.read'), async (r
         }
         
         if (activeOnly === 'true') {
-            query += ` AND is_active = true`;
+            query += ` AND sr.is_active = true`;
         }
         
         if (search) {
@@ -835,7 +835,7 @@ router.get('/rules', authenticate, checkPermission('wialon_sync.read'), async (r
         }
         
         if (activeOnly === 'true') {
-            countQuery += ` AND is_active = true`;
+            countQuery += ` AND sr.is_active = true`;
         }
         
         if (search) {
@@ -942,6 +942,13 @@ router.put('/rules/:ruleId', authenticate, checkPermission('wialon_sync.update')
         const { ruleId } = req.params;
         const { name, description, sql_query, parameters, execution_order, is_active } = req.body;
         
+        delete req.body.id;
+        delete req.body.created_by_email;
+        delete req.body.created_by_name;  
+        delete req.body.total_executions;
+        delete req.body.last_execution;
+        delete req.body.created_at;
+        delete req.body.updated_at;
         const query = `
             UPDATE wialon_sync.sync_rules
             SET name = $1,
