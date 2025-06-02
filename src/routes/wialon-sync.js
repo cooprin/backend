@@ -156,7 +156,7 @@ router.get('/logs', authenticate, checkPermission('wialon_sync.read'), async (re
                 u.email as created_by_email
             FROM wialon_sync.sync_logs sl
             JOIN wialon_sync.sync_sessions ss ON sl.session_id = ss.id
-            LEFT JOIN users u ON ss.created_by = u.id
+            LEFT JOIN auth.users u ON ss.created_by = u.id
             WHERE 1=1
         `;
         
