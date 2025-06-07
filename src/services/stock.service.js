@@ -1389,74 +1389,79 @@ static async validateInstallation(client, { product_id, warehouse_id, object_id 
     }
 
     // Товари в ремонті з тривалістю
-    static async getRepairItems(filters = {}) {
-        try {
-            const {
-                search = '',
-                sortBy = 'days_in_repair',
-                descending = true
-            } = filters;
+static async getRepairItems(filters = {}) {
+    try {
+        const {
+            search = '',
+            sortBy = 'days_in_repair',
+            descending = true
+        } = filters;
 
-            let conditions = ["p.current_status = 'in_repair'", 'p.is_active = true'];
-            let params = [];
-            let paramIndex = 1;
+        let conditions = ["p.current_status = 'in_repair'", 'p.is_active = true'];
+        let params = [];
+        let paramIndex = 1;
 
-            if (search) {
-                conditions.push(`(
-                    p.sku ILIKE $${paramIndex} OR 
-                    m.name ILIKE $${paramIndex} OR
-                    man.name ILIKE $${paramIndex}
-                )`);
-                params.push(`%${search}%`);
-                paramIndex++;
-            }
-
-            const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
-            
-            const sortMapping = {
-                'sku': 'p.sku',
-                'model_name': 'm.name',
-                'manufacturer_name': 'man.name',
-                'sent_date': 'repair_sent_date',
-                'days_in_repair': 'days_in_repair'
-            };
-
-            const sortByColumn = sortMapping[sortBy] || 'days_in_repair';
-            const orderDirection = descending ? 'DESC' : 'ASC';
-
-            const query = `
-                SELECT 
-                    p.id as product_id,
-                    p.sku,
-                    m.name as model_name,
-                    man.name as manufacturer_name,
-                    pt.name as product_type_name,
-                    sm.created_at as repair_sent_date,
-                    EXTRACT(DAY FROM (CURRENT_TIMESTAMP - sm.created_at))::integer as days_in_repair,
-                    wf.name as from_warehouse_name,
-                    sm.comment
-                FROM products.products p
-                JOIN products.models m ON p.model_id = m.id
-                JOIN products.manufacturers man ON m.manufacturer_id = man.id
-                JOIN products.product_types pt ON m.product_type_id = pt.id
-                LEFT JOIN warehouses.stock_movements sm ON p.id = sm.product_id 
-                    AND sm.type = 'repair_send'
-                    AND sm.id = (
-                        SELECT MAX(id) FROM warehouses.stock_movements 
-                        WHERE product_id = p.id AND type = 'repair_send'
-                    )
-                LEFT JOIN warehouses.warehouses wf ON sm.from_warehouse_id = wf.id
-                ${whereClause}
-                ORDER BY ${sortByColumn} ${orderDirection}
-            `;
-            
-            const result = await pool.query(query, params);
-            return result.rows;
-        } catch (error) {
-            console.error('Error getting repair items:', error);
-            throw error;
+        if (search) {
+            conditions.push(`(
+                p.sku ILIKE ${paramIndex} OR 
+                m.name ILIKE ${paramIndex} OR
+                man.name ILIKE ${paramIndex}
+            )`);
+            params.push(`%${search}%`);
+            paramIndex++;
         }
+
+        const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+        
+        const sortMapping = {
+            'sku': 'p.sku',
+            'model_name': 'm.name', 
+            'manufacturer_name': 'man.name',
+            'sent_date': 'repair_sent_date',
+            'days_in_repair': 'days_in_repair'
+        };
+
+        const sortByColumn = sortMapping[sortBy] || 'days_in_repair';
+        const orderDirection = descending ? 'DESC' : 'ASC';
+
+        const query = `
+            WITH latest_repair_movements AS (
+                SELECT 
+                    sm.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY sm.product_id 
+                        ORDER BY sm.created_at DESC
+                    ) as rn
+                FROM warehouses.stock_movements sm
+                WHERE sm.type = 'repair_send'
+            )
+            SELECT 
+                p.id as product_id,
+                p.sku,
+                m.name as model_name,
+                man.name as manufacturer_name,
+                pt.name as product_type_name,
+                lrm.created_at as repair_sent_date,
+                EXTRACT(DAY FROM (CURRENT_TIMESTAMP - lrm.created_at))::integer as days_in_repair,
+                wf.name as from_warehouse_name,
+                lrm.comment
+            FROM products.products p
+            JOIN products.models m ON p.model_id = m.id
+            JOIN products.manufacturers man ON m.manufacturer_id = man.id
+            JOIN products.product_types pt ON m.product_type_id = pt.id
+            LEFT JOIN latest_repair_movements lrm ON p.id = lrm.product_id AND lrm.rn = 1
+            LEFT JOIN warehouses.warehouses wf ON lrm.from_warehouse_id = wf.id
+            ${whereClause}
+            ORDER BY ${sortByColumn} ${orderDirection}
+        `;
+        
+        const result = await pool.query(query, params);
+        return result.rows;
+    } catch (error) {
+        console.error('Error getting repair items:', error);
+        throw error;
     }
+}
 }
 
 
