@@ -1239,245 +1239,226 @@ static async validateInstallation(client, { product_id, warehouse_id, object_id 
             throw error;
         }
     }
-    // Додати після методу getStockByModel
-static async getNonLiquidStock(filters = {}, limit = 50) {
-    try {
-        // Визначення базових параметрів запиту
-        const {
-            page = 1,
-            perPage = 10,
-            warehouse = '',
-            manufacturer = '',
-            productType = '',
-            search = '',
-            daysThreshold = 30 // За замовчуванням вважаємо неліквідними товари без руху > 30 днів
-        } = filters;
 
-        // Побудова умов фільтрації
-        let conditions = ['s.quantity > 0', 'p.is_active = true', 'w.is_active = true'];
-        let params = [parseInt(daysThreshold)];
-        let paramIndex = 2;
 
-        if (search) {
-            conditions.push(`(
-                p.sku ILIKE $${paramIndex} OR 
-                m.name ILIKE $${paramIndex} OR 
-                man.name ILIKE $${paramIndex} OR
-                w.name ILIKE $${paramIndex}
-            )`);
-            params.push(`%${search}%`);
-            paramIndex++;
-        }
+// Отримання загальної інформації по складу
+    static async getWarehouseStockSummary(warehouseId = null) {
+        try {
+            let warehouseCondition = '';
+            let params = [];
+            let paramIndex = 1;
 
-        if (warehouse) {
-            conditions.push(`w.id = $${paramIndex}`);
-            params.push(warehouse);
-            paramIndex++;
-        }
+            if (warehouseId) {
+                warehouseCondition = 'AND s.warehouse_id = $1';
+                params.push(warehouseId);
+                paramIndex = 2;
+            }
 
-        if (manufacturer) {
-            conditions.push(`man.id = $${paramIndex}`);
-            params.push(manufacturer);
-            paramIndex++;
-        }
-
-        if (productType) {
-            conditions.push(`m.product_type_id = $${paramIndex}`);
-            params.push(productType);
-            paramIndex++;
-        }
-
-        const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
-
-        // SQL запит для знаходження неліквідних товарів
-        const query = `
-            WITH last_movement AS (
+            const query = `
                 SELECT 
-                    sm.product_id,
-                    MAX(sm.created_at) as last_movement_date
-                FROM warehouses.stock_movements sm
-                GROUP BY sm.product_id
-            )
-            SELECT 
-                s.id,
-                s.product_id,
-                p.sku,
-                m.name as model_name,
-                pt.name as product_type_name,
-                man.name as manufacturer_name,
-                w.id as warehouse_id,
-                w.name as warehouse_name,
-                s.quantity,
-                s.price,
-                EXTRACT(DAY FROM (CURRENT_TIMESTAMP - COALESCE(lm.last_movement_date, p.created_at))) as days_without_movement
-            FROM warehouses.stock s
-            JOIN products.products p ON s.product_id = p.id
-            JOIN products.models m ON p.model_id = m.id
-            JOIN products.product_types pt ON m.product_type_id = pt.id
-            JOIN products.manufacturers man ON m.manufacturer_id = man.id
-            JOIN warehouses.warehouses w ON s.warehouse_id = w.id
-            LEFT JOIN last_movement lm ON p.id = lm.product_id
-            ${whereClause}
-            AND EXTRACT(DAY FROM (CURRENT_TIMESTAMP - COALESCE(lm.last_movement_date, p.created_at))) > $1
-            ORDER BY days_without_movement DESC
-            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
-        `;
-
-        // Запит для отримання загальної кількості записів (для пагінації)
-        const countQuery = `
-            WITH last_movement AS (
-                SELECT 
-                    sm.product_id,
-                    MAX(sm.created_at) as last_movement_date
-                FROM warehouses.stock_movements sm
-                GROUP BY sm.product_id
-            )
-            SELECT COUNT(*)
-            FROM warehouses.stock s
-            JOIN products.products p ON s.product_id = p.id
-            JOIN products.models m ON p.model_id = m.id
-            JOIN products.product_types pt ON m.product_type_id = pt.id
-            JOIN products.manufacturers man ON m.manufacturer_id = man.id
-            JOIN warehouses.warehouses w ON s.warehouse_id = w.id
-            LEFT JOIN last_movement lm ON p.id = lm.product_id
-            ${whereClause}
-            AND EXTRACT(DAY FROM (CURRENT_TIMESTAMP - COALESCE(lm.last_movement_date, p.created_at))) > $1
-        `;
-
-        // Додаємо параметри для ліміту та офсету
-        params.push(parseInt(perPage), (parseInt(page) - 1) * parseInt(perPage));
-
-        // Виконуємо запити
-        const [itemsResult, totalResult] = await Promise.all([
-            pool.query(query, params),
-            pool.query(countQuery, params.slice(0, paramIndex - 1))
-        ]);
-
-        return itemsResult.rows;
-    } catch (error) {
-        console.error('Error getting non-liquid stock:', error);
-        throw error;
-    }
-}
-
-static async getStockForecast(filters = {}) {
-    try {
-        const {
-            period = 90, // кількість днів для прогнозу
-            warehouse = '',
-            productType = '',
-            manufacturer = '',
-            search = ''
-        } = filters;
-
-        // Побудова умов фільтрації
-        let conditions = ['p.is_active = true'];
-        let params = [parseInt(period)];
-        let paramIndex = 2;
-
-        if (search) {
-            conditions.push(`(
-                p.sku ILIKE $${paramIndex} OR 
-                m.name ILIKE $${paramIndex} OR 
-                pt.name ILIKE $${paramIndex} OR
-                man.name ILIKE $${paramIndex}
-            )`);
-            params.push(`%${search}%`);
-            paramIndex++;
-        }
-
-        if (warehouse) {
-            conditions.push(`s.warehouse_id = $${paramIndex}`);
-            params.push(warehouse);
-            paramIndex++;
-        }
-
-        if (manufacturer) {
-            conditions.push(`man.id = $${paramIndex}`);
-            params.push(manufacturer);
-            paramIndex++;
-        }
-
-        if (productType) {
-            conditions.push(`pt.id = $${paramIndex}`);
-            params.push(productType);
-            paramIndex++;
-        }
-
-        const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
-
-        // Отримуємо історичні дані руху товарів за останні 6 місяців
-        const historicalQuery = `
-            WITH daily_movements AS (
-                SELECT 
-                    DATE_TRUNC('day', sm.created_at) as date,
-                    pt.id as product_type_id,
-                    pt.name as product_type,
-                    SUM(CASE 
-                        WHEN sm.type IN ('stock_in', 'repair_return', 'uninstall') THEN sm.quantity
-                        WHEN sm.type IN ('stock_out', 'install', 'repair_send', 'write_off') THEN -sm.quantity
-                        ELSE 0
-                    END) as daily_change
-                FROM warehouses.stock_movements sm
-                JOIN products.products p ON sm.product_id = p.id
+                    COUNT(DISTINCT s.product_id) as total_products,
+                    COALESCE(SUM(s.quantity), 0) as total_quantity,
+                    COUNT(DISTINCT m.product_type_id) as product_types_count,
+                    COUNT(CASE WHEN s.quantity < 5 THEN 1 END) as critical_count
+                FROM warehouses.stock s
+                JOIN products.products p ON s.product_id = p.id
                 JOIN products.models m ON p.model_id = m.id
-                JOIN products.product_types pt ON m.product_type_id = pt.id
+                WHERE p.is_active = true ${warehouseCondition}
+            `;
+            
+            const result = await pool.query(query, params);
+            return result.rows[0];
+        } catch (error) {
+            console.error('Error getting warehouse stock summary:', error);
+            throw error;
+        }
+    }
+
+    // Розподіл по типах товарів для складу
+    static async getStockByTypesForWarehouse(warehouseId = null) {
+        try {
+            let warehouseCondition = '';
+            let params = [];
+
+            if (warehouseId) {
+                warehouseCondition = 'AND s.warehouse_id = $1';
+                params.push(warehouseId);
+            }
+
+            const query = `
+                SELECT 
+                    pt.id as product_type_id,
+                    pt.name as product_type_name,
+                    COUNT(DISTINCT s.product_id) as product_count,
+                    COALESCE(SUM(s.quantity), 0) as total_quantity
+                FROM products.product_types pt
+                JOIN products.models m ON pt.id = m.product_type_id
+                JOIN products.products p ON m.id = p.model_id
+                JOIN warehouses.stock s ON p.id = s.product_id
+                WHERE pt.is_active = true AND p.is_active = true ${warehouseCondition}
+                GROUP BY pt.id, pt.name
+                ORDER BY total_quantity DESC
+            `;
+            
+            const result = await pool.query(query, params);
+            return result.rows;
+        } catch (error) {
+            console.error('Error getting stock by types:', error);
+            throw error;
+        }
+    }
+
+    // Моделі з залишками для складу
+    static async getModelStockForWarehouse(warehouseId = null, filters = {}) {
+        try {
+            const {
+                search = '',
+                productType = '',
+                sortBy = 'quantity',
+                descending = true
+            } = filters;
+
+            let conditions = ['p.is_active = true'];
+            let params = [];
+            let paramIndex = 1;
+
+            if (warehouseId) {
+                conditions.push(`s.warehouse_id = $${paramIndex}`);
+                params.push(warehouseId);
+                paramIndex++;
+            }
+
+            if (search) {
+                conditions.push(`(
+                    m.name ILIKE $${paramIndex} OR 
+                    man.name ILIKE $${paramIndex} OR
+                    pt.name ILIKE $${paramIndex}
+                )`);
+                params.push(`%${search}%`);
+                paramIndex++;
+            }
+
+            if (productType) {
+                conditions.push(`pt.id = $${paramIndex}`);
+                params.push(productType);
+                paramIndex++;
+            }
+
+            const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+            
+            const sortMapping = {
+                'model_name': 'm.name',
+                'manufacturer_name': 'man.name',
+                'product_type_name': 'pt.name',
+                'quantity': 'total_quantity'
+            };
+
+            const sortByColumn = sortMapping[sortBy] || 'total_quantity';
+            const orderDirection = descending ? 'DESC' : 'ASC';
+
+            const query = `
+                SELECT 
+                    m.id as model_id,
+                    m.name as model_name,
+                    man.name as manufacturer_name,
+                    pt.name as product_type_name,
+                    pt.id as product_type_id,
+                    COALESCE(SUM(s.quantity), 0) as total_quantity,
+                    COUNT(DISTINCT s.product_id) as product_count,
+                    CASE 
+                        WHEN COALESCE(SUM(s.quantity), 0) >= 10 THEN 'high'
+                        WHEN COALESCE(SUM(s.quantity), 0) >= 5 THEN 'medium'
+                        ELSE 'critical'
+                    END as stock_status
+                FROM products.models m
                 JOIN products.manufacturers man ON m.manufacturer_id = man.id
+                JOIN products.product_types pt ON m.product_type_id = pt.id
+                JOIN products.products p ON m.id = p.model_id
                 LEFT JOIN warehouses.stock s ON p.id = s.product_id
                 ${whereClause}
-                AND sm.created_at >= CURRENT_DATE - INTERVAL '180 days'
-                GROUP BY DATE_TRUNC('day', sm.created_at), pt.id, pt.name
-            ),
-            current_stock AS (
+                GROUP BY m.id, m.name, man.name, pt.name, pt.id
+                ORDER BY ${sortByColumn} ${orderDirection}
+            `;
+            
+            const result = await pool.query(query, params);
+            return result.rows;
+        } catch (error) {
+            console.error('Error getting model stock:', error);
+            throw error;
+        }
+    }
+
+    // Товари в ремонті з тривалістю
+    static async getRepairItems(filters = {}) {
+        try {
+            const {
+                search = '',
+                sortBy = 'days_in_repair',
+                descending = true
+            } = filters;
+
+            let conditions = ["p.current_status = 'in_repair'", 'p.is_active = true'];
+            let params = [];
+            let paramIndex = 1;
+
+            if (search) {
+                conditions.push(`(
+                    p.sku ILIKE $${paramIndex} OR 
+                    m.name ILIKE $${paramIndex} OR
+                    man.name ILIKE $${paramIndex}
+                )`);
+                params.push(`%${search}%`);
+                paramIndex++;
+            }
+
+            const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+            
+            const sortMapping = {
+                'sku': 'p.sku',
+                'model_name': 'm.name',
+                'manufacturer_name': 'man.name',
+                'sent_date': 'repair_sent_date',
+                'days_in_repair': 'days_in_repair'
+            };
+
+            const sortByColumn = sortMapping[sortBy] || 'days_in_repair';
+            const orderDirection = descending ? 'DESC' : 'ASC';
+
+            const query = `
                 SELECT 
-                    pt.id as product_type_id,
-                    pt.name as product_type,
-                    COALESCE(SUM(s.quantity), 0) as current_quantity
-                FROM products.product_types pt
-                LEFT JOIN products.models m ON pt.id = m.product_type_id
-                LEFT JOIN products.products p ON m.id = p.model_id
-                LEFT JOIN warehouses.stock s ON p.id = s.product_id
+                    p.id as product_id,
+                    p.sku,
+                    m.name as model_name,
+                    man.name as manufacturer_name,
+                    pt.name as product_type_name,
+                    sm.created_at as repair_sent_date,
+                    EXTRACT(DAY FROM (CURRENT_TIMESTAMP - sm.created_at))::integer as days_in_repair,
+                    wf.name as from_warehouse_name,
+                    sm.comment
+                FROM products.products p
+                JOIN products.models m ON p.model_id = m.id
                 JOIN products.manufacturers man ON m.manufacturer_id = man.id
-                ${whereClause.replace('WHERE', 'WHERE pt.is_active = true AND')}
-                GROUP BY pt.id, pt.name
-            )
-            SELECT 
-                generate_series(
-                    CURRENT_DATE - INTERVAL '90 days',
-                    CURRENT_DATE + INTERVAL '$1 days',
-                    '1 day'
-                )::date as date,
-                cs.product_type_id,
-                cs.product_type,
-                CASE
-                    WHEN generate_series <= CURRENT_DATE THEN 
-                        cs.current_quantity - COALESCE(SUM(dm.daily_change) FILTER (WHERE dm.date > generate_series AND dm.date <= CURRENT_DATE), 0)
-                    ELSE 
-                        -- Розрахунок прогнозу на основі середнього денного руху за останні 3 місяці
-                        cs.current_quantity + (
-                            (COALESCE(AVG(dm.daily_change) FILTER (WHERE dm.date > CURRENT_DATE - INTERVAL '90 days' AND dm.date <= CURRENT_DATE), 0))
-                            * (generate_series - CURRENT_DATE)::integer
-                        )
-                END as quantity
-            FROM generate_series(
-                CURRENT_DATE - INTERVAL '90 days',
-                CURRENT_DATE + INTERVAL '$1 days',
-                '1 day'
-            )
-            CROSS JOIN current_stock cs
-            LEFT JOIN daily_movements dm ON cs.product_type_id = dm.product_type_id
-            GROUP BY generate_series, cs.product_type_id, cs.product_type, cs.current_quantity
-            ORDER BY cs.product_type, date
-        `;
-
-        const result = await pool.query(historicalQuery, params);
-
-        return result.rows;
-    } catch (error) {
-        console.error('Error getting stock forecast:', error);
-        throw error;
+                JOIN products.product_types pt ON m.product_type_id = pt.id
+                LEFT JOIN warehouses.stock_movements sm ON p.id = sm.product_id 
+                    AND sm.type = 'repair_send'
+                    AND sm.id = (
+                        SELECT MAX(id) FROM warehouses.stock_movements 
+                        WHERE product_id = p.id AND type = 'repair_send'
+                    )
+                LEFT JOIN warehouses.warehouses wf ON sm.from_warehouse_id = wf.id
+                ${whereClause}
+                ORDER BY ${sortByColumn} ${orderDirection}
+            `;
+            
+            const result = await pool.query(query, params);
+            return result.rows;
+        } catch (error) {
+            console.error('Error getting repair items:', error);
+            throw error;
+        }
     }
 }
-}
+
+
 
 module.exports = StockService;

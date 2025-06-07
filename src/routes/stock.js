@@ -671,38 +671,77 @@ router.get('/by-model', authenticate, checkPermission('warehouses.read'), async 
         });
     }
 });
-// Отримання неліквідних товарів
-router.get('/non-liquid', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+// Отримання загальної інформації по складу
+router.get('/warehouse-summary/:warehouseId?', authenticate, checkPermission('warehouses.read'), async (req, res) => {
     try {
-        const items = await StockService.getNonLiquidStock(req.query);
+        const warehouseId = req.params.warehouseId === 'all' ? null : req.params.warehouseId;
+        const summary = await StockService.getWarehouseStockSummary(warehouseId);
+        
+        res.json({
+            success: true,
+            summary
+        });
+    } catch (error) {
+        console.error('Error fetching warehouse stock summary:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching warehouse stock summary'
+        });
+    }
+});
+
+// Розподіл по типах товарів для складу
+router.get('/stock-by-types/:warehouseId?', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    try {
+        const warehouseId = req.params.warehouseId === 'all' ? null : req.params.warehouseId;
+        const types = await StockService.getStockByTypesForWarehouse(warehouseId);
+        
+        res.json({
+            success: true,
+            types
+        });
+    } catch (error) {
+        console.error('Error fetching stock by types:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching stock by types'
+        });
+    }
+});
+
+// Моделі з залишками для складу
+router.get('/models-stock/:warehouseId?', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    try {
+        const warehouseId = req.params.warehouseId === 'all' ? null : req.params.warehouseId;
+        const models = await StockService.getModelStockForWarehouse(warehouseId, req.query);
+        
+        res.json({
+            success: true,
+            models
+        });
+    } catch (error) {
+        console.error('Error fetching model stock:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching model stock'
+        });
+    }
+});
+
+// Товари в ремонті
+router.get('/repair-items', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    try {
+        const items = await StockService.getRepairItems(req.query);
         
         res.json({
             success: true,
             items
         });
     } catch (error) {
-        console.error('Error fetching non-liquid stock:', error);
+        console.error('Error fetching repair items:', error);
         res.status(500).json({
             success: false,
-            message: 'Server error while fetching non-liquid stock'
-        });
-    }
-});
-
-// Отримання прогнозу запасів
-router.get('/forecast', authenticate, checkPermission('warehouses.read'), async (req, res) => {
-    try {
-        const forecast = await StockService.getStockForecast(req.query);
-        
-        res.json({
-            success: true,
-            forecast
-        });
-    } catch (error) {
-        console.error('Error fetching stock forecast:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error while fetching stock forecast'
+            message: 'Server error while fetching repair items'
         });
     }
 });
