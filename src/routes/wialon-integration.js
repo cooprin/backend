@@ -6,7 +6,7 @@ const { checkPermission } = require('../middleware/checkPermission');
 const WialonIntegrationService = require('../services/wialon-integration.service');
 
 // Отримання налаштувань інтеграції
-router.get('/', authenticate, checkPermission('wialon_integration.read'), async (req, res) => {
+router.get('/', authenticate, checkPermission('wialon_sync.read'), async (req, res) => {
     try {
         const settings = await WialonIntegrationService.getIntegrationSettings();
         
@@ -24,7 +24,7 @@ router.get('/', authenticate, checkPermission('wialon_integration.read'), async 
 });
 
 // Збереження налаштувань інтеграції
-router.post('/', authenticate, checkPermission('wialon_integration.update'), async (req, res) => {
+router.post('/', authenticate, checkPermission('wialon_sync.update'), async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -55,7 +55,7 @@ router.post('/', authenticate, checkPermission('wialon_integration.update'), asy
 });
 
 // Тестування підключення до Wialon
-router.post('/test-connection', authenticate, checkPermission('wialon_integration.read'), async (req, res) => {
+router.post('/test-connection', authenticate, checkPermission('wialon_sync.read'), async (req, res) => {
     try {
         const result = await WialonIntegrationService.testConnection();
         

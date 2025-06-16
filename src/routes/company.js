@@ -143,7 +143,7 @@ router.post('/logo', authenticate, checkPermission('company_profile.update'), up
 });
 
 // Банківські рахунки
-router.get('/bank-accounts', authenticate, checkPermission('bank_accounts.read'), async (req, res) => {
+router.get('/bank-accounts', authenticate, checkPermission('company_profile.read'), async (req, res) => {
     try {
         const accounts = await CompanyService.getBankAccounts();
         
@@ -160,7 +160,7 @@ router.get('/bank-accounts', authenticate, checkPermission('bank_accounts.read')
     }
 });
 
-router.post('/bank-accounts', authenticate, checkPermission('bank_accounts.create'), async (req, res) => {
+router.post('/bank-accounts', authenticate, checkPermission('company_profile.update'), async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -190,7 +190,7 @@ router.post('/bank-accounts', authenticate, checkPermission('bank_accounts.creat
     }
 });
 
-router.put('/bank-accounts/:id', authenticate, checkPermission('bank_accounts.update'), async (req, res) => {
+router.put('/bank-accounts/:id', authenticate, checkPermission('company_profile.update'), async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -221,7 +221,7 @@ router.put('/bank-accounts/:id', authenticate, checkPermission('bank_accounts.up
     }
 });
 
-router.delete('/bank-accounts/:id', authenticate, checkPermission('bank_accounts.delete'), async (req, res) => {
+router.delete('/bank-accounts/:id', authenticate, checkPermission('company_profile.delete'), async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -252,7 +252,7 @@ router.delete('/bank-accounts/:id', authenticate, checkPermission('bank_accounts
 });
 
 // Юридичні документи
-router.get('/legal-documents', authenticate, checkPermission('legal_documents.read'), async (req, res) => {
+router.get('/legal-documents', authenticate, checkPermission('company_profile.read'), async (req, res) => {
     try {
         const documents = await CompanyService.getLegalDocuments();
         
@@ -269,7 +269,7 @@ router.get('/legal-documents', authenticate, checkPermission('legal_documents.re
     }
 });
 
-router.post('/legal-documents', authenticate, checkPermission('legal_documents.create'), upload.single('file'), async (req, res) => {
+router.post('/legal-documents', authenticate, checkPermission('company_profile.update'), upload.single('file'), async (req, res) => {
     const client = await pool.connect();
     try {
         if (!req.file) {
@@ -313,7 +313,7 @@ router.post('/legal-documents', authenticate, checkPermission('legal_documents.c
     }
 });
 
-router.delete('/legal-documents/:id', authenticate, checkPermission('legal_documents.delete'), async (req, res) => {
+router.delete('/legal-documents/:id', authenticate, checkPermission('company_profile.delete'), async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -344,7 +344,7 @@ router.delete('/legal-documents/:id', authenticate, checkPermission('legal_docum
 });
 
 // Системні налаштування
-router.get('/settings', authenticate, checkPermission('settings.read'), async (req, res) => {
+router.get('/settings', authenticate, checkPermission('company_profile.read'), async (req, res) => {
     try {
         const settings = await CompanyService.getSystemSettings(req.query.category);
         
@@ -361,7 +361,7 @@ router.get('/settings', authenticate, checkPermission('settings.read'), async (r
     }
 });
 
-router.get('/settings/:category/:key', authenticate, checkPermission('settings.read'), async (req, res) => {
+router.get('/settings/:category/:key', authenticate, checkPermission('company_profile.read'), async (req, res) => {
     try {
         const setting = await CompanyService.getSystemSetting(
             req.params.category, 
@@ -388,7 +388,7 @@ router.get('/settings/:category/:key', authenticate, checkPermission('settings.r
     }
 });
 
-router.post('/settings', authenticate, checkPermission('settings.create'), async (req, res) => {
+router.post('/settings', authenticate, checkPermission('company_profile.update'), async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -418,7 +418,7 @@ router.post('/settings', authenticate, checkPermission('settings.create'), async
     }
 });
 
-router.delete('/settings/:id', authenticate, checkPermission('settings.delete'), async (req, res) => {
+router.delete('/settings/:id', authenticate, checkPermission('company_profile.delete'), async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
