@@ -1242,37 +1242,136 @@ static async validateInstallation(client, { product_id, warehouse_id, object_id 
 
 
 // Отримання загальної інформації по складу
-    static async getWarehouseStockSummary(warehouseId = null) {
-        try {
-            let warehouseCondition = '';
-            let params = [];
-            let paramIndex = 1;
+static async getWarehouseStockSummary(warehouseId = null) {
+    try {
+        let warehouseCondition = '';
+        let params = [];
+        let paramIndex = 1;
 
-            if (warehouseId) {
-                warehouseCondition = 'AND s.warehouse_id = $1';
-                params.push(warehouseId);
-                paramIndex = 2;
-            }
-
-            const query = `
-                SELECT 
-                    COUNT(DISTINCT s.product_id) as total_products,
-                    COALESCE(SUM(s.quantity), 0) as total_quantity,
-                    COUNT(DISTINCT m.product_type_id) as product_types_count,
-                    COUNT(CASE WHEN s.quantity < 5 THEN 1 END) as critical_count
-                FROM warehouses.stock s
-                JOIN products.products p ON s.product_id = p.id
-                JOIN products.models m ON p.model_id = m.id
-                WHERE p.is_active = true ${warehouseCondition}
-            `;
-            
-            const result = await pool.query(query, params);
-            return result.rows[0];
-        } catch (error) {
-            console.error('Error getting warehouse stock summary:', error);
-            throw error;
+        if (warehouseId) {
+            warehouseCondition = 'AND s.warehouse_id = $1';
+            params.push(warehouseId);
+            paramIndex = 2;
         }
+
+        const query = `
+            SELECT 
+                COUNT(DISTINCT m.id) as total_models,
+                COALESCE(SUM(s.quantity), 0) as total_quantity,
+                COUNT(DISTINCT m.product_type_id) as product_types_count,
+                COUNT(DISTINCT CASE 
+                    WHEN model_totals.total_quantity < 5 THEN m.id 
+                END) as critical_models_count
+            FROM products.models m
+            JOIN products.products p ON m.id = p.model_id
+            LEFT JOIN warehouses.stock s ON p.id = s.product_id
+            LEFT JOIN (
+                SELECT 
+                    m2.id as model_id,
+                    COALESCE(SUM(s2.quantity), 0) as total_quantity
+                FROM products.models m2
+                JOIN products.products p2 ON m2.id = p2.model_id
+                LEFT JOIN warehouses.stock s2 ON p2.id = s2.product_id
+                WHERE p2.is_active = true ${warehouseCondition.replace('s.', 's2.')}
+                GROUP BY m2.id
+            ) model_totals ON m.id = model_totals.model_id
+            WHERE p.is_active = true AND m.is_active = true ${warehouseCondition}
+        `;
+        
+        const result = await pool.query(query, params);
+        return result.rows[0];
+    } catch (error) {
+        console.error('Error getting warehouse stock summary:', error);
+        throw error;
     }
+}
+
+// Отримання списку критичних моделей
+static async getCriticalModels(warehouseId = null) {
+    try {
+        let warehouseCondition = '';
+        let params = [];
+        let paramIndex = 1;
+
+        if (warehouseId) {
+            warehouseCondition = 'AND s.warehouse_id = $1';
+            params.push(warehouseId);
+            paramIndex++;
+        }
+
+        const query = `
+            SELECT 
+                m.id as model_id,
+                m.name as model_name,
+                man.name as manufacturer_name,
+                pt.name as product_type_name,
+                COALESCE(SUM(s.quantity), 0) as total_quantity
+            FROM products.models m
+            JOIN products.manufacturers man ON m.manufacturer_id = man.id
+            JOIN products.product_types pt ON m.product_type_id = pt.id
+            JOIN products.products p ON m.id = p.model_id
+            LEFT JOIN warehouses.stock s ON p.id = s.product_id
+            WHERE p.is_active = true AND m.is_active = true ${warehouseCondition}
+            GROUP BY m.id, m.name, man.name, pt.name
+            HAVING COALESCE(SUM(s.quantity), 0) < 5
+            ORDER BY total_quantity ASC, m.name ASC
+        `;
+        
+        const result = await pool.query(query, params);
+        return result.rows;
+    } catch (error) {
+        console.error('Error getting critical models:', error);
+        throw error;
+    }
+}
+
+// Отримання критичних залишків по типах товарів
+static async getCriticalByTypes(warehouseId = null) {
+    try {
+        let warehouseCondition = '';
+        let params = [];
+        let paramIndex = 1;
+
+        if (warehouseId) {
+            warehouseCondition = 'AND s.warehouse_id = $1';
+            params.push(warehouseId);
+            paramIndex++;
+        }
+
+        const query = `
+            SELECT 
+                pt.id as product_type_id,
+                pt.name as product_type_name,
+                COUNT(DISTINCT m.id) as models_count,
+                COUNT(DISTINCT CASE WHEN model_totals.total_quantity < 5 THEN m.id END) as critical_models_count,
+                COALESCE(SUM(s.quantity), 0) as total_quantity
+            FROM products.product_types pt
+            JOIN products.models m ON pt.id = m.product_type_id
+            JOIN products.products p ON m.id = p.model_id
+            LEFT JOIN warehouses.stock s ON p.id = s.product_id
+            LEFT JOIN (
+                SELECT 
+                    m2.id as model_id,
+                    COALESCE(SUM(s2.quantity), 0) as total_quantity
+                FROM products.models m2
+                JOIN products.products p2 ON m2.id = p2.model_id
+                LEFT JOIN warehouses.stock s2 ON p2.id = s2.product_id
+                WHERE p2.is_active = true ${warehouseCondition.replace('s.', 's2.')}
+                GROUP BY m2.id
+            ) model_totals ON m.id = model_totals.model_id
+            WHERE p.is_active = true AND m.is_active = true AND pt.is_active = true ${warehouseCondition}
+            GROUP BY pt.id, pt.name
+            HAVING COUNT(DISTINCT CASE WHEN model_totals.total_quantity < 5 THEN m.id END) > 0
+            ORDER BY critical_models_count DESC, pt.name ASC
+        `;
+        
+        const result = await pool.query(query, params);
+        return result.rows;
+    } catch (error) {
+        console.error('Error getting critical by types:', error);
+        throw error;
+    }
+}
 
     // Розподіл по типах товарів для складу
     static async getStockByTypesForWarehouse(warehouseId = null) {

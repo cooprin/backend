@@ -746,4 +746,42 @@ router.get('/repair-items', authenticate, checkPermission('warehouses.read'), as
     }
 });
 
+// Отримання критичних моделей
+router.get('/critical-models/:warehouseId?', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    try {
+        const warehouseId = req.params.warehouseId === 'all' ? null : req.params.warehouseId;
+        const models = await StockService.getCriticalModels(warehouseId);
+        
+        res.json({
+            success: true,
+            models
+        });
+    } catch (error) {
+        console.error('Error fetching critical models:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching critical models'
+        });
+    }
+});
+
+// Отримання критичних залишків по типах
+router.get('/critical-by-types/:warehouseId?', authenticate, checkPermission('warehouses.read'), async (req, res) => {
+    try {
+        const warehouseId = req.params.warehouseId === 'all' ? null : req.params.warehouseId;
+        const types = await StockService.getCriticalByTypes(warehouseId);
+        
+        res.json({
+            success: true,
+            types
+        });
+    } catch (error) {
+        console.error('Error fetching critical by types:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching critical by types'
+        });
+    }
+});
+
 module.exports = router;
