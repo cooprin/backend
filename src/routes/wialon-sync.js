@@ -344,7 +344,7 @@ router.delete('/logs', authenticate, checkPermission('wialon_sync.delete'), asyn
     }
 });
 
-// Запуск нової синхронізації
+// Запуск нової синхронізації - ОНОВЛЕНО для використання createSyncSessionSafe
 router.post('/start', authenticate, checkPermission('wialon_sync.create'), async (req, res) => {
     const client = await pool.connect();
     let sessionId = null;
@@ -352,8 +352,8 @@ router.post('/start', authenticate, checkPermission('wialon_sync.create'), async
     try {
         await client.query('BEGIN');
         
-        // Створення нової сесії
-        const session = await WialonSyncService.createSyncSession(req.user.userId);
+        // Створення нової сесії з безпечною перевіркою
+        const session = await WialonSyncService.createSyncSessionSafe(req.user.userId);
         sessionId = session.id;
         
         await WialonSyncService.addSyncLog(sessionId, 'info', 'Sync session started by user', {
@@ -367,7 +367,7 @@ router.post('/start', authenticate, checkPermission('wialon_sync.create'), async
         // Завантаження даних з Wialon
         const loadStats = await WialonSyncService.loadDataFromWialon(sessionId);
         
-        // Аналіз розбіжностей
+        // Аналіз розбіжностей через динамічні правила
         const discrepanciesCount = await WialonSyncService.analyzeDiscrepancies(
             client, 
             sessionId, 
@@ -392,7 +392,8 @@ router.post('/start', authenticate, checkPermission('wialon_sync.create'), async
             newValues: {
                 clientsLoaded: loadStats.clientsLoaded,
                 objectsLoaded: loadStats.objectsLoaded,
-                discrepanciesFound: discrepanciesCount
+                discrepanciesFound: discrepanciesCount,
+                syncMethod: 'dynamic_rules'
             },
             ipAddress: req.ip,
             tableSchema: 'wialon_sync',
@@ -668,7 +669,7 @@ router.get('/rules', authenticate, checkPermission('wialon_sync.read'), async (r
         }
         
         if (activeOnly === 'true') {
-            query += ` AND sr.is_active = true`;
+            query += ` AND is_active = true`;
         }
         
         if (search) {
@@ -706,7 +707,7 @@ router.get('/rules', authenticate, checkPermission('wialon_sync.read'), async (r
         }
         
         if (activeOnly === 'true') {
-            countQuery += ` AND sr.is_active = true`;
+            countQuery += ` AND is_active = true`;
         }
         
         if (search) {
@@ -903,7 +904,7 @@ router.delete('/rules/:ruleId', authenticate, checkPermission('wialon_sync.delet
         }
         
         // Видалення правила
-        await client.query('DELETE FROM wialon_sync.sync_rules WHERE id = $1', [ruleId]);
+await client.query('DELETE FROM wialon_sync.sync_rules WHERE id = $1', [ruleId]);
         
         await client.query('COMMIT');
         

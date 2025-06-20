@@ -4,20 +4,42 @@ const WialonIntegrationService = require('./wialon-integration.service');
 const { AUDIT_TYPES } = require('../constants/constants');
 
 class WialonSyncService {
-    // Створення нової сесії синхронізації
-    static async createSyncSession(userId) {
+    // Безпечне створення нової сесії синхронізації з перевіркою concurrent
+    static async createSyncSessionSafe(userId) {
+        const client = await pool.connect();
         try {
-            const query = `
-                INSERT INTO wialon_sync.sync_sessions (created_by)
-                VALUES ($1)
-                RETURNING id, start_time, status
-            `;
+            await client.query('BEGIN');
             
-            const result = await pool.query(query, [userId]);
+            // Очищення зависших сесій перед створенням нової
+            await client.query('SELECT wialon_sync.cleanup_stale_sessions()');
+            
+            // Atomic перевірка існуючих активних сесій
+            const activeCheck = await client.query(`
+                SELECT id FROM wialon_sync.sync_sessions 
+                WHERE status = 'running' 
+                FOR UPDATE
+            `);
+            
+            if (activeCheck.rows.length > 0) {
+                throw new Error('Синхронізація вже виконується. Дочекайтеся завершення поточної сесії.');
+            }
+            
+            // Створення нової сесії
+            const result = await client.query(`
+                INSERT INTO wialon_sync.sync_sessions (created_by, status)
+                VALUES ($1, 'running')
+                RETURNING id, start_time, status
+            `, [userId]);
+            
+            await client.query('COMMIT');
             return result.rows[0];
+            
         } catch (error) {
+            await client.query('ROLLBACK');
             console.error('Error creating sync session:', error);
             throw error;
+        } finally {
+            client.release();
         }
     }
 
@@ -100,6 +122,123 @@ class WialonSyncService {
         }
     }
 
+    // Завантаження активних правил синхронізації
+    static async getActiveRules(client) {
+        try {
+            const query = `
+                SELECT id, name, description, rule_type, sql_query, parameters, execution_order
+                FROM wialon_sync.sync_rules
+                WHERE is_active = true
+                ORDER BY execution_order ASC, name ASC
+            `;
+            
+            const result = await client.query(query);
+            return result.rows;
+        } catch (error) {
+            console.error('Error loading active sync rules:', error);
+            throw error;
+        }
+    }
+
+    // Виконання окремого правила синхронізації
+    static async executeRule(client, sessionId, rule, userId) {
+        const executionStart = Date.now();
+        let discrepanciesCount = 0;
+        
+        try {
+            await this.addSyncLog(sessionId, 'info', `Executing rule: ${rule.name}`, {
+                ruleId: rule.id,
+                ruleType: rule.rule_type,
+                executionOrder: rule.execution_order
+            });
+
+            // Логування початку виконання правила
+            const executionRecord = await client.query(`
+                INSERT INTO wialon_sync.sync_rule_executions 
+                (session_id, rule_id, execution_start, status)
+                VALUES ($1, $2, CURRENT_TIMESTAMP, 'running')
+                RETURNING id
+            `, [sessionId, rule.id]);
+
+            const executionId = executionRecord.rows[0].id;
+
+            // Підготовка параметрів для SQL-запиту
+            const sqlParams = [sessionId]; // Перший параметр завжди sessionId
+            
+            // Додавання додаткових параметрів з rule.parameters якщо потрібно
+            if (rule.parameters && typeof rule.parameters === 'object') {
+                // Тут можна додати логіку для додаткових параметрів в майбутньому
+            }
+
+            // Виконання SQL-запиту правила
+            const result = await client.query(rule.sql_query, sqlParams);
+            discrepanciesCount = result.rowCount || 0;
+
+            const executionEnd = Date.now();
+            const duration = (executionEnd - executionStart) / 1000;
+
+            // Оновлення запису виконання правила
+            await client.query(`
+                UPDATE wialon_sync.sync_rule_executions
+                SET execution_end = CURRENT_TIMESTAMP,
+                    status = 'completed',
+                    records_processed = $3,
+                    discrepancies_found = $4,
+                    execution_details = $5
+                WHERE id = $1 AND rule_id = $2
+            `, [
+                executionId,
+                rule.id,
+                0, // records_processed - для майбутнього використання
+                discrepanciesCount,
+                JSON.stringify({
+                    duration_seconds: duration,
+                    sql_row_count: result.rowCount,
+                    completed_at: new Date().toISOString()
+                })
+            ]);
+
+            await this.addSyncLog(sessionId, 'info', `Rule completed: ${rule.name}`, {
+                ruleId: rule.id,
+                discrepanciesFound: discrepanciesCount,
+                durationSeconds: duration
+            });
+
+            return discrepanciesCount;
+
+        } catch (error) {
+            const executionEnd = Date.now();
+            const duration = (executionEnd - executionStart) / 1000;
+
+            // Оновлення запису виконання правила з помилкою
+            await client.query(`
+                UPDATE wialon_sync.sync_rule_executions
+                SET execution_end = CURRENT_TIMESTAMP,
+                    status = 'failed',
+                    error_message = $3,
+                    execution_details = $4
+                WHERE session_id = $1 AND rule_id = $2 AND status = 'running'
+            `, [
+                sessionId,
+                rule.id,
+                error.message,
+                JSON.stringify({
+                    duration_seconds: duration,
+                    error_details: error.stack,
+                    failed_at: new Date().toISOString()
+                })
+            ]);
+
+            await this.addSyncLog(sessionId, 'error', `Rule failed: ${rule.name}`, {
+                ruleId: rule.id,
+                error: error.message,
+                durationSeconds: duration
+            });
+
+            throw error;
+        }
+    }
+
     // Завантаження даних з Wialon API
     static async loadDataFromWialon(sessionId) {
         try {
@@ -115,7 +254,6 @@ class WialonSyncService {
             const axios = require('axios');
             const loginResponse = await axios.get(loginUrl);
 
-            // ВИПРАВЛЕНО: перевірка на наявність помилки замість error !== 0
             if (!loginResponse.data || loginResponse.data.error) {
                 throw new Error('Wialon authorization failed: ' + 
                     (loginResponse.data?.reason || loginResponse.data?.error_text || 'Unknown error'));
@@ -143,392 +281,178 @@ class WialonSyncService {
     }
 
     // Завантаження клієнтів з Wialon
-static async loadClientsFromWialon(sessionId, apiUrl, eid) {
-    try {
-        const axios = require('axios');
-        
-        // Отримуємо список користувачів (клієнтів)
-        const searchUrl = `${apiUrl}/wialon/ajax.html?svc=core/search_items&params={"spec":{"itemsType":"avl_resource","propName":"sys_name","propValueMask":"*","sortType":"sys_name"},"force":1,"flags":5,"from":0,"to":0}&sid=${eid}`;
-        
-        const response = await axios.get(searchUrl);
-
-        // Перевірка на наявність помилки
-        if (!response.data || response.data.error) {
-            throw new Error('Failed to fetch clients from Wialon: ' + 
-                (response.data?.reason || response.data?.error_text || 'Unknown error'));
-        }
-
-        const clients = response.data.items || [];
-        let insertedCount = 0;
-        let usernamesFetched = 0;
-
-        const client = await pool.connect();
+    static async loadClientsFromWialon(sessionId, apiUrl, eid) {
         try {
-            for (const wialonClient of clients) {
-                let wialonUsername = null;
-                
-                // Робимо другий запит для отримання wialon_username
-                try {
-                    const detailUrl = `${apiUrl}/wialon/ajax.html?svc=core/search_item&params={"id":${wialonClient.crt},"flags":1}&sid=${eid}`;
-                    const detailResponse = await axios.get(detailUrl);
+            const axios = require('axios');
+            
+            const searchUrl = `${apiUrl}/wialon/ajax.html?svc=core/search_items&params={"spec":{"itemsType":"avl_resource","propName":"sys_name","propValueMask":"*","sortType":"sys_name"},"force":1,"flags":5,"from":0,"to":0}&sid=${eid}`;
+            
+            const response = await axios.get(searchUrl);
+
+            if (!response.data || response.data.error) {
+                throw new Error('Failed to fetch clients from Wialon: ' + 
+                    (response.data?.reason || response.data?.error_text || 'Unknown error'));
+            }
+
+            const clients = response.data.items || [];
+            let insertedCount = 0;
+            let usernamesFetched = 0;
+
+            const client = await pool.connect();
+            try {
+                for (const wialonClient of clients) {
+                    let wialonUsername = null;
                     
-                    if (detailResponse.data && !detailResponse.data.error && detailResponse.data.item) {
-                        wialonUsername = detailResponse.data.item.nm || null;
-                        if (wialonUsername) {
-                            usernamesFetched++;
-                        }
+                    try {
+                        const detailUrl = `${apiUrl}/wialon/ajax.html?svc=core/search_item&params={"id":${wialonClient.crt},"flags":1}&sid=${eid}`;
+                        const detailResponse = await axios.get(detailUrl);
                         
-                        await this.addSyncLog(sessionId, 'debug', `Fetched username for client ${wialonClient.nm}`, {
+                        if (detailResponse.data && !detailResponse.data.error && detailResponse.data.item) {
+                            wialonUsername = detailResponse.data.item.nm || null;
+                            if (wialonUsername) {
+                                usernamesFetched++;
+                            }
+                            
+                            await this.addSyncLog(sessionId, 'debug', `Fetched username for client ${wialonClient.nm}`, {
+                                clientCrt: wialonClient.crt,
+                                username: wialonUsername
+                            });
+                        } else {
+                            await this.addSyncLog(sessionId, 'warning', `Failed to fetch username for client ${wialonClient.nm}`, {
+                                clientCrt: wialonClient.crt,
+                                error: detailResponse.data?.error_text || 'No item data'
+                            });
+                        }
+                    } catch (usernameError) {
+                        await this.addSyncLog(sessionId, 'warning', `Error fetching username for client ${wialonClient.nm}`, {
                             clientCrt: wialonClient.crt,
-                            username: wialonUsername
-                        });
-                    } else {
-                        await this.addSyncLog(sessionId, 'warning', `Failed to fetch username for client ${wialonClient.nm}`, {
-                            clientCrt: wialonClient.crt,
-                            error: detailResponse.data?.error_text || 'No item data'
+                            error: usernameError.message
                         });
                     }
-                } catch (usernameError) {
-                    await this.addSyncLog(sessionId, 'warning', `Error fetching username for client ${wialonClient.nm}`, {
-                        clientCrt: wialonClient.crt,
-                        error: usernameError.message
-                    });
+
+                    await client.query(`
+                        INSERT INTO wialon_sync.temp_wialon_clients 
+                        (session_id, wialon_id, name, full_name, description, wialon_username, additional_data)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    `, [
+                        sessionId,
+                        wialonClient.crt?.toString() || null,
+                        wialonClient.nm || 'Unknown Client',
+                        wialonClient.nm || null,
+                        wialonClient.desc || null,
+                        wialonUsername,
+                        JSON.stringify(wialonClient)
+                    ]);
+                    insertedCount++;
                 }
-
-                // Зберігаємо клієнта
-                await client.query(`
-                    INSERT INTO wialon_sync.temp_wialon_clients 
-                    (session_id, wialon_id, name, full_name, description, wialon_username, additional_data)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                `, [
-                    sessionId,
-                    wialonClient.crt?.toString() || null,        // wialon_id з поля crt
-                    wialonClient.nm || 'Unknown Client',         // name з поля nm
-                    wialonClient.nm || null,                     // full_name з поля nm
-                    wialonClient.desc || null,                   // description
-                    wialonUsername,                              // wialon_username з другого запиту
-                    JSON.stringify(wialonClient)                 // additional_data
-                ]);
-                insertedCount++;
+            } finally {
+                client.release();
             }
-        } finally {
-            client.release();
-        }
 
-        await this.addSyncLog(sessionId, 'info', `Loaded ${insertedCount} clients from Wialon`, {
-            totalClients: insertedCount,
-            usernamesFetched: usernamesFetched,
-            usernamesNotFetched: insertedCount - usernamesFetched
-        });
-        
-        return insertedCount;
-    } catch (error) {
-        await this.addSyncLog(sessionId, 'error', 'Failed to load clients', { error: error.message });
-        throw error;
+            await this.addSyncLog(sessionId, 'info', `Loaded ${insertedCount} clients from Wialon`, {
+                totalClients: insertedCount,
+                usernamesFetched: usernamesFetched,
+                usernamesNotFetched: insertedCount - usernamesFetched
+            });
+            
+            return insertedCount;
+        } catch (error) {
+            await this.addSyncLog(sessionId, 'error', 'Failed to load clients', { error: error.message });
+            throw error;
+        }
     }
-}
 
-// Завантаження об'єктів з Wialon (оновлена версія)
-
-static async loadObjectsFromWialon(sessionId, apiUrl, eid) {
-    try {
-        const axios = require('axios');
-        
-        // Отримуємо список об'єктів
-        const searchUrl = `${apiUrl}/wialon/ajax.html?svc=core/search_items&params={"spec":{"itemsType":"avl_unit","propName":"sys_name","propValueMask":"*","sortType":"sys_name"},"force":1,"flags":257,"from":0,"to":0}&sid=${eid}`;
-        
-        const response = await axios.get(searchUrl);
-
-        // Перевірка на наявність помилки
-        if (!response.data || response.data.error) {
-            throw new Error('Failed to fetch objects from Wialon: ' + 
-                (response.data?.reason || response.data?.error_text || 'Unknown error'));
-        }
-
-        const objects = response.data.items || [];
-        let insertedCount = 0;
-
-        const client = await pool.connect();
+    // Завантаження об'єктів з Wialon
+    static async loadObjectsFromWialon(sessionId, apiUrl, eid) {
         try {
-            for (const wialonObject of objects) {
-                // Отримуємо додаткову інформацію про об'єкт
-                const phones = this.extractPhoneNumbers(wialonObject);
-                const trackerId = this.extractTrackerId(wialonObject);
+            const axios = require('axios');
+            
+            const searchUrl = `${apiUrl}/wialon/ajax.html?svc=core/search_items&params={"spec":{"itemsType":"avl_unit","propName":"sys_name","propValueMask":"*","sortType":"sys_name"},"force":1,"flags":257,"from":0,"to":0}&sid=${eid}`;
+            
+            const response = await axios.get(searchUrl);
 
-                await client.query(`
-                    INSERT INTO wialon_sync.temp_wialon_objects 
-                    (session_id, wialon_id, name, description, tracker_id, phone_numbers, additional_data)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                `, [
-                    sessionId,
-                    wialonObject.id.toString(),
-                    wialonObject.nm || 'Unknown Object',
-                    wialonObject.desc || null,
-                    trackerId,
-                    JSON.stringify(phones),
-                    JSON.stringify(wialonObject)
-                ]);
-                insertedCount++;
+            if (!response.data || response.data.error) {
+                throw new Error('Failed to fetch objects from Wialon: ' + 
+                    (response.data?.reason || response.data?.error_text || 'Unknown error'));
             }
-        } finally {
-            client.release();
-        }
 
-        await this.addSyncLog(sessionId, 'info', `Loaded ${insertedCount} objects from Wialon`);
-        return insertedCount;
-    } catch (error) {
-        await this.addSyncLog(sessionId, 'error', 'Failed to load objects', { error: error.message });
-        throw error;
-    }
-}
+            const objects = response.data.items || [];
+            let insertedCount = 0;
 
-// Пошук нових об'єктів (оновлена версія)
+            const client = await pool.connect();
+            try {
+                for (const wialonObject of objects) {
+                    const phones = this.extractPhoneNumbers(wialonObject);
+                    const trackerId = this.extractTrackerId(wialonObject);
 
-static async findNewObjects(client, sessionId) {
-    try {
-        const query = `
-            INSERT INTO wialon_sync.sync_discrepancies 
-            (session_id, discrepancy_type, entity_type, wialon_entity_data, status)
-            SELECT 
-                $1,
-                'new_object',
-                'object',
-                jsonb_build_object(
-                    'wialon_id', two.wialon_id,
-                    'name', two.name,
-                    'description', two.description,
-                    'tracker_id', two.tracker_id,
-                    'phone_numbers', two.phone_numbers
-                ),
-                'pending'
-            FROM wialon_sync.temp_wialon_objects two
-            WHERE two.session_id = $1
-            AND NOT EXISTS (
-                SELECT 1 FROM wialon.objects o 
-                WHERE o.wialon_id = two.wialon_id
-            )
-        `;
+                    await client.query(`
+                        INSERT INTO wialon_sync.temp_wialon_objects 
+                        (session_id, wialon_id, name, description, tracker_id, phone_numbers, additional_data)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    `, [
+                        sessionId,
+                        wialonObject.id.toString(),
+                        wialonObject.nm || 'Unknown Object',
+                        wialonObject.desc || null,
+                        trackerId,
+                        JSON.stringify(phones),
+                        JSON.stringify(wialonObject)
+                    ]);
+                    insertedCount++;
+                }
+            } finally {
+                client.release();
+            }
 
-        const result = await client.query(query, [sessionId]);
-        return result.rowCount;
-    } catch (error) {
-        console.error('Error finding new objects:', error);
-        return 0;
-    }
-}
-
-// Аналіз розбіжностей (оновлена версія без перевірки власника)
-
-static async analyzeDiscrepancies(client, sessionId, userId) {
-    try {
-        await this.addSyncLog(sessionId, 'info', 'Starting discrepancy analysis');
-
-        let totalDiscrepancies = 0;
-
-        // Аналіз нових клієнтів
-        totalDiscrepancies += await this.findNewClients(client, sessionId);
-
-        // Аналіз нових об'єктів
-        totalDiscrepancies += await this.findNewObjects(client, sessionId);
-
-        // Аналіз змін назв клієнтів
-        totalDiscrepancies += await this.findClientNameChanges(client, sessionId);
-
-        // Аналіз змін username клієнтів
-        totalDiscrepancies += await this.findClientUsernameChanges(client, sessionId);
-
-        // Аналіз змін назв об'єктів
-        totalDiscrepancies += await this.findObjectNameChanges(client, sessionId);
-
-        await this.addSyncLog(sessionId, 'info', `Discrepancy analysis completed. Found ${totalDiscrepancies} discrepancies`);
-        
-        return totalDiscrepancies;
-    } catch (error) {
-        await this.addSyncLog(sessionId, 'error', 'Discrepancy analysis failed', { error: error.message });
-        throw error;
-    }
-}
-
-// Пошук змін назв об'єктів (залишається без змін)
-static async findObjectNameChanges(client, sessionId) {
-    try {
-        const query = `
-            INSERT INTO wialon_sync.sync_discrepancies 
-            (session_id, discrepancy_type, entity_type, system_object_id, wialon_entity_data, system_entity_data, status)
-            SELECT 
-                $1,
-                'object_name_changed',
-                'object',
-                o.id,
-                jsonb_build_object(
-                    'wialon_id', two.wialon_id,
-                    'name', two.name
-                ),
-                jsonb_build_object(
-                    'id', o.id,
-                    'name', o.name,
-                    'wialon_id', o.wialon_id
-                ),
-                'pending'
-            FROM wialon_sync.temp_wialon_objects two
-            JOIN wialon.objects o ON two.wialon_id = o.wialon_id
-            WHERE two.session_id = $1
-            AND LOWER(TRIM(two.name)) != LOWER(TRIM(o.name))
-        `;
-
-        const result = await client.query(query, [sessionId]);
-        return result.rowCount;
-    } catch (error) {
-        console.error('Error finding object name changes:', error);
-        return 0;
-    }
-}
-
-
-// Пошук нових клієнтів
-static async findNewClients(client, sessionId) {
-    try {
-        const query = `
-            INSERT INTO wialon_sync.sync_discrepancies 
-            (session_id, discrepancy_type, entity_type, wialon_entity_data, status)
-            SELECT 
-                $1,
-                'new_client',
-                'client',
-                jsonb_build_object(
-                    'wialon_id', twc.wialon_id,
-                    'name', twc.name,
-                    'full_name', twc.full_name,
-                    'description', twc.description,
-                    'wialon_username', twc.wialon_username
-                ),
-                'pending'
-            FROM wialon_sync.temp_wialon_clients twc
-            WHERE twc.session_id = $1
-            AND NOT EXISTS (
-                SELECT 1 FROM clients.clients c 
-                WHERE c.wialon_id = twc.wialon_id
-            )
-        `;
-
-        const result = await client.query(query, [sessionId]);
-        return result.rowCount;
-    } catch (error) {
-        console.error('Error finding new clients:', error);
-        return 0;
-    }
-}
-
-
-    // Пошук змін назв клієнтів
-    static async findClientNameChanges(client, sessionId) {
-        try {
-            const query = `
-                INSERT INTO wialon_sync.sync_discrepancies 
-                (session_id, discrepancy_type, entity_type, system_client_id, wialon_entity_data, system_entity_data, status)
-                SELECT 
-                    $1,
-                    'client_name_changed',
-                    'client',
-                    c.id,
-                    jsonb_build_object(
-                        'wialon_id', twc.wialon_id,
-                        'name', twc.name
-                    ),
-                    jsonb_build_object(
-                        'id', c.id,
-                        'name', c.name,
-                        'wialon_id', c.wialon_id
-                    ),
-                    'pending'
-                FROM wialon_sync.temp_wialon_clients twc
-                JOIN clients.clients c ON twc.wialon_id = c.wialon_id
-                WHERE twc.session_id = $1
-                AND LOWER(TRIM(twc.name)) != LOWER(TRIM(c.name))
-            `;
-
-            const result = await client.query(query, [sessionId]);
-            return result.rowCount;
+            await this.addSyncLog(sessionId, 'info', `Loaded ${insertedCount} objects from Wialon`);
+            return insertedCount;
         } catch (error) {
-            console.error('Error finding client name changes:', error);
-            return 0;
+            await this.addSyncLog(sessionId, 'error', 'Failed to load objects', { error: error.message });
+            throw error;
         }
     }
 
-
-static async findClientUsernameChanges(client, sessionId) {
-    try {
-        const query = `
-            INSERT INTO wialon_sync.sync_discrepancies 
-            (session_id, discrepancy_type, entity_type, system_client_id, wialon_entity_data, system_entity_data, status)
-            SELECT 
-                $1,
-                'client_username_changed',
-                'client',
-                c.id,
-                jsonb_build_object(
-                    'wialon_id', twc.wialon_id,
-                    'name', twc.name,
-                    'wialon_username', twc.wialon_username
-                ),
-                jsonb_build_object(
-                    'id', c.id,
-                    'name', c.name,
-                    'wialon_id', c.wialon_id,
-                    'wialon_username', c.wialon_username
-                ),
-                'pending'
-            FROM wialon_sync.temp_wialon_clients twc
-            JOIN clients.clients c ON twc.wialon_id = c.wialon_id
-            WHERE twc.session_id = $1
-            AND (
-                COALESCE(LOWER(TRIM(twc.wialon_username)), '') != COALESCE(LOWER(TRIM(c.wialon_username)), '')
-            )
-        `;
-
-        const result = await client.query(query, [sessionId]);
-        return result.rowCount;
-    } catch (error) {
-        console.error('Error finding client username changes:', error);
-        return 0;
-    }
-}
-
-    // Пошук змін назв об'єктів
-    static async findObjectNameChanges(client, sessionId) {
+    // Динамічний аналіз розбіжностей через правила з БД
+    static async analyzeDiscrepancies(client, sessionId, userId) {
         try {
-            const query = `
-                INSERT INTO wialon_sync.sync_discrepancies 
-                (session_id, discrepancy_type, entity_type, system_object_id, wialon_entity_data, system_entity_data, status)
-                SELECT 
-                    $1,
-                    'object_name_changed',
-                    'object',
-                    o.id,
-                    jsonb_build_object(
-                        'wialon_id', two.wialon_id,
-                        'name', two.name
-                    ),
-                    jsonb_build_object(
-                        'id', o.id,
-                        'name', o.name,
-                        'wialon_id', o.wialon_id
-                    ),
-                    'pending'
-                FROM wialon_sync.temp_wialon_objects two
-                JOIN wialon.objects o ON two.wialon_id = o.wialon_id
-                WHERE two.session_id = $1
-                AND LOWER(TRIM(two.name)) != LOWER(TRIM(o.name))
-            `;
+            await this.addSyncLog(sessionId, 'info', 'Starting dynamic discrepancy analysis using database rules');
 
-            const result = await client.query(query, [sessionId]);
-            return result.rowCount;
+            // Завантаження активних правил
+            const rules = await this.getActiveRules(client);
+            
+            if (rules.length === 0) {
+                await this.addSyncLog(sessionId, 'warning', 'No active sync rules found. Skipping discrepancy analysis.');
+                return 0;
+            }
+
+            await this.addSyncLog(sessionId, 'info', `Found ${rules.length} active sync rules`, {
+                ruleNames: rules.map(r => r.name)
+            });
+
+            let totalDiscrepancies = 0;
+
+            // Виконання кожного правила по порядку
+            for (const rule of rules) {
+                try {
+                    const discrepanciesCount = await this.executeRule(client, sessionId, rule, userId);
+                    totalDiscrepancies += discrepanciesCount;
+                } catch (ruleError) {
+                    await this.addSyncLog(sessionId, 'error', `Failed to execute rule: ${rule.name}`, {
+                        ruleId: rule.id,
+                        error: ruleError.message
+                    });
+                    // Продовжуємо виконання інших правил навіть якщо одне не спрацювало
+                }
+            }
+
+            await this.addSyncLog(sessionId, 'info', `Dynamic discrepancy analysis completed. Found ${totalDiscrepancies} discrepancies using ${rules.length} rules`);
+            
+            return totalDiscrepancies;
         } catch (error) {
-            console.error('Error finding object name changes:', error);
-            return 0;
+            await this.addSyncLog(sessionId, 'error', 'Dynamic discrepancy analysis failed', { error: error.message });
+            throw error;
         }
     }
-
 
     // Отримання списку розбіжностей
     static async getDiscrepancies(sessionId = null, status = null, limit = 100, offset = 0) {
@@ -565,8 +489,6 @@ static async findClientUsernameChanges(client, sessionId) {
     static extractPhoneNumbers(wialonObject) {
         const phones = [];
         try {
-            // Логіка витягування номерів телефонів з об'єкта Wialon
-            // Це залежить від структури даних Wialon
             if (wialonObject.phone) {
                 phones.push(wialonObject.ph);
             }
@@ -578,7 +500,6 @@ static async findClientUsernameChanges(client, sessionId) {
 
     static extractTrackerId(wialonObject) {
         try {
-            // Логіка витягування ID трекера з об'єкта Wialon
             return wialonObject.trackerId || wialonObject.uid || null;
         } catch (error) {
             console.error('Error extracting tracker ID:', error);
