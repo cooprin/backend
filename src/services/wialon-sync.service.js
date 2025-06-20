@@ -280,87 +280,91 @@ class WialonSyncService {
         }
     }
 
-    // Завантаження клієнтів з Wialon
-    static async loadClientsFromWialon(sessionId, apiUrl, eid) {
+// Завантаження клієнтів з Wialon
+static async loadClientsFromWialon(sessionId, apiUrl, eid) {
+    try {
+        const axios = require('axios');
+        
+        const searchUrl = `${apiUrl}/wialon/ajax.html?svc=core/search_items&params={"spec":{"itemsType":"avl_resource","propName":"sys_name","propValueMask":"*","sortType":"sys_name"},"force":1,"flags":5,"from":0,"to":0}&sid=${eid}`;
+        
+        const response = await axios.get(searchUrl);
+
+        if (!response.data || response.data.error) {
+            throw new Error('Failed to fetch clients from Wialon: ' + 
+                (response.data?.reason || response.data?.error_text || 'Unknown error'));
+        }
+
+        const clients = response.data.items || [];
+        let insertedCount = 0;
+        let usernamesFetched = 0;
+
+        const client = await pool.connect();
         try {
-            const axios = require('axios');
-            
-            const searchUrl = `${apiUrl}/wialon/ajax.html?svc=core/search_items&params={"spec":{"itemsType":"avl_resource","propName":"sys_name","propValueMask":"*","sortType":"sys_name"},"force":1,"flags":5,"from":0,"to":0}&sid=${eid}`;
-            
-            const response = await axios.get(searchUrl);
-
-            if (!response.data || response.data.error) {
-                throw new Error('Failed to fetch clients from Wialon: ' + 
-                    (response.data?.reason || response.data?.error_text || 'Unknown error'));
-            }
-
-            const clients = response.data.items || [];
-            let insertedCount = 0;
-            let usernamesFetched = 0;
-
-            const client = await pool.connect();
-            try {
-                for (const wialonClient of clients) {
-                    let wialonUsername = null;
+            for (const wialonClient of clients) {
+                let wialonUsername = null;
+                
+                try {
+                    const detailUrl = `${apiUrl}/wialon/ajax.html?svc=core/search_item&params={"id":${wialonClient.crt},"flags":1}&sid=${eid}`;
+                    const detailResponse = await axios.get(detailUrl);
                     
-                    try {
-                        const detailUrl = `${apiUrl}/wialon/ajax.html?svc=core/search_item&params={"id":${wialonClient.crt},"flags":1}&sid=${eid}`;
-                        const detailResponse = await axios.get(detailUrl);
-                        
-                        if (detailResponse.data && !detailResponse.data.error && detailResponse.data.item) {
-                            wialonUsername = detailResponse.data.item.nm || null;
-                            if (wialonUsername) {
-                                usernamesFetched++;
-                            }
-                            
-                            await this.addSyncLog(sessionId, 'debug', `Fetched username for client ${wialonClient.nm}`, {
-                                clientCrt: wialonClient.crt,
-                                username: wialonUsername
-                            });
-                        } else {
-                            await this.addSyncLog(sessionId, 'warning', `Failed to fetch username for client ${wialonClient.nm}`, {
-                                clientCrt: wialonClient.crt,
-                                error: detailResponse.data?.error_text || 'No item data'
-                            });
+                    if (detailResponse.data && !detailResponse.data.error && detailResponse.data.item) {
+                        wialonUsername = detailResponse.data.item.nm || null;
+                        if (wialonUsername) {
+                            usernamesFetched++;
                         }
-                    } catch (usernameError) {
-                        await this.addSyncLog(sessionId, 'warning', `Error fetching username for client ${wialonClient.nm}`, {
+                        
+                        await this.addSyncLog(sessionId, 'debug', `Fetched username for client ${wialonClient.nm}`, {
                             clientCrt: wialonClient.crt,
-                            error: usernameError.message
+                            clientResourceId: wialonClient.id,
+                            username: wialonUsername
+                        });
+                    } else {
+                        await this.addSyncLog(sessionId, 'warning', `Failed to fetch username for client ${wialonClient.nm}`, {
+                            clientCrt: wialonClient.crt,
+                            clientResourceId: wialonClient.id,
+                            error: detailResponse.data?.error_text || 'No item data'
                         });
                     }
-
-                    await client.query(`
-                        INSERT INTO wialon_sync.temp_wialon_clients 
-                        (session_id, wialon_id, name, full_name, description, wialon_username, additional_data)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    `, [
-                        sessionId,
-                        wialonClient.crt?.toString() || null,
-                        wialonClient.nm || 'Unknown Client',
-                        wialonClient.nm || null,
-                        wialonClient.desc || null,
-                        wialonUsername,
-                        JSON.stringify(wialonClient)
-                    ]);
-                    insertedCount++;
+                } catch (usernameError) {
+                    await this.addSyncLog(sessionId, 'warning', `Error fetching username for client ${wialonClient.nm}`, {
+                        clientCrt: wialonClient.crt,
+                        clientResourceId: wialonClient.id,
+                        error: usernameError.message
+                    });
                 }
-            } finally {
-                client.release();
-            }
 
-            await this.addSyncLog(sessionId, 'info', `Loaded ${insertedCount} clients from Wialon`, {
-                totalClients: insertedCount,
-                usernamesFetched: usernamesFetched,
-                usernamesNotFetched: insertedCount - usernamesFetched
-            });
-            
-            return insertedCount;
-        } catch (error) {
-            await this.addSyncLog(sessionId, 'error', 'Failed to load clients', { error: error.message });
-            throw error;
+                await client.query(`
+                    INSERT INTO wialon_sync.temp_wialon_clients 
+                    (session_id, wialon_resource_id, wialon_user_id, name, full_name, description, wialon_username, additional_data)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                `, [
+                    sessionId,
+                    wialonClient.id?.toString() || null, // Resource ID для біллінгу
+                    wialonClient.crt?.toString() || null, // User ID для авторизації
+                    wialonClient.nm || 'Unknown Client',
+                    wialonClient.nm || null,
+                    wialonClient.desc || null,
+                    wialonUsername,
+                    JSON.stringify(wialonClient)
+                ]);
+                insertedCount++;
+            }
+        } finally {
+            client.release();
         }
+
+        await this.addSyncLog(sessionId, 'info', `Loaded ${insertedCount} clients from Wialon`, {
+            totalClients: insertedCount,
+            usernamesFetched: usernamesFetched,
+            usernamesNotFetched: insertedCount - usernamesFetched
+        });
+        
+        return insertedCount;
+    } catch (error) {
+        await this.addSyncLog(sessionId, 'error', 'Failed to load clients', { error: error.message });
+        throw error;
     }
+}
 
     // Завантаження об'єктів з Wialon
     static async loadObjectsFromWialon(sessionId, apiUrl, eid) {

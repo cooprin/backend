@@ -150,176 +150,182 @@ class ClientService {
         return result.rows[0];
     }
 
-// Створення нового клієнта
-static async createClient(client, data, userId, req) {
-    try {
-        const { 
-            name, full_name, description, address, contact_person, 
-            phone, email, wialon_id, wialon_username, is_active 
-        } = data;
-
-        // Створення клієнта - база даних сама заблокує дублікати через unique constraints
-        const result = await client.query(
-            `INSERT INTO clients.clients (
+    // Створення нового клієнта
+    static async createClient(client, data, userId, req) {
+        try {
+            const { 
                 name, full_name, description, address, contact_person, 
-                phone, email, wialon_id, wialon_username, is_active
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            RETURNING *`,
-            [
-                name, full_name, description, address, contact_person, 
-                phone, email, wialon_id, wialon_username, is_active !== undefined ? is_active : true
-            ]
-        );
+                phone, email, wialon_id, wialon_resource_id, wialon_username, is_active 
+            } = data;
 
-        const newClient = result.rows[0];
+            // Створення клієнта - база даних сама заблокує дублікати через unique constraints
+            const result = await client.query(
+                `INSERT INTO clients.clients (
+                    name, full_name, description, address, contact_person, 
+                    phone, email, wialon_id, wialon_resource_id, wialon_username, is_active
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                RETURNING *`,
+                [
+                    name, full_name, description, address, contact_person, 
+                    phone, email, wialon_id, wialon_resource_id, wialon_username, is_active !== undefined ? is_active : true
+                ]
+            );
 
-        // Додавання контактів, якщо вони є
-        if (data.contacts && Array.isArray(data.contacts)) {
-            for (const contact of data.contacts) {
-                await client.query(
-                    `INSERT INTO clients.contacts (
-                        client_id, first_name, last_name, position, 
-                        phone, email, is_primary, notes
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                    [
-                        newClient.id, contact.first_name, contact.last_name, contact.position,
-                        contact.phone, contact.email, contact.is_primary || false, contact.notes
-                    ]
-                );
+            const newClient = result.rows[0];
+
+            // Додавання контактів, якщо вони є
+            if (data.contacts && Array.isArray(data.contacts)) {
+                for (const contact of data.contacts) {
+                    await client.query(
+                        `INSERT INTO clients.contacts (
+                            client_id, first_name, last_name, position, 
+                            phone, email, is_primary, notes
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                        [
+                            newClient.id, contact.first_name, contact.last_name, contact.position,
+                            contact.phone, contact.email, contact.is_primary || false, contact.notes
+                        ]
+                    );
+                }
             }
+
+            // Аудит
+            await AuditService.log({
+                userId,
+                actionType: 'CREATE',
+                entityType: 'CLIENT',
+                entityId: newClient.id,
+                newValues: data,
+                ipAddress: req.ip,
+                tableSchema: 'clients',
+                tableName: 'clients',
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+
+            return newClient;
+        } catch (error) {
+            // Перевіряємо чи це помилка унікальності PostgreSQL
+            if (error.code === '23505') { // PostgreSQL unique violation error code
+                if (error.constraint === 'clients_name_unique') {
+                    throw new Error('Клієнт з такою назвою вже існує');
+                }
+                if (error.constraint === 'clients_email_unique') {
+                    throw new Error('Клієнт з таким email вже існує');
+                }
+                if (error.constraint === 'clients_wialon_resource_id_unique') {
+                    throw new Error('Клієнт з таким Wialon Resource ID вже існує');
+                }
+                throw new Error('Клієнт з такими даними вже існує');
+            }
+            throw error;
         }
-
-        // Аудит
-        await AuditService.log({
-            userId,
-            actionType: 'CREATE',
-            entityType: 'CLIENT',
-            entityId: newClient.id,
-            newValues: data,
-            ipAddress: req.ip,
-            tableSchema: 'clients',
-            tableName: 'clients',
-            auditType: AUDIT_TYPES.BUSINESS,
-            req
-        });
-
-        return newClient;
-    } catch (error) {
-        // Перевіряємо чи це помилка унікальності PostgreSQL
-        if (error.code === '23505') { // PostgreSQL unique violation error code
-            if (error.constraint === 'clients_name_unique') {
-                throw new Error('Клієнт з такою назвою вже існує');
-            }
-            if (error.constraint === 'clients_email_unique') {
-                throw new Error('Клієнт з таким email вже існує');
-            }
-            throw new Error('Клієнт з такими даними вже існує');
-        }
-        throw error;
     }
-}
 
     // Оновлення існуючого клієнта
-static async updateClient(client, id, data, userId, req) {
-    try {
-        // Отримання поточних даних клієнта для аудиту
-        const currentClient = await client.query(
-            'SELECT * FROM clients.clients WHERE id = $1',
-            [id]
-        );
-
-        if (currentClient.rows.length === 0) {
-            throw new Error('Клієнт не знайдений');
-        }
-
-        const oldData = currentClient.rows[0];
-
-        // Підготовка оновлених даних
-        const updateFields = [];
-        const updateValues = [];
-        let paramIndex = 1;
-
-        const fieldsToUpdate = [
-            'name', 'full_name', 'description', 'address', 'contact_person', 
-            'phone', 'email', 'wialon_id', 'wialon_username', 'is_active'
-        ];
-
-        for (const field of fieldsToUpdate) {
-            if (data[field] !== undefined) {
-                updateFields.push(`${field} = $${paramIndex++}`);
-                updateValues.push(data[field]);
-            }
-        }
-
-        updateFields.push(`updated_at = $${paramIndex++}`);
-        updateValues.push(new Date());
-        updateValues.push(id);
-
-        // Оновлення клієнта - база даних сама перевірить унікальність
-        const result = await client.query(
-            `UPDATE clients.clients 
-             SET ${updateFields.join(', ')}
-             WHERE id = $${paramIndex}
-             RETURNING *`,
-            updateValues
-        );
-
-        // Оновлення контактів, якщо вони є
-        if (data.contacts && Array.isArray(data.contacts)) {
-            // Видалення існуючих контактів
-            await client.query(
-                'DELETE FROM clients.contacts WHERE client_id = $1',
+    static async updateClient(client, id, data, userId, req) {
+        try {
+            // Отримання поточних даних клієнта для аудиту
+            const currentClient = await client.query(
+                'SELECT * FROM clients.clients WHERE id = $1',
                 [id]
             );
 
-            // Додавання нових контактів
-            for (const contact of data.contacts) {
+            if (currentClient.rows.length === 0) {
+                throw new Error('Клієнт не знайдений');
+            }
+
+            const oldData = currentClient.rows[0];
+
+            // Підготовка оновлених даних
+            const updateFields = [];
+            const updateValues = [];
+            let paramIndex = 1;
+
+            const fieldsToUpdate = [
+                'name', 'full_name', 'description', 'address', 'contact_person', 
+                'phone', 'email', 'wialon_id', 'wialon_resource_id', 'wialon_username', 'is_active'
+            ];
+
+            for (const field of fieldsToUpdate) {
+                if (data[field] !== undefined) {
+                    updateFields.push(`${field} = $${paramIndex++}`);
+                    updateValues.push(data[field]);
+                }
+            }
+
+            updateFields.push(`updated_at = $${paramIndex++}`);
+            updateValues.push(new Date());
+            updateValues.push(id);
+
+            // Оновлення клієнта - база даних сама перевірить унікальність
+            const result = await client.query(
+                `UPDATE clients.clients 
+                 SET ${updateFields.join(', ')}
+                 WHERE id = $${paramIndex}
+                 RETURNING *`,
+                updateValues
+            );
+
+            // Оновлення контактів, якщо вони є
+            if (data.contacts && Array.isArray(data.contacts)) {
+                // Видалення існуючих контактів
                 await client.query(
-                    `INSERT INTO clients.contacts (
-                        client_id, first_name, last_name, position, 
-                        phone, email, is_primary, notes
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                    [
-                        id, contact.first_name, contact.last_name, contact.position,
-                        contact.phone, contact.email, contact.is_primary || false, contact.notes
-                    ]
+                    'DELETE FROM clients.contacts WHERE client_id = $1',
+                    [id]
                 );
-            }
-        }
 
-        // Аудит
-        await AuditService.log({
-            userId,
-            actionType: 'UPDATE',
-            entityType: 'CLIENT',
-            entityId: id,
-            oldValues: oldData,
-            newValues: data,
-            ipAddress: req.ip,
-            tableSchema: 'clients',
-            tableName: 'clients',
-            auditType: AUDIT_TYPES.BUSINESS,
-            req
-        });
+                // Додавання нових контактів
+                for (const contact of data.contacts) {
+                    await client.query(
+                        `INSERT INTO clients.contacts (
+                            client_id, first_name, last_name, position, 
+                            phone, email, is_primary, notes
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                        [
+                            id, contact.first_name, contact.last_name, contact.position,
+                            contact.phone, contact.email, contact.is_primary || false, contact.notes
+                        ]
+                    );
+                }
+            }
 
-        return result.rows[0];
-    } catch (error) {
-        // Перевіряємо чи це помилка унікальності PostgreSQL
-        if (error.code === '23505') { // PostgreSQL unique violation error code
-            if (error.constraint === 'clients_name_unique') {
-                throw new Error('Клієнт з такою назвою вже існує');
+            // Аудит
+            await AuditService.log({
+                userId,
+                actionType: 'UPDATE',
+                entityType: 'CLIENT',
+                entityId: id,
+                oldValues: oldData,
+                newValues: data,
+                ipAddress: req.ip,
+                tableSchema: 'clients',
+                tableName: 'clients',
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+
+            return result.rows[0];
+        } catch (error) {
+            // Перевіряємо чи це помилка унікальності PostgreSQL
+            if (error.code === '23505') { // PostgreSQL unique violation error code
+                if (error.constraint === 'clients_name_unique') {
+                    throw new Error('Клієнт з такою назвою вже існує');
+                }
+                if (error.constraint === 'clients_email_unique') {
+                    throw new Error('Клієнт з таким email вже існує');
+                }
+                if (error.constraint === 'clients_wialon_resource_id_unique') {
+                    throw new Error('Клієнт з таким Wialon Resource ID вже існує');
+                }
+                throw new Error('Клієнт з такими даними вже існує');
             }
-            if (error.constraint === 'clients_email_unique') {
-                throw new Error('Клієнт з таким email вже існує');
-            }
-            throw new Error('Клієнт з такими даними вже існує');
+            throw error;
         }
-        throw error;
     }
-}
 
     // Видалення клієнта
     static async deleteClient(client, id, userId, req) {
@@ -365,8 +371,8 @@ static async updateClient(client, id, data, userId, req) {
             // Аудит
             await AuditService.log({
                 userId,
-                actionType: 'DELETE',  // Це потрібно додати в AUDIT_LOG_TYPES
-                entityType: 'CLIENT',  // Це потрібно додати в ENTITY_TYPES
+                actionType: 'DELETE',
+                entityType: 'CLIENT',
                 entityId: id,
                 oldValues: clientData.rows[0],
                 ipAddress: req.ip,
@@ -400,8 +406,8 @@ static async updateClient(client, id, data, userId, req) {
             // Аудит
             await AuditService.log({
                 userId,
-                actionType: 'DOCUMENT_ADD',  // Це потрібно додати в AUDIT_LOG_TYPES
-                entityType: 'CLIENT_DOCUMENT',  // Це потрібно додати в ENTITY_TYPES
+                actionType: 'DOCUMENT_ADD',
+                entityType: 'CLIENT_DOCUMENT',
                 entityId: result.rows[0].id,
                 newValues: documentData,
                 ipAddress: req.ip,
@@ -439,8 +445,8 @@ static async updateClient(client, id, data, userId, req) {
             // Аудит
             await AuditService.log({
                 userId,
-                actionType: 'DOCUMENT_DELETE',  // Це потрібно додати в AUDIT_LOG_TYPES
-                entityType: 'CLIENT_DOCUMENT',  // Це потрібно додати в ENTITY_TYPES
+                actionType: 'DOCUMENT_DELETE',
+                entityType: 'CLIENT_DOCUMENT',
                 entityId: documentId,
                 oldValues: documentData.rows[0],
                 ipAddress: req.ip,
@@ -455,51 +461,53 @@ static async updateClient(client, id, data, userId, req) {
             throw error;
         }
     }
-    // Отримання інформації про оплату клієнта в Wialon
-static async getClientPaymentInfo(clientId) {
-    try {
-        // Отримання клієнта з wialon_id
-        const clientQuery = `
-            SELECT id, name, wialon_id, wialon_username 
-            FROM clients.clients 
-            WHERE id = $1
-        `;
-        
-        const clientResult = await pool.query(clientQuery, [clientId]);
-        
-        if (clientResult.rows.length === 0) {
-            throw new Error('Клієнт не знайдений');
-        }
-        
-        const client = clientResult.rows[0];
-        
-        if (!client.wialon_id) {
-            return {
-                isConfigured: true,
-                hasWialonId: false,
-                error: 'Wialon ID не вказано для цього клієнта'
-            };
-        }
 
-        // Імпорт сервісу Wialon інтеграції
-        const WialonIntegrationService = require('./wialon-integration.service');
-        
-        // Отримання платіжної інформації з Wialon
-        const paymentInfo = await WialonIntegrationService.getClientPaymentStatus(client.wialon_id);
-        
-        return {
-            clientId: client.id,
-            clientName: client.name,
-            wialonId: client.wialon_id,
-            wialonUsername: client.wialon_username,
-            ...paymentInfo
-        };
-        
-    } catch (error) {
-        console.error('Error getting client payment info:', error);
-        throw error;
+    // Отримання інформації про оплату клієнта в Wialon
+    static async getClientPaymentInfo(clientId) {
+        try {
+            // Отримання клієнта з wialon_resource_id
+            const clientQuery = `
+                SELECT id, name, wialon_id, wialon_resource_id, wialon_username 
+                FROM clients.clients 
+                WHERE id = $1
+            `;
+            
+            const clientResult = await pool.query(clientQuery, [clientId]);
+            
+            if (clientResult.rows.length === 0) {
+                throw new Error('Клієнт не знайдений');
+            }
+            
+            const client = clientResult.rows[0];
+            
+            if (!client.wialon_resource_id) {
+                return {
+                    isConfigured: true,
+                    hasWialonResourceId: false,
+                    error: 'Wialon Resource ID не вказано для цього клієнта'
+                };
+            }
+
+            // Імпорт сервісу Wialon інтеграції
+            const WialonIntegrationService = require('./wialon-integration.service');
+            
+            // Отримання платіжної інформації з Wialon
+            const paymentInfo = await WialonIntegrationService.getClientPaymentStatus(client.wialon_resource_id);
+            
+            return {
+                clientId: client.id,
+                clientName: client.name,
+                wialonUserId: client.wialon_id,
+                wialonResourceId: client.wialon_resource_id,
+                wialonUsername: client.wialon_username,
+                ...paymentInfo
+            };
+            
+        } catch (error) {
+            console.error('Error getting client payment info:', error);
+            throw error;
+        }
     }
-}
 }
 
 module.exports = ClientService;

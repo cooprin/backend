@@ -93,6 +93,48 @@ router.post('/', authenticate, checkPermission('clients.create'), async (req, re
     try {
         await client.query('BEGIN');
         
+        // Валідація обов'язкових полів
+        const { name } = req.body;
+        if (!name || name.trim() === '') {
+            return res.status(400).json({
+                success: false,
+                message: 'Назва клієнта є обов\'язковою'
+            });
+        }
+
+        // Валідація email якщо вказано
+        if (req.body.email && req.body.email.trim() !== '') {
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(req.body.email.trim())) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Невірний формат email адреси'
+                });
+            }
+        }
+
+        // Валідація Wialon Resource ID якщо вказано
+        if (req.body.wialon_resource_id && req.body.wialon_resource_id.trim() !== '') {
+            const wialonResourceId = req.body.wialon_resource_id.trim();
+            if (!/^\d+$/.test(wialonResourceId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Wialon Resource ID повинен містити лише цифри'
+                });
+            }
+        }
+
+        // Валідація Wialon User ID якщо вказано
+        if (req.body.wialon_id && req.body.wialon_id.trim() !== '') {
+            const wialonUserId = req.body.wialon_id.trim();
+            if (!/^\d+$/.test(wialonUserId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Wialon User ID повинен містити лише цифри'
+                });
+            }
+        }
+        
         const newClient = await ClientService.createClient(
             client, 
             req.body, 
@@ -123,6 +165,47 @@ router.put('/:id', authenticate, checkPermission('clients.update'), async (req, 
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        
+        // Валідація обов'язкових полів
+        if (req.body.name !== undefined && (!req.body.name || req.body.name.trim() === '')) {
+            return res.status(400).json({
+                success: false,
+                message: 'Назва клієнта є обов\'язковою'
+            });
+        }
+
+        // Валідація email якщо вказано
+        if (req.body.email !== undefined && req.body.email && req.body.email.trim() !== '') {
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(req.body.email.trim())) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Невірний формат email адреси'
+                });
+            }
+        }
+
+        // Валідація Wialon Resource ID якщо вказано
+        if (req.body.wialon_resource_id !== undefined && req.body.wialon_resource_id && req.body.wialon_resource_id.trim() !== '') {
+            const wialonResourceId = req.body.wialon_resource_id.trim();
+            if (!/^\d+$/.test(wialonResourceId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Wialon Resource ID повинен містити лише цифри'
+                });
+            }
+        }
+
+        // Валідація Wialon User ID якщо вказано
+        if (req.body.wialon_id !== undefined && req.body.wialon_id && req.body.wialon_id.trim() !== '') {
+            const wialonUserId = req.body.wialon_id.trim();
+            if (!/^\d+$/.test(wialonUserId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Wialon User ID повинен містити лише цифри'
+                });
+            }
+        }
         
         const updatedClient = await ClientService.updateClient(
             client, 
