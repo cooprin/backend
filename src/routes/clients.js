@@ -69,6 +69,24 @@ router.get('/:id', authenticate, checkPermission('clients.read'), async (req, re
     }
 });
 
+// Отримання інформації про оплату клієнта в Wialon
+router.get('/:id/payment-status', authenticate, checkPermission('clients.read'), async (req, res) => {
+    try {
+        const paymentInfo = await ClientService.getClientPaymentInfo(req.params.id);
+        
+        res.json({
+            success: true,
+            paymentInfo
+        });
+    } catch (error) {
+        console.error('Error fetching client payment status:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message || 'Помилка при отриманні платіжної інформації'
+        });
+    }
+});
+
 // Створення клієнта
 router.post('/', authenticate, checkPermission('clients.create'), async (req, res) => {
     const client = await pool.connect();

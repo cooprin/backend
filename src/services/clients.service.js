@@ -455,6 +455,51 @@ static async updateClient(client, id, data, userId, req) {
             throw error;
         }
     }
+    // Отримання інформації про оплату клієнта в Wialon
+static async getClientPaymentInfo(clientId) {
+    try {
+        // Отримання клієнта з wialon_id
+        const clientQuery = `
+            SELECT id, name, wialon_id, wialon_username 
+            FROM clients.clients 
+            WHERE id = $1
+        `;
+        
+        const clientResult = await pool.query(clientQuery, [clientId]);
+        
+        if (clientResult.rows.length === 0) {
+            throw new Error('Клієнт не знайдений');
+        }
+        
+        const client = clientResult.rows[0];
+        
+        if (!client.wialon_id) {
+            return {
+                isConfigured: true,
+                hasWialonId: false,
+                error: 'Wialon ID не вказано для цього клієнта'
+            };
+        }
+
+        // Імпорт сервісу Wialon інтеграції
+        const WialonIntegrationService = require('./wialon-integration.service');
+        
+        // Отримання платіжної інформації з Wialon
+        const paymentInfo = await WialonIntegrationService.getClientPaymentStatus(client.wialon_id);
+        
+        return {
+            clientId: client.id,
+            clientName: client.name,
+            wialonId: client.wialon_id,
+            wialonUsername: client.wialon_username,
+            ...paymentInfo
+        };
+        
+    } catch (error) {
+        console.error('Error getting client payment info:', error);
+        throw error;
+    }
+}
 }
 
 module.exports = ClientService;
