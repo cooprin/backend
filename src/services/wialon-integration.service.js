@@ -220,96 +220,135 @@ class WialonIntegrationService {
     }
 
     // Отримання інформації про оплату клієнта
-    static async getClientPaymentStatus(wialonResourceId) {
-        try {
-            const tokenData = await this.getWialonToken();
-            if (!tokenData) {
-                throw new Error('Wialon integration not configured');
-            }
 
-            const axios = require('axios');
+static async getClientPaymentStatus(wialonResourceId) {
+    try {
+        const tokenData = await this.getWialonToken();
+        if (!tokenData) {
+            throw new Error('Wialon integration not configured');
+        }
+
+        const axios = require('axios');
+        
+        // Авторизація в Wialon
+        const loginResponse = await axios.post(`${tokenData.api_url}/wialon/ajax.html`, 
+            `svc=token/login&params=${encodeURIComponent(JSON.stringify({token: tokenData.decrypted_token}))}`,
+            {
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            }
+        );
+
+        if (!loginResponse.data || loginResponse.data.error) {
+            throw new Error('Wialon authorization failed: ' + 
+                (loginResponse.data?.reason || loginResponse.data?.error_text || 'Unknown error'));
+        }
+
+        const eid = loginResponse.data.eid;
+
+        // Отримання інформації про обліковий запис - використовуємо wialon_resource_id
+        const accountUrl = `${tokenData.api_url}/wialon/ajax.html?svc=account/get_account_data&params={"itemId":${wialonResourceId},"type":1}&sid=${eid}`;
+        const accountResponse = await axios.get(accountUrl);
+
+        let paymentInfo = {
+            isConfigured: true,
+            hasWialonResourceId: true,
+            status: 'unknown',
+            daysLeft: null,
+            isActive: false,
+            reason: null
+        };
+
+        if (accountResponse.data && !accountResponse.data.error) {
+            const accountData = accountResponse.data;
             
-            // Авторизація в Wialon
-            const loginResponse = await axios.post(`${tokenData.api_url}/wialon/ajax.html`, 
-                `svc=token/login&params=${encodeURIComponent(JSON.stringify({token: tokenData.decrypted_token}))}`,
-                {
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-                }
-            );
-
-            if (!loginResponse.data || loginResponse.data.error) {
-                throw new Error('Wialon authorization failed: ' + 
-                    (loginResponse.data?.reason || loginResponse.data?.error_text || 'Unknown error'));
-            }
-
-            const eid = loginResponse.data.eid;
-
-            // Отримання інформації про ресурс (клієнта) - використовуємо wialon_resource_id
-            const resourceUrl = `${tokenData.api_url}/wialon/ajax.html?svc=core/search_item&params={"id":${wialonResourceId},"flags":1}&sid=${eid}`;
-            const resourceResponse = await axios.get(resourceUrl);
-
-            if (!resourceResponse.data || resourceResponse.data.error) {
-                throw new Error('Failed to get client info from Wialon: ' + 
-                    (resourceResponse.data?.reason || resourceResponse.data?.error_text || 'Unknown error'));
-            }
-
-            const resource = resourceResponse.data.item;
+            // Визначаємо статус на основі даних з Wialon
+            const clientStatus = this.determineClientStatus(accountData);
             
-            // Отримання інформації про баланс і дату закінчення - використовуємо wialon_resource_id
-            const accountUrl = `${tokenData.api_url}/wialon/ajax.html?svc=account/get_account_data&params={"itemId":${wialonResourceId},"type":1}&sid=${eid}`;
-            const accountResponse = await axios.get(accountUrl);
-
-            let paymentInfo = {
-                isConfigured: true,
-                hasWialonResourceId: true,
-                paidUntil: null,
-                daysLeft: null,
-                status: 'unknown',
-                balance: null,
-                currency: null
-            };
-
-            if (accountResponse.data && !accountResponse.data.error) {
-                const accountData = accountResponse.data;
-                
-                // Якщо є інформація про баланс
-                if (accountData.balance !== undefined) {
-                    paymentInfo.balance = accountData.balance;
-                    paymentInfo.currency = accountData.currency || 'UAH';
-                }
-
-                // Якщо є дата закінчення оплаченого періоду
-                if (accountData.enabled_to) {
-                    const paidUntilDate = new Date(accountData.enabled_to * 1000);
-                    paymentInfo.paidUntil = paidUntilDate;
-                    
-                    const today = new Date();
-                    const diffTime = paidUntilDate - today;
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                    
-                    paymentInfo.daysLeft = diffDays;
-                    
-                    if (diffDays > 7) {
-                        paymentInfo.status = 'active';
-                    } else if (diffDays > 0) {
-                        paymentInfo.status = 'expiringSoon';
-                    } else {
-                        paymentInfo.status = 'expired';
-                    }
-                }
-            }
-
-            return paymentInfo;
-
-        } catch (error) {
-            console.error('Error getting client payment status:', error);
-            return {
-                isConfigured: false,
-                hasWialonResourceId: true,
-                error: error.message
+            paymentInfo = {
+                ...paymentInfo,
+                status: clientStatus.status,
+                daysLeft: clientStatus.daysLeft,
+                isActive: clientStatus.isActive,
+                reason: clientStatus.reason,
+                // Додаткова інформація з Wialon
+                plan: accountData.plan || null,
+                parentAccountName: accountData.parentAccountName || null,
+                created: accountData.created ? new Date(accountData.created * 1000) : null
             };
         }
+
+        return paymentInfo;
+
+    } catch (error) {
+        console.error('Error getting client payment status:', error);
+        return {
+            isConfigured: false,
+            hasWialonResourceId: true,
+            error: error.message
+        };
     }
+}
+static determineClientStatus(accountData) {
+    const {
+        enabled,        // 0 - заблокований, 1 - активний
+        daysCounter,    // кількість днів до блокування
+        parentEnabled   // батьківський акаунт доступний/заблокований
+    } = accountData;
+
+    // Перевіряємо чи батьківський акаунт активний
+    if (!parentEnabled) {
+        return {
+            status: 'blocked',
+            reason: 'parent_account_blocked',
+            daysLeft: 0,
+            isActive: false
+        };
+    }
+
+    // Перевіряємо чи сам акаунт активний
+    if (enabled === 0) {
+        return {
+            status: 'blocked',
+            reason: 'account_blocked',
+            daysLeft: 0,
+            isActive: false
+        };
+    }
+
+    // Акаунт активний, перевіряємо daysCounter
+    if (daysCounter === undefined || daysCounter === null) {
+        return {
+            status: 'active',
+            reason: 'unlimited',
+            daysLeft: null,
+            isActive: true
+        };
+    }
+
+    // Визначаємо статус на основі кількості днів
+    if (daysCounter > 7) {
+        return {
+            status: 'active',
+            reason: 'paid',
+            daysLeft: daysCounter,
+            isActive: true
+        };
+    } else if (daysCounter > 0) {
+        return {
+            status: 'expiring_soon',
+            reason: 'expiring',
+            daysLeft: daysCounter,
+            isActive: true
+        };
+    } else {
+        return {
+            status: 'expired',
+            reason: 'days_expired',
+            daysLeft: 0,
+            isActive: false
+        };
+    }
+}
 }
 
 module.exports = WialonIntegrationService;
