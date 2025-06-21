@@ -43,6 +43,20 @@ RUN mkdir -p /app/data/uploads /app/data/logs
 # Копіюємо всі файли проекту
 COPY . .
 
+# Створюємо стартовий скрипт залежно від BUILD_MODE
+RUN if [ "$BUILD_MODE" = "production" ] ; then \
+        echo '#!/bin/sh' > /app/start.sh && \
+        echo 'echo "Starting production server..."' >> /app/start.sh && \
+        echo 'node scripts/init-dirs.js && node src/index.js' >> /app/start.sh ; \
+    else \
+        echo '#!/bin/sh' > /app/start.sh && \
+        echo 'echo "Starting development server with nodemon..."' >> /app/start.sh && \
+        echo 'node scripts/init-dirs.js && nodemon src/index.js' >> /app/start.sh ; \
+    fi
+
+# Робимо скрипт виконуваним
+RUN chmod +x /app/start.sh
+
 # Налаштовуємо права
 RUN chown -R node:node /app/data
 
@@ -52,11 +66,5 @@ USER node
 # Відкриваємо порт
 EXPOSE 3000
 
-# Умовний запуск залежно від BUILD_MODE
-CMD if [ "$BUILD_MODE" = "production" ] ; then \
-        echo "Starting production server..." && \
-        sh -c "node scripts/init-dirs.js && node src/index.js" ; \
-    else \
-        echo "Starting development server with nodemon..." && \
-        sh -c "node scripts/init-dirs.js && nodemon src/index.js" ; \
-    fi
+# Запускаємо стартовий скрипт
+CMD ["/app/start.sh"]
