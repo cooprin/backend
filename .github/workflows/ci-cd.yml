@@ -2,9 +2,9 @@ name: Backend CI/CD
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main, develop ]  # Додаємо develop та змінюємо master на main
   pull_request:
-    branches: [ master ]
+    branches: [ main, develop ]
 
 jobs:
   build-and-push:
@@ -19,9 +19,33 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
+      # Визначаємо тег залежно від гілки
+      - name: Determine Docker tag
+        id: tag
+        run: |
+          if [[ ${{ github.ref }} == 'refs/heads/main' ]]; then
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          elif [[ ${{ github.ref }} == 'refs/heads/develop' ]]; then
+            echo "tag=develop" >> $GITHUB_OUTPUT
+          else
+            echo "tag=pr-${{ github.event.number }}" >> $GITHUB_OUTPUT
+          fi
+
+      # Визначаємо режим збірки
+      - name: Determine build mode
+        id: build
+        run: |
+          if [[ ${{ steps.tag.outputs.tag }} == 'latest' ]]; then
+            echo "mode=production" >> $GITHUB_OUTPUT
+          else
+            echo "mode=development" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build and push backend
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ secrets.DOCKER_HUB_USERNAME }}/crm_backend:latest
+          tags: ${{ secrets.DOCKER_HUB_USERNAME }}/crm_backend:${{ steps.tag.outputs.tag }}
+          build-args: |
+            BUILD_MODE=${{ steps.build.outputs.mode }}
