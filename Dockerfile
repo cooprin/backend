@@ -29,7 +29,7 @@ RUN if [ "$BUILD_MODE" = "production" ] ; then \
         npm install ; \
     fi
 
-# Встановлюємо додаткові залежності (які чомусь окремо встановлюються)
+# Встановлюємо додаткові залежності
 RUN npm install express jsonwebtoken bcrypt pg winston
 
 # Для development - встановлюємо nodemon

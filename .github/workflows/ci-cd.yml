@@ -2,7 +2,7 @@ name: Backend CI/CD
 
 on:
   push:
-    branches: [ main, develop ]  # Додаємо develop та змінюємо master на main
+    branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
 
