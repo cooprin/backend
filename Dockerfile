@@ -1,5 +1,8 @@
 FROM node:18
 
+# Аргумент для типу збірки
+ARG BUILD_MODE=production
+
 ENV NODE_OPTIONS="--max-http-header-size=32768"
 
 WORKDIR /app
@@ -16,8 +19,23 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Копіюємо package.json і встановлюємо залежності
 COPY package*.json ./
-RUN npm install
+
+# Умовне встановлення залежностей
+RUN if [ "$BUILD_MODE" = "production" ] ; then \
+        echo "Installing production dependencies..." && \
+        npm install --only=production ; \
+    else \
+        echo "Installing all dependencies including dev..." && \
+        npm install ; \
+    fi
+
+# Встановлюємо додаткові залежності
 RUN npm install express jsonwebtoken bcrypt pg winston
+
+# Для development - встановлюємо nodemon
+RUN if [ "$BUILD_MODE" = "development" ] ; then \
+        npm install -g nodemon ; \
+    fi
 
 # Створюємо структуру директорій
 RUN mkdir -p /app/data/uploads /app/data/logs
@@ -34,5 +52,11 @@ USER node
 # Відкриваємо порт
 EXPOSE 3000
 
-# Запускаємо скрипт ініціалізації та сервер
-CMD ["sh", "-c", "node scripts/init-dirs.js && node src/index.js"]
+# Умовний запуск залежно від BUILD_MODE
+CMD if [ "$BUILD_MODE" = "production" ] ; then \
+        echo "Starting production server..." && \
+        sh -c "node scripts/init-dirs.js && node src/index.js" ; \
+    else \
+        echo "Starting development server with nodemon..." && \
+        sh -c "node scripts/init-dirs.js && nodemon src/index.js" ; \
+    fi

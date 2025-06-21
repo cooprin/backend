@@ -2,7 +2,7 @@ name: Backend CI/CD
 
 on:
   push:
-    branches: [ main, develop ]  # Тепер main замість master
+    branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
 
@@ -31,9 +31,21 @@ jobs:
             echo "tag=pr-${{ github.event.number }}" >> $GITHUB_OUTPUT
           fi
 
+      # Визначаємо режим збірки
+      - name: Determine build mode
+        id: build
+        run: |
+          if [[ ${{ steps.tag.outputs.tag }} == 'latest' ]]; then
+            echo "mode=production" >> $GITHUB_OUTPUT
+          else
+            echo "mode=development" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build and push backend
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: ${{ secrets.DOCKER_HUB_USERNAME }}/crm_backend:${{ steps.tag.outputs.tag }}
+          build-args: |
+            BUILD_MODE=${{ steps.build.outputs.mode }}
