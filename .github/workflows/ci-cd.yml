@@ -2,9 +2,9 @@ name: Backend CI/CD
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
 
 jobs:
   build-and-push:
@@ -19,33 +19,62 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      # Визначаємо тег залежно від гілки
-      - name: Determine Docker tag
-        id: tag
+      # Налаштування Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Визначаємо параметри збірки
+      - name: Determine build parameters
+        id: params
         run: |
           if [[ ${{ github.ref }} == 'refs/heads/main' ]]; then
             echo "tag=latest" >> $GITHUB_OUTPUT
+            echo "target=production" >> $GITHUB_OUTPUT
+            echo "environment=production" >> $GITHUB_OUTPUT
           elif [[ ${{ github.ref }} == 'refs/heads/develop' ]]; then
             echo "tag=develop" >> $GITHUB_OUTPUT
+            echo "target=development" >> $GITHUB_OUTPUT
+            echo "environment=development" >> $GITHUB_OUTPUT
           else
             echo "tag=pr-${{ github.event.number }}" >> $GITHUB_OUTPUT
+            echo "target=development" >> $GITHUB_OUTPUT
+            echo "environment=development" >> $GITHUB_OUTPUT
           fi
 
-      # Визначаємо режим збірки
-      - name: Determine build mode
-        id: build
-        run: |
-          if [[ ${{ steps.tag.outputs.tag }} == 'latest' ]]; then
-            echo "mode=production" >> $GITHUB_OUTPUT
-          else
-            echo "mode=development" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Build and push backend
+      # Збірка для production (мінімальний образ)
+      - name: Build and push production image
+        if: steps.params.outputs.target == 'production'
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ secrets.DOCKER_HUB_USERNAME }}/crm_backend:${{ steps.tag.outputs.tag }}
-          build-args: |
-            BUILD_MODE=${{ steps.build.outputs.mode }}
+          target: production
+          platforms: linux/amd64
+          tags: |
+            ${{ secrets.DOCKER_HUB_USERNAME }}/crm_backend:${{ steps.params.outputs.tag }}
+            ${{ secrets.DOCKER_HUB_USERNAME }}/crm_backend:prod-${{ github.sha }}
+
+      # Збірка для development (повний образ з dev tools)
+      - name: Build and push development image
+        if: steps.params.outputs.target == 'development'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          target: development
+          platforms: linux/amd64
+          tags: |
+            ${{ secrets.DOCKER_HUB_USERNAME }}/crm_backend:${{ steps.params.outputs.tag }}
+            ${{ secrets.DOCKER_HUB_USERNAME }}/crm_backend:dev-${{ github.sha }}
+
+      # Виводимо інформацію про створений образ
+      - name: Image info
+        run: |
+          echo "🚀 Built image: ${{ secrets.DOCKER_HUB_USERNAME }}/crm_backend:${{ steps.params.outputs.tag }}"
+          echo "🎯 Target stage: ${{ steps.params.outputs.target }}"
+          echo "🌍 Environment: ${{ steps.params.outputs.environment }}"
+          if [[ "${{ steps.params.outputs.target }}" == "production" ]]; then
+            echo "📦 Production image: Alpine + production deps (~100MB)"
+          else
+            echo "📦 Development image: Full code + dev tools (~300MB)"
+          fi
