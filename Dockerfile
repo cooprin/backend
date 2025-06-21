@@ -29,8 +29,8 @@ COPY package*.json ./
 # =============================================================================
 FROM base AS dependencies
 
-# Встановлюємо всі залежності для збірки
-RUN npm ci --only=production
+# Встановлюємо всі залежності (використовуємо npm install замість npm ci)
+RUN npm install --production
 
 # =============================================================================
 # STAGE 3: Production stage (мінімальний образ)
@@ -84,8 +84,8 @@ CMD ["sh", "-c", "node scripts/init-dirs.js && node src/index.js"]
 # =============================================================================
 FROM base AS development
 
-# Встановлюємо всі залежності включно з dev
-RUN npm ci
+# Встановлюємо всі залежності (використовуємо npm install замість npm ci)
+RUN npm install
 
 # Встановлюємо nodemon глобально
 RUN npm install -g nodemon
