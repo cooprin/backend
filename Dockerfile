@@ -1,70 +1,114 @@
-FROM node:18
+# Multi-stage Dockerfile для Backend
 
-# Аргумент для типу збірки
-ARG BUILD_MODE=production
-
-ENV NODE_OPTIONS="--max-http-header-size=32768"
+# =============================================================================
+# STAGE 1: Base stage (спільна база)
+# =============================================================================
+FROM node:18-alpine AS base
 
 WORKDIR /app
 
-# Встановлюємо Chrome і залежності
-RUN apt-get update && apt-get install -y \
+# Встановлюємо системні залежності
+RUN apk add --no-cache \
     chromium \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
 
-# Налаштовуємо змінні для Puppeteer
+# Налаштовуємо Puppeteer
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV NODE_OPTIONS="--max-http-header-size=32768"
 
-# Копіюємо package.json і встановлюємо залежності
+# Копіюємо package файли
 COPY package*.json ./
 
-# Умовне встановлення залежностей
-RUN if [ "$BUILD_MODE" = "production" ] ; then \
-        echo "Installing production dependencies..." && \
-        npm install --only=production ; \
-    else \
-        echo "Installing all dependencies including dev..." && \
-        npm install ; \
-    fi
+# =============================================================================
+# STAGE 2: Dependencies stage (встановлення залежностей)
+# =============================================================================
+FROM base AS dependencies
 
-# Встановлюємо додаткові залежності
-RUN npm install express jsonwebtoken bcrypt pg winston
+# Встановлюємо всі залежності (використовуємо npm install замість npm ci)
+RUN npm install --production
 
-# Для development - встановлюємо nodemon
-RUN if [ "$BUILD_MODE" = "development" ] ; then \
-        npm install -g nodemon ; \
-    fi
+# =============================================================================
+# STAGE 3: Production stage (мінімальний образ)
+# =============================================================================
+FROM node:18-alpine AS production
 
-# Створюємо структуру директорій
-RUN mkdir -p /app/data/uploads /app/data/logs
+WORKDIR /app
 
-# Копіюємо всі файли проекту
-COPY . .
+# Встановлюємо тільки runtime залежності
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
 
-# Створюємо стартовий скрипт залежно від BUILD_MODE
-RUN if [ "$BUILD_MODE" = "production" ] ; then \
-        echo '#!/bin/sh' > /app/start.sh && \
-        echo 'echo "Starting production server..."' >> /app/start.sh && \
-        echo 'node scripts/init-dirs.js && node src/index.js' >> /app/start.sh ; \
-    else \
-        echo '#!/bin/sh' > /app/start.sh && \
-        echo 'echo "Starting development server with nodemon..."' >> /app/start.sh && \
-        echo 'node scripts/init-dirs.js && nodemon src/index.js' >> /app/start.sh ; \
-    fi
+# Налаштовуємо Puppeteer
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV NODE_OPTIONS="--max-http-header-size=32768"
 
-# Робимо скрипт виконуваним
-RUN chmod +x /app/start.sh
+# Копіюємо тільки production залежності
+COPY --from=dependencies /app/node_modules ./node_modules
 
-# Налаштовуємо права
-RUN chown -R node:node /app/data
+# Копіюємо тільки необхідні файли додатка
+COPY src/ ./src/
+COPY scripts/ ./scripts/
+COPY package*.json ./
 
-# Переключаємось на користувача node
-USER node
+# Створюємо користувача для безпеки
+RUN addgroup -g 1001 -S nodejs \
+    && adduser -S nodeuser -u 1001
+
+# Створюємо директорії з правильними правами
+RUN mkdir -p /app/data/uploads /app/data/logs \
+    && chown -R nodeuser:nodejs /app/data \
+    && chown -R nodeuser:nodejs /app
+
+# Переключаємось на безпечного користувача
+USER nodeuser
 
 # Відкриваємо порт
 EXPOSE 3000
 
-# Запускаємо стартовий скрипт
-CMD ["/app/start.sh"]
+# Запускаємо production сервер
+CMD ["sh", "-c", "node scripts/init-dirs.js && node src/index.js"]
+
+# =============================================================================
+# STAGE 4: Development stage (повний код + dev tools)
+# =============================================================================
+FROM base AS development
+
+# Встановлюємо всі залежності (використовуємо npm install замість npm ci)
+RUN npm install
+
+# Встановлюємо nodemon глобально
+RUN npm install -g nodemon
+
+# Копіюємо весь код проекту
+COPY . .
+
+# Створюємо директорії
+RUN mkdir -p /app/data/uploads /app/data/logs
+
+# Створюємо користувача
+RUN addgroup -g 1001 -S nodejs \
+    && adduser -S nodeuser -u 1001
+
+# Налаштовуємо права
+RUN chown -R nodeuser:nodejs /app/data \
+    && chown -R nodeuser:nodejs /app
+
+# Переключаємось на користувача
+USER nodeuser
+
+# Відкриваємо порт
+EXPOSE 3000
+
+# Запускаємо development сервер з nodemon
+CMD ["sh", "-c", "node scripts/init-dirs.js && nodemon src/index.js"]
