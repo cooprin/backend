@@ -10,9 +10,19 @@ const axios = require('axios');
 
 // Login
 router.post('/login', async (req, res) => {
+  console.log('=== LOGIN ATTEMPT START ===');
+  console.log('Request body:', req.body);
+  console.log('Request method:', req.method);
+  console.log('Request URL:', req.url);
+  
   try {
     const { email, password } = req.body;
+    console.log('Extracted email:', email);
+    console.log('Password provided:', !!password);
+    console.log('Password length:', password?.length);
+    console.log('Password type:', typeof password);
 
+    console.log('Step 1: Searching for staff user...');
     // Спочатку шукаємо staff користувача (як у вашому простому файлі)
     const result = await pool.query(
       `SELECT 
@@ -29,11 +39,24 @@ router.post('/login', async (req, res) => {
       [email]
     );
 
+    console.log('Staff query completed. Rows found:', result.rows.length);
+
     // Якщо знайшли staff - обробляємо як раніше
     if (result.rows.length > 0) {
+      console.log('Staff user found, processing...');
       const user = result.rows[0];
+      
+      console.log('User ID:', user.id);
+      console.log('User email:', user.email);
+      console.log('User active:', user.is_active);
+      console.log('Password from DB exists:', !!user.password);
+      console.log('Password from DB type:', typeof user.password);
+      console.log('Password from DB length:', user.password?.length);
+      console.log('Password from DB is null:', user.password === null);
+      console.log('Password from DB is undefined:', user.password === undefined);
 
       if (!user.is_active) {
+        console.log('User account is inactive');
         await AuditService.log({
           userId: user.id,
           actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
@@ -47,9 +70,43 @@ router.post('/login', async (req, res) => {
         return res.status(403).json({ message: 'Account is deactivated' });
       }
 
+      // Додаткові перевірки перед bcrypt
+      console.log('Preparing for password check...');
+      
+      if (!user.password || typeof user.password !== 'string') {
+        console.error('CRITICAL: Invalid password hash in database');
+        console.error('Password value:', user.password);
+        console.error('Password type:', typeof user.password);
+        return res.status(500).json({ message: 'Database error' });
+      }
+
+      if (!password || typeof password !== 'string') {
+        console.error('CRITICAL: Invalid password in request');
+        console.error('Request password:', password);
+        console.error('Request password type:', typeof password);
+        return res.status(400).json({ message: 'Invalid password format' });
+      }
+
+      console.log('About to call bcrypt.compare...');
+      console.log('Input password:', password);
+      console.log('Hash from DB:', user.password);
+      
       // Перевірка пароля
-      const validPassword = await bcrypt.compare(password, user.password);
+      let validPassword;
+      try {
+        validPassword = await bcrypt.compare(password, user.password);
+        console.log('bcrypt.compare completed successfully');
+        console.log('Password valid:', validPassword);
+      } catch (bcryptError) {
+        console.error('BCRYPT ERROR:', bcryptError);
+        console.error('Bcrypt error name:', bcryptError.name);
+        console.error('Bcrypt error message:', bcryptError.message);
+        console.error('Bcrypt error stack:', bcryptError.stack);
+        return res.status(500).json({ message: 'Password verification error' });
+      }
+      
       if (!validPassword) {
+        console.log('Password validation failed');
         await AuditService.log({
           userId: user.id,
           actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
@@ -63,12 +120,17 @@ router.post('/login', async (req, res) => {
         return res.status(401).json({ message: 'Invalid credentials' });
       }
 
+      console.log('Password validation successful, updating last login...');
       // Оновлення часу останнього входу
       await pool.query(
         'UPDATE auth.users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
         [user.id]
       );
+      console.log('Last login updated');
 
+      console.log('Creating JWT token...');
+      console.log('JWT_SECRET exists:', !!process.env.JWT_SECRET);
+      
       // Створення токена з правами (ВИПРАВЛЕНО - додано userType)
       const token = jwt.sign(
         { 
@@ -80,7 +142,9 @@ router.post('/login', async (req, res) => {
         process.env.JWT_SECRET,
         { expiresIn: '24h' }
       );
+      console.log('JWT token created');
 
+      console.log('Logging audit...');
       // Логування успішного входу
       await AuditService.log({
         userId: user.id,
@@ -92,7 +156,9 @@ router.post('/login', async (req, res) => {
         auditType: AUDIT_TYPES.BUSINESS,
         req
       });
+      console.log('Audit logged successfully');
 
+      console.log('Sending successful response...');
       return res.json({
         token,
         userType: 'staff',
@@ -110,43 +176,57 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    console.log('Staff user not found, checking for client...');
     // Якщо не staff - шукаємо клієнта
     let clientResult;
     try {
+      console.log('Querying clients table...');
       clientResult = await pool.query(
         'SELECT * FROM clients.clients WHERE wialon_username = $1 AND is_active = true',
         [email]
       );
+      console.log('Client query completed. Rows found:', clientResult.rows.length);
     } catch (error) {
+      console.log('Error querying clients table:', error.message);
       // Таблиця клієнтів не існує
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
     if (clientResult.rows.length === 0) {
+      console.log('No client found with username:', email);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
     const client = clientResult.rows[0];
+    console.log('Client found:', client.id, client.name);
 
+    console.log('Checking Wialon integration...');
     // Перевіряємо Wialon інтеграцію
     let WialonIntegrationService;
     try {
       WialonIntegrationService = require('../services/wialon-integration.service');
+      console.log('Wialon service loaded successfully');
     } catch (error) {
+      console.log('Wialon service load error:', error.message);
       return res.status(500).json({ message: 'Wialon integration not available' });
     }
 
     let tokenData;
     try {
+      console.log('Getting Wialon token...');
       tokenData = await WialonIntegrationService.getWialonToken();
+      console.log('Wialon token data received:', !!tokenData);
     } catch (error) {
+      console.log('Wialon token error:', error.message);
       return res.status(500).json({ message: 'Wialon configuration error' });
     }
 
     if (!tokenData?.api_url) {
+      console.log('Wialon API URL not configured');
       return res.status(500).json({ message: 'Wialon not configured' });
     }
 
+    console.log('Validating with Wialon API...');
     // Перевіряємо з Wialon API
     try {
       const loginResponse = await axios.post(
@@ -160,13 +240,17 @@ router.post('/login', async (req, res) => {
         }
       );
 
+      console.log('Wialon API response received');
       if (!loginResponse.data || loginResponse.data.error) {
+        console.log('Wialon authentication failed:', loginResponse.data?.error);
         return res.status(401).json({ message: 'Invalid credentials' });
       }
 
+      console.log('Wialon authentication successful');
       // Зберігаємо сесію (якщо таблиця існує)
       let sessionId = null;
       try {
+        console.log('Creating client session...');
         const sessionResult = await pool.query(
           `INSERT INTO customer_portal.client_sessions 
            (client_id, wialon_session_id, wialon_token, expires_at, ip_address, user_agent)
@@ -182,10 +266,13 @@ router.post('/login', async (req, res) => {
           ]
         );
         sessionId = sessionResult.rows[0].id;
+        console.log('Client session created:', sessionId);
       } catch (sessionError) {
+        console.log('Session creation failed:', sessionError.message);
         // Таблиця сесій не існує - продовжуємо без неї
       }
 
+      console.log('Creating client JWT token...');
       // Створюємо JWT для клієнта
       const token = jwt.sign(
         {
@@ -199,6 +286,7 @@ router.post('/login', async (req, res) => {
         { expiresIn: '24h' }
       );
 
+      console.log('Logging client audit...');
       await AuditService.log({
         actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_SUCCESS,
         entityType: 'CLIENT',
@@ -211,6 +299,7 @@ router.post('/login', async (req, res) => {
         req
       });
 
+      console.log('Client login successful, sending response...');
       return res.json({
         token,
         userType: 'client',
@@ -224,11 +313,16 @@ router.post('/login', async (req, res) => {
       });
 
     } catch (wialonError) {
+      console.error('Wialon API error:', wialonError.message);
       return res.status(500).json({ message: 'Authentication service error' });
     }
 
   } catch (err) {
-    console.error('Login error:', err);
+    console.error('=== LOGIN GLOBAL ERROR ===');
+    console.error('Error name:', err.name);
+    console.error('Error message:', err.message);
+    console.error('Error stack:', err.stack);
+    console.error('==========================');
     res.status(500).json({ message: 'Server error' });
   }
 });
