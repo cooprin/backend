@@ -3,12 +3,14 @@ const cors = require('cors');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/user');
 const rolesRouter = require('./routes/roles');
-const { setupDatabase } = require('./database');
+const { setupDatabase, pool } = require('./database');
 const auditRoutes = require('./routes/audit');
 const profileRoutes = require('./routes/profile');
 const permissionsRouter = require('./routes/permissions');
 const resourcesRouter = require('./routes/resources');
 const setBrowserInfo = require('./middleware/browserInfo');
+const authenticate = require('./middleware/auth');
+const { staffOnly } = require('./middleware/clientAccess');
 const productsRouter = require('./routes/products');
 const manufacturersRouter = require('./routes/manufacturers');
 const suppliersRouter = require('./routes/suppliers');
@@ -26,6 +28,9 @@ const companyRouter = require('./routes/company');
 const wialonIntegrationRouter = require('./routes/wialon-integration');
 const invoiceTemplatesRouter = require('./routes/invoice-templates');
 const wialonSyncRouter = require('./routes/wialon-sync');
+const portalRoutes = require('./routes/portal');
+const ticketsRoutes = require('./routes/tickets');
+const ticketCommentsRoutes = require('./routes/ticket-comments');
 
 const app = express();
 app.set('trust proxy', true);
@@ -42,30 +47,36 @@ app.use(setBrowserInfo);
 
 // Routes
 app.use('/auth', authRoutes);
-app.use('/user', userRoutes);
-app.use('/roles', rolesRouter);
-app.use('/profile', profileRoutes);
-app.use('/audit-logs', auditRoutes);
-app.use('/permissions', permissionsRouter);
-app.use('/resources', resourcesRouter);
-app.use('/products', productsRouter);
-app.use('/manufacturers', manufacturersRouter);
-app.use('/suppliers', suppliersRouter);
-app.use('/models', modelsRouter);
-app.use('/warehouses', warehousesRouter);
-app.use('/stock', stockRouter);
-app.use('/product-types', productTypesRouter);
-app.use('/characteristic-types', characteristicTypesRouter);
-app.use('/clients', clientsRouter);
-app.use('/wialon', wialonRouter);
-app.use('/tariffs', tariffsRouter);
-app.use('/services', servicesRouter);
-app.use('/billing/payments', paymentsRoutes);
-app.use('/company', companyRouter);
-app.use('/wialon-integration', wialonIntegrationRouter);
-app.use('/wialon-sync', wialonSyncRouter); 
-app.use('/invoice-templates', invoiceTemplatesRouter);
 
+// Staff-only routes (existing admin functionality)
+app.use('/user', authenticate, staffOnly, userRoutes);
+app.use('/roles', authenticate, staffOnly, rolesRouter);
+app.use('/profile', authenticate, profileRoutes); // Profile can be used by both
+app.use('/audit-logs', authenticate, staffOnly, auditRoutes);
+app.use('/permissions', authenticate, staffOnly, permissionsRouter);
+app.use('/resources', authenticate, staffOnly, resourcesRouter);
+app.use('/products', authenticate, staffOnly, productsRouter);
+app.use('/manufacturers', authenticate, staffOnly, manufacturersRouter);
+app.use('/suppliers', authenticate, staffOnly, suppliersRouter);
+app.use('/models', authenticate, staffOnly, modelsRouter);
+app.use('/warehouses', authenticate, staffOnly, warehousesRouter);
+app.use('/stock', authenticate, staffOnly, stockRouter);
+app.use('/product-types', authenticate, staffOnly, productTypesRouter);
+app.use('/characteristic-types', authenticate, staffOnly, characteristicTypesRouter);
+app.use('/clients', authenticate, staffOnly, clientsRouter);
+app.use('/wialon', authenticate, staffOnly, wialonRouter);
+app.use('/tariffs', authenticate, staffOnly, tariffsRouter);
+app.use('/services', authenticate, staffOnly, servicesRouter);
+app.use('/billing/payments', authenticate, staffOnly, paymentsRoutes);
+app.use('/company', authenticate, staffOnly, companyRouter);
+app.use('/wialon-integration', authenticate, staffOnly, wialonIntegrationRouter);
+app.use('/wialon-sync', authenticate, staffOnly, wialonSyncRouter);
+app.use('/invoice-templates', authenticate, staffOnly, invoiceTemplatesRouter);
+
+// Customer portal routes (clients + staff)
+app.use('/portal', portalRoutes);
+app.use('/tickets', ticketsRoutes);
+app.use('/ticket-comments', ticketCommentsRoutes);
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
