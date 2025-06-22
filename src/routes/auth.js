@@ -13,6 +13,14 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    // Логування спроби входу
+    console.log('=== LOGIN ATTEMPT ===');
+    console.log('Username/Email:', email);
+    console.log('Password length:', password?.length);
+    console.log('IP Address:', req.ip);
+    console.log('User Agent:', req.headers['user-agent']);
+    console.log('Timestamp:', new Date().toISOString());
+
     // Спочатку шукаємо staff користувача
     const staffResult = await pool.query(
       `SELECT 
@@ -31,9 +39,11 @@ router.post('/login', async (req, res) => {
 
     // Якщо знайшли staff - обробляємо як раніше
     if (staffResult.rows.length > 0) {
+      console.log('✓ Staff user found:', email);
       const user = staffResult.rows[0];
 
       if (!user.is_active) {
+        console.log('✗ Staff account inactive');
         await AuditService.log({
           userId: user.id,
           actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
@@ -50,6 +60,7 @@ router.post('/login', async (req, res) => {
       // Перевірка пароля
       const validPassword = await bcryptjs.compare(password, user.password);
       if (!validPassword) {
+        console.log('✗ Invalid staff password');
         await AuditService.log({
           userId: user.id,
           actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
@@ -93,6 +104,7 @@ router.post('/login', async (req, res) => {
         req
       });
 
+      console.log('✓ Staff login successful');
       return res.json({
         token,
         userType: 'staff',
@@ -110,6 +122,8 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    console.log('Staff not found, checking for Wialon client...');
+
     // Якщо не staff - шукаємо клієнта
     let clientResult;
     try {
@@ -117,42 +131,55 @@ router.post('/login', async (req, res) => {
         'SELECT * FROM clients.clients WHERE wialon_username = $1 AND is_active = true',
         [email]
       );
+      console.log('Client query result:', clientResult.rows.length, 'rows');
     } catch (error) {
+      console.log('✗ Clients table error:', error.message);
       // Таблиця клієнтів не існує
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
     if (clientResult.rows.length === 0) {
+      console.log('✗ Client not found with username:', email);
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
     const client = clientResult.rows[0];
+    console.log('✓ Client found:', client.name, 'ID:', client.id);
 
     // Перевіряємо Wialon інтеграцію
     let WialonIntegrationService;
     try {
       WialonIntegrationService = require('../services/wialon-integration.service');
+      console.log('✓ Wialon service loaded');
     } catch (error) {
+      console.log('✗ Wialon service error:', error.message);
       return res.status(500).json({ message: 'Wialon integration not available' });
     }
 
     let tokenData;
     try {
       tokenData = await WialonIntegrationService.getWialonToken();
+      console.log('✓ Wialon token obtained');
     } catch (error) {
+      console.log('✗ Wialon token error:', error.message);
       return res.status(500).json({ message: 'Wialon configuration error' });
     }
 
     if (!tokenData?.api_url) {
+      console.log('✗ Wialon API URL not configured');
       return res.status(500).json({ message: 'Wialon not configured' });
     }
 
+    console.log('Wialon API URL:', tokenData.api_url);
+
     // Перевіряємо з Wialon API
     try {
+      console.log('→ Sending login request to Wialon API...');
       const loginResponse = await axios.post(
         `${tokenData.api_url}/wialon/ajax.html`,
-        `svc=token/login&params=${encodeURIComponent(JSON.stringify({
-          token: password
+        `svc=core/login&params=${encodeURIComponent(JSON.stringify({
+          user: email,  // Wialon username
+          password: password  // Wialon password
         }))}`,
         {
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -160,9 +187,17 @@ router.post('/login', async (req, res) => {
         }
       );
 
+      console.log('← Wialon API response status:', loginResponse.status);
+      console.log('← Wialon API response data:', JSON.stringify(loginResponse.data, null, 2));
+
       if (!loginResponse.data || loginResponse.data.error) {
+        console.log('✗ Wialon authentication failed');
+        console.log('Error details:', loginResponse.data?.error);
         return res.status(401).json({ message: 'Invalid credentials' });
       }
+
+      console.log('✓ Wialon authentication successful');
+      console.log('Wialon session ID:', loginResponse.data.eid);
 
       // Зберігаємо сесію (якщо таблиця існує)
       let sessionId = null;
@@ -182,7 +217,9 @@ router.post('/login', async (req, res) => {
           ]
         );
         sessionId = sessionResult.rows[0].id;
+        console.log('✓ Client session created:', sessionId);
       } catch (sessionError) {
+        console.log('⚠ Session creation failed:', sessionError.message);
         // Таблиця сесій не існує - продовжуємо без неї
       }
 
@@ -211,6 +248,7 @@ router.post('/login', async (req, res) => {
         req
       });
 
+      console.log('✓ Client login successful');
       return res.json({
         token,
         userType: 'client',
@@ -224,11 +262,14 @@ router.post('/login', async (req, res) => {
       });
 
     } catch (wialonError) {
+      console.log('✗ Wialon API error:', wialonError.message);
+      console.log('Error code:', wialonError.code);
+      console.log('Error response:', wialonError.response?.data);
       return res.status(500).json({ message: 'Authentication service error' });
     }
 
   } catch (err) {
-    console.error('Login error:', err);
+    console.error('✗ Login error:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });
