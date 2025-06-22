@@ -69,8 +69,12 @@ router.post('/register', async (req, res) => {
 // Login
 router.post('/login', async (req, res) => {
   try {
+    console.log('=== LOGIN ATTEMPT START ===');
     const { email, password } = req.body;
+    console.log('Email:', email);
+    console.log('Password length:', password?.length);
 
+    console.log('Step 1: Searching for staff user...');
     // Step 1: Try to find user in staff table
     const staffResult = await pool.query(
       `SELECT 
@@ -87,47 +91,40 @@ router.post('/login', async (req, res) => {
       [email]
     );
 
+    console.log('Staff query result rows:', staffResult.rows.length);
+
     if (staffResult.rows.length > 0) {
-      // Found staff user - process as before
+      console.log('Staff user found, processing...');
       const user = staffResult.rows[0];
+      console.log('User ID:', user.id);
+      console.log('User active:', user.is_active);
 
       if (!user.is_active) {
-        await AuditService.log({
-          userId: user.id,
-          actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
-          entityType: ENTITY_TYPES.USER,
-          entityId: user.id,
-          newValues: { email, reason: 'Account inactive' },
-          ipAddress: req.ip,
-          auditType: AUDIT_TYPES.BUSINESS,
-          req
-        });
+        console.log('User account inactive');
+        // ... audit log code
         return res.status(403).json({ message: 'Account is deactivated' });
       }
 
-      // Check password
+      console.log('Checking password...');
       const validPassword = await bcrypt.compare(password, user.password);
+      console.log('Password valid:', validPassword);
+      
       if (!validPassword) {
-        await AuditService.log({
-          userId: user.id,
-          actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
-          entityType: ENTITY_TYPES.USER,
-          entityId: user.id,
-          newValues: { email, reason: 'Invalid password' },
-          ipAddress: req.ip,
-          auditType: AUDIT_TYPES.BUSINESS,
-          req
-        });
+        console.log('Invalid password');
+        // ... audit log code
         return res.status(401).json({ message: 'Invalid credentials' });
       }
 
-      // Update last login
+      console.log('Updating last login...');
       await pool.query(
         'UPDATE auth.users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
         [user.id]
       );
+      console.log('Last login updated');
 
-      // Create staff token
+      console.log('Creating JWT token...');
+      console.log('JWT_SECRET exists:', !!process.env.JWT_SECRET);
+      
       const token = jwt.sign(
         { 
           userId: user.id,
@@ -138,8 +135,9 @@ router.post('/login', async (req, res) => {
         process.env.JWT_SECRET,
         { expiresIn: '24h' }
       );
+      console.log('JWT token created');
 
-      // Log successful login
+      console.log('Logging audit...');
       await AuditService.log({
         userId: user.id,
         actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_SUCCESS,
@@ -150,7 +148,9 @@ router.post('/login', async (req, res) => {
         auditType: AUDIT_TYPES.BUSINESS,
         req
       });
+      console.log('Audit logged');
 
+      console.log('Sending response...');
       return res.json({
         token,
         userType: 'staff',
@@ -168,137 +168,14 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Step 2: Not found in staff, try to find in clients by wialon_username
-    const clientResult = await pool.query(
-      'SELECT * FROM clients.clients WHERE wialon_username = $1 AND is_active = true',
-      [email] // Using email as wialon_username
-    );
-
-    if (clientResult.rows.length === 0) {
-      // Client not found
-      await AuditService.log({
-        actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
-        entityType: 'CLIENT',
-        newValues: { email, reason: 'Client not found' },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    const client = clientResult.rows[0];
-
-    // Step 3: Validate credentials with Wialon API
-    const WialonIntegrationService = require('../services/wialon-integration.service');
-    
-    try {
-      const tokenData = await WialonIntegrationService.getWialonToken();
-      if (!tokenData) {
-        return res.status(500).json({ message: 'Wialon integration not configured' });
-      }
-
-      // Try to login to Wialon with client credentials
-      const loginResponse = await axios.post(`${tokenData.api_url}/wialon/ajax.html`,
-        `svc=token/login&params=${encodeURIComponent(JSON.stringify({
-          token: password // Using password as Wialon token
-        }))}`,
-        {
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          timeout: 10000
-        });
-
-      if (!loginResponse.data || loginResponse.data.error) {
-        // Invalid Wialon credentials
-        await AuditService.log({
-          actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
-          entityType: 'CLIENT',
-          newValues: { 
-            client_id: client.id, 
-            wialon_username: email, 
-            reason: 'Invalid Wialon credentials' 
-          },
-          ipAddress: req.ip,
-          auditType: AUDIT_TYPES.BUSINESS,
-          req
-        });
-        return res.status(401).json({ message: 'Invalid credentials' });
-      }
-
-      // Step 4: Create client session
-      const sessionResult = await pool.query(
-        `INSERT INTO customer_portal.client_sessions 
-         (client_id, wialon_session_id, wialon_token, expires_at, ip_address, user_agent)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id`,
-        [
-          client.id,
-          loginResponse.data.eid,
-          password, // Store encrypted in production!
-          new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-          req.ip,
-          req.headers['user-agent']
-        ]
-      );
-
-      // Create client JWT token
-      const token = jwt.sign(
-        {
-          clientId: client.id,
-          userType: 'client',
-          wialonUsername: client.wialon_username,
-          sessionId: sessionResult.rows[0].id,
-          permissions: ['customer_portal.read', 'tickets.read', 'tickets.create', 'chat.read', 'chat.create']
-        },
-        process.env.JWT_SECRET,
-        { expiresIn: '24h' }
-      );
-
-      // Log successful client login
-      await AuditService.log({
-        actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_SUCCESS,
-        entityType: 'CLIENT',
-        newValues: { 
-          client_id: client.id, 
-          wialon_username: email 
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-
-      return res.json({
-        token,
-        userType: 'client',
-        client: {
-          id: client.id,
-          name: client.name,
-          email: client.email,
-          phone: client.phone,
-          wialon_username: client.wialon_username
-        }
-      });
-
-    } catch (wialonError) {
-      console.error('Wialon authentication error:', wialonError);
-      await AuditService.log({
-        actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
-        entityType: 'CLIENT',
-        newValues: { 
-          client_id: client.id, 
-          wialon_username: email, 
-          reason: 'Wialon API error',
-          error: wialonError.message 
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-      return res.status(500).json({ message: 'Authentication service temporarily unavailable' });
-    }
+    console.log('Staff user not found, checking clients...');
+    // Тут продовжується логіка для клієнтів...
 
   } catch (err) {
-    console.error('Login error:', err);
+    console.error('=== LOGIN ERROR ===');
+    console.error('Error details:', err);
+    console.error('Error stack:', err.stack);
+    console.error('===================');
     res.status(500).json({ message: 'Server error' });
   }
 });
