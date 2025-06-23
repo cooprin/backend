@@ -134,7 +134,6 @@ router.post('/login', async (req, res) => {
       console.log('Client query result:', clientResult.rows.length, 'rows');
     } catch (error) {
       console.log('✗ Clients table error:', error.message);
-      // Таблиця клієнтів не існує
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
@@ -159,7 +158,7 @@ router.post('/login', async (req, res) => {
     let tokenData;
     try {
       tokenData = await WialonIntegrationService.getWialonToken();
-      console.log('✓ Wialon token obtained');
+      console.log('✓ Wialon configuration loaded');
     } catch (error) {
       console.log('✗ Wialon token error:', error.message);
       return res.status(500).json({ message: 'Wialon configuration error' });
@@ -172,32 +171,96 @@ router.post('/login', async (req, res) => {
 
     console.log('Wialon API URL:', tokenData.api_url);
 
-    // Перевіряємо з Wialon API
+    // Спробуємо отримати токен через нову Wialon OAuth форму
     try {
-      console.log('→ Sending login request to Wialon API...');
-      const loginResponse = await axios.post(
-        `${tokenData.api_url}/wialon/ajax.html`,
-        `svc=core/login&params=${encodeURIComponent(JSON.stringify({
-          user: email,  // Wialon username
-          password: password  // Wialon password
-        }))}`,
+      console.log('→ Attempting new Wialon token-based authentication...');
+      
+      // Підготовка параметрів для OAuth запиту
+      const oauthParams = {
+        client_id: 'your_app_name', // можна налаштувати
+        redirect_uri: 'urn:ietf:wg:oauth:2.0:oob', // для програмного доступу
+        access_type: -1, // повний доступ
+        activation_time: 0,
+        duration: 3600, // 1 година
+        flags: 1,
+        login: email,
+        passw: password
+      };
+
+      // Формуємо POST запит до oauth.html
+      const oauthResponse = await axios.post(
+        `${tokenData.api_url}/oauth.html`,
+        new URLSearchParams(oauthParams).toString(),
         {
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          timeout: 10000
+          headers: { 
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': 'Custom-App/1.0'
+          },
+          timeout: 15000,
+          maxRedirects: 0, // не слідкуємо за редиректами
+          validateStatus: function (status) {
+            // Приймаємо і 200 і 302 статуси
+            return status >= 200 && status < 400;
+          }
         }
       );
 
-      console.log('← Wialon API response status:', loginResponse.status);
-      console.log('← Wialon API response data:', JSON.stringify(loginResponse.data, null, 2));
+      console.log('← OAuth response status:', oauthResponse.status);
+      console.log('← OAuth response headers:', oauthResponse.headers);
 
-      if (!loginResponse.data || loginResponse.data.error) {
-        console.log('✗ Wialon authentication failed');
-        console.log('Error details:', loginResponse.data?.error);
+      let wialonToken = null;
+
+      // Перевіряємо чи є токен в відповіді або в редиректі
+      if (oauthResponse.status === 302 && oauthResponse.headers.location) {
+        // Парсимо токен з Location header
+        const locationUrl = new URL(oauthResponse.headers.location);
+        wialonToken = locationUrl.searchParams.get('access_token');
+        console.log('← Token from redirect:', wialonToken ? 'Found' : 'Not found');
+      } else if (oauthResponse.data) {
+        // Якщо токен в тілі відповіді (рідко, але можливо)
+        if (typeof oauthResponse.data === 'string' && oauthResponse.data.includes('access_token')) {
+          const tokenMatch = oauthResponse.data.match(/access_token=([^&]+)/);
+          if (tokenMatch) {
+            wialonToken = tokenMatch[1];
+          }
+        }
+      }
+
+      if (!wialonToken) {
+        console.log('✗ No Wialon token received - invalid credentials');
         return res.status(401).json({ message: 'Invalid credentials' });
       }
 
-      console.log('✓ Wialon authentication successful');
-      console.log('Wialon session ID:', loginResponse.data.eid);
+      console.log('✓ Wialon token received successfully');
+
+      // Додатково перевіряємо токен через token/login API
+      try {
+        const tokenLoginResponse = await axios.post(
+          `${tokenData.api_url}/wialon/ajax.html`,
+          `svc=token/login&params=${encodeURIComponent(JSON.stringify({
+            token: wialonToken,
+            operateAs: ''
+          }))}`,
+          {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            timeout: 10000
+          }
+        );
+
+        console.log('← Token verification response:', tokenLoginResponse.status);
+        
+        if (tokenLoginResponse.data && tokenLoginResponse.data.error) {
+          console.log('✗ Token verification failed:', tokenLoginResponse.data.error);
+          return res.status(401).json({ message: 'Invalid credentials' });
+        }
+
+        console.log('✓ Wialon token verified successfully');
+        console.log('✓ Wialon authentication successful');
+
+      } catch (tokenVerifyError) {
+        console.log('⚠ Token verification failed, but proceeding:', tokenVerifyError.message);
+        // Продовжуємо, оскільки основний токен отримано
+      }
 
       // Зберігаємо сесію (якщо таблиця існує)
       let sessionId = null;
@@ -209,9 +272,9 @@ router.post('/login', async (req, res) => {
            RETURNING id`,
           [
             client.id,
-            loginResponse.data.eid,
-            password,
-            new Date(Date.now() + 24 * 60 * 60 * 1000),
+            wialonToken.substring(0, 32), // перші 32 символи як session ID
+            wialonToken,
+            new Date(Date.now() + 3600 * 1000), // 1 година
             req.ip,
             req.headers['user-agent']
           ]
@@ -229,11 +292,12 @@ router.post('/login', async (req, res) => {
           clientId: client.id,
           userType: 'client',
           wialonUsername: client.wialon_username,
+          wialonToken: wialonToken,
           sessionId,
           permissions: ['customer_portal.read', 'tickets.read', 'tickets.create', 'chat.read', 'chat.create']
         },
         process.env.JWT_SECRET,
-        { expiresIn: '24h' }
+        { expiresIn: '1h' } // відповідає терміну дії Wialon токена
       );
 
       await AuditService.log({
@@ -248,7 +312,7 @@ router.post('/login', async (req, res) => {
         req
       });
 
-      console.log('✓ Client login successful');
+      console.log('✓ Client login successful with new Wialon method');
       return res.json({
         token,
         userType: 'client',
@@ -262,9 +326,18 @@ router.post('/login', async (req, res) => {
       });
 
     } catch (wialonError) {
-      console.log('✗ Wialon API error:', wialonError.message);
-      console.log('Error code:', wialonError.code);
-      console.log('Error response:', wialonError.response?.data);
+      console.log('✗ Wialon OAuth error:', wialonError.message);
+      console.log('Error details:', {
+        status: wialonError.response?.status,
+        statusText: wialonError.response?.statusText,
+        data: wialonError.response?.data
+      });
+      
+      // Якщо це помилка авторизації (401, 403) - неправильні дані
+      if (wialonError.response?.status === 401 || wialonError.response?.status === 403) {
+        return res.status(401).json({ message: 'Invalid credentials' });
+      }
+      
       return res.status(500).json({ message: 'Authentication service error' });
     }
 
