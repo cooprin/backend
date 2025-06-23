@@ -9,6 +9,7 @@ const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/con
 const axios = require('axios');
 
 // Login
+// Login
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -260,42 +261,138 @@ router.post('/login', async (req, res) => {
 
         console.log('← Auth response status:', authResponse.status);
         console.log('← Auth response URL:', authResponse.request?.responseURL || 'N/A');
+        console.log('← Auth response headers:', authResponse.headers);
 
-        // Шукаємо токен в різних місцях
-        // 1. В URL відповіді (після редиректів)
-        if (authResponse.request?.responseURL) {
-          const responseUrl = new URL(authResponse.request.responseURL);
-          const tokenFromUrl = responseUrl.searchParams.get('access_token') || 
-                              responseUrl.hash.match(/access_token=([^&]+)/)?.[1];
-          if (tokenFromUrl) {
-            wialonToken = tokenFromUrl;
-            console.log('✓ Token found in response URL');
+        // Детальне логування для відстеження редиректів
+        if (authResponse.request) {
+          console.log('← Request object keys:', Object.keys(authResponse.request));
+          console.log('← Request res keys:', Object.keys(authResponse.request.res || {}));
+          console.log('← Request _redirects:', authResponse.request._redirects);
+          console.log('← Request path:', authResponse.request.path);
+        }
+
+        // Варіант 1: Пошук токена в різних властивостях URL
+        console.log('\n=== ВАРІАНТ 1: Пошук в різних URL властивостях ===');
+        const urlSources = [
+          { name: 'responseURL', url: authResponse.request?.responseURL },
+          { name: 'res.responseUrl', url: authResponse.request?.res?.responseUrl },
+          { name: 'res.responseURL', url: authResponse.request?.res?.responseURL },
+          { name: 'url', url: authResponse.request?.url },
+          { name: 'path', url: authResponse.request?.path },
+          { name: 'Location header', url: authResponse.headers?.location }
+        ];
+
+        for (const source of urlSources) {
+          if (source.url) {
+            console.log(`→ Checking ${source.name}:`, source.url);
+            try {
+              const url = new URL(source.url.startsWith('http') ? source.url : `https://hosting.wialon.com${source.url}`);
+              const token = url.searchParams.get('access_token');
+              if (token) {
+                wialonToken = token;
+                console.log(`✓ Token found in ${source.name}:`, token.substring(0, 20) + '...');
+                break;
+              }
+            } catch (e) {
+              console.log(`⚠ Error parsing ${source.name}:`, e.message);
+            }
           }
         }
 
-        // 2. В тілі відповіді
-        if (!wialonToken && authResponse.data && typeof authResponse.data === 'string') {
-          const tokenMatch = authResponse.data.match(/access_token[=:][\s]*["']?([a-fA-F0-9]{72})["']?/);
-          if (tokenMatch) {
-            wialonToken = tokenMatch[1];
-            console.log('✓ Token found in response body');
+        // Варіант 2: Regex пошук в повному URL
+        if (!wialonToken) {
+          console.log('\n=== ВАРІАНТ 2: Regex пошук в URL ===');
+          for (const source of urlSources) {
+            if (source.url) {
+              const tokenMatch = source.url.match(/access_token=([a-fA-F0-9]{32,80})/i);
+              if (tokenMatch) {
+                wialonToken = tokenMatch[1];
+                console.log(`✓ Token found via regex in ${source.name}:`, tokenMatch[1].substring(0, 20) + '...');
+                break;
+              }
+            }
           }
         }
 
-        // 3. В заголовках Location (якщо є редирект)
-        if (!wialonToken && authResponse.headers.location) {
-          const locationUrl = new URL(authResponse.headers.location);
-          const tokenFromLocation = locationUrl.searchParams.get('access_token') || 
-                                   locationUrl.hash.match(/access_token=([^&]+)/)?.[1];
-          if (tokenFromLocation) {
-            wialonToken = tokenFromLocation;
-            console.log('✓ Token found in Location header');
+        // Варіант 3: Пошук в тілі відповіді (покращений regex)
+        if (!wialonToken) {
+          console.log('\n=== ВАРІАНТ 3: Пошук в тілі відповіді ===');
+          if (authResponse.data && typeof authResponse.data === 'string') {
+            console.log('→ Response body length:', authResponse.data.length);
+            
+            // Різні варіанти regex
+            const regexPatterns = [
+              /access_token[=:][\s]*["']?([a-fA-F0-9]{32,80})["']?/i,
+              /access_token=([a-fA-F0-9]+)/i,
+              /"access_token":\s*"([^"]+)"/i,
+              /token['":][\s]*["']?([a-fA-F0-9]{32,80})["']?/i
+            ];
+
+            for (let i = 0; i < regexPatterns.length; i++) {
+              const tokenMatch = authResponse.data.match(regexPatterns[i]);
+              if (tokenMatch) {
+                wialonToken = tokenMatch[1];
+                console.log(`✓ Token found via regex pattern ${i + 1}:`, tokenMatch[1].substring(0, 20) + '...');
+                break;
+              }
+            }
+          }
+        }
+
+        // Варіант 4: Аналіз всіх властивостей response об'єкта
+        if (!wialonToken) {
+          console.log('\n=== ВАРІАНТ 4: Аналіз response об\'єкта ===');
+          console.log('→ Response config URL:', authResponse.config?.url);
+          console.log('→ Response status:', authResponse.status);
+          console.log('→ Response statusText:', authResponse.statusText);
+          
+          // Перевіряємо чи є якісь властивості з токеном
+          const responseString = JSON.stringify(authResponse, null, 2);
+          const tokenInResponse = responseString.match(/access_token[^a-fA-F0-9]*([a-fA-F0-9]{32,80})/i);
+          if (tokenInResponse) {
+            wialonToken = tokenInResponse[1];
+            console.log('✓ Token found in response object:', tokenInResponse[1].substring(0, 20) + '...');
+          }
+        }
+
+        // Варіант 5: Manual History/Redirect tracking
+        if (!wialonToken) {
+          console.log('\n=== ВАРІАНТ 5: Перевірка redirect history ===');
+          if (authResponse.request && authResponse.request._redirects) {
+            console.log('→ Redirect history:', authResponse.request._redirects);
+          }
+          
+          // Можливо токен в останньому редиректі
+          if (authResponse.request && authResponse.request.res && authResponse.request.res.headers) {
+            const location = authResponse.request.res.headers.location;
+            if (location) {
+              console.log('→ Last redirect location:', location);
+              const tokenMatch = location.match(/access_token=([a-fA-F0-9]{32,80})/i);
+              if (tokenMatch) {
+                wialonToken = tokenMatch[1];
+                console.log('✓ Token found in redirect location:', tokenMatch[1].substring(0, 20) + '...');
+              }
+            }
           }
         }
 
         if (!wialonToken) {
           console.log('✗ No token found in response');
-          console.log('Response preview:', authResponse.data?.substring(0, 500));
+          console.log('Response preview:', authResponse.data?.substring(0, 1000));
+          console.log('Full response length:', authResponse.data?.length);
+          
+          // Перевіряємо чи є в відповіді повідомлення про помилку
+          if (authResponse.data && typeof authResponse.data === 'string') {
+            if (authResponse.data.includes('error') || authResponse.data.includes('Error')) {
+              console.log('⚠ Error indicators found in response');
+            }
+            if (authResponse.data.includes('login') || authResponse.data.includes('password')) {
+              console.log('⚠ Login form detected - possibly invalid credentials');
+            }
+            if (authResponse.data.includes('access_token')) {
+              console.log('⚠ Access token mentioned but not extracted properly');
+            }
+          }
         }
 
       } catch (authError) {
