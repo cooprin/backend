@@ -9,7 +9,6 @@ const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/con
 const axios = require('axios');
 
 // Login
-// Login
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -260,120 +259,32 @@ router.post('/login', async (req, res) => {
         );
 
         console.log('← Auth response status:', authResponse.status);
-        console.log('← Auth response URL:', authResponse.request?.responseURL || 'N/A');
-        console.log('← Auth response headers:', authResponse.headers);
+        console.log('← Auth response URL:', authResponse.request?.res?.responseUrl || 'N/A');
 
-        // Детальне логування для відстеження редиректів
-        if (authResponse.request) {
-          console.log('← Request object keys:', Object.keys(authResponse.request));
-          console.log('← Request res keys:', Object.keys(authResponse.request.res || {}));
-          console.log('← Request _redirects:', authResponse.request._redirects);
-          console.log('← Request path:', authResponse.request.path);
-        }
-
-        // Варіант 1: Пошук токена в різних властивостях URL
-        console.log('\n=== ВАРІАНТ 1: Пошук в різних URL властивостях ===');
-        const urlSources = [
-          { name: 'responseURL', url: authResponse.request?.responseURL },
-          { name: 'res.responseUrl', url: authResponse.request?.res?.responseUrl },
-          { name: 'res.responseURL', url: authResponse.request?.res?.responseURL },
-          { name: 'url', url: authResponse.request?.url },
-          { name: 'path', url: authResponse.request?.path },
-          { name: 'Location header', url: authResponse.headers?.location }
-        ];
-
-        for (const source of urlSources) {
-          if (source.url) {
-            console.log(`→ Checking ${source.name}:`, source.url);
-            try {
-              const url = new URL(source.url.startsWith('http') ? source.url : `https://hosting.wialon.com${source.url}`);
-              const token = url.searchParams.get('access_token');
-              if (token) {
-                wialonToken = token;
-                console.log(`✓ Token found in ${source.name}:`, token.substring(0, 20) + '...');
-                break;
-              }
-            } catch (e) {
-              console.log(`⚠ Error parsing ${source.name}:`, e.message);
+        // Шукаємо токен в URL відповіді (після редиректів)
+        if (authResponse.request?.res?.responseUrl) {
+          try {
+            const responseUrl = new URL(authResponse.request.res.responseUrl);
+            const tokenFromUrl = responseUrl.searchParams.get('access_token');
+            if (tokenFromUrl) {
+              wialonToken = tokenFromUrl;
+              console.log('✓ Token found in response URL');
             }
+          } catch (e) {
+            console.log('⚠ Error parsing response URL:', e.message);
           }
         }
 
-        // Варіант 2: Regex пошук в повному URL
+        // Якщо токен не знайдено - логуємо для відстеження
         if (!wialonToken) {
-          console.log('\n=== ВАРІАНТ 2: Regex пошук в URL ===');
-          for (const source of urlSources) {
-            if (source.url) {
-              const tokenMatch = source.url.match(/access_token=([a-fA-F0-9]{32,80})/i);
-              if (tokenMatch) {
-                wialonToken = tokenMatch[1];
-                console.log(`✓ Token found via regex in ${source.name}:`, tokenMatch[1].substring(0, 20) + '...');
-                break;
-              }
-            }
-          }
-        }
-
-        // Варіант 3: Пошук в тілі відповіді (покращений regex)
-        if (!wialonToken) {
-          console.log('\n=== ВАРІАНТ 3: Пошук в тілі відповіді ===');
-          if (authResponse.data && typeof authResponse.data === 'string') {
-            console.log('→ Response body length:', authResponse.data.length);
-            
-            // Різні варіанти regex
-            const regexPatterns = [
-              /access_token[=:][\s]*["']?([a-fA-F0-9]{32,80})["']?/i,
-              /access_token=([a-fA-F0-9]+)/i,
-              /"access_token":\s*"([^"]+)"/i,
-              /token['":][\s]*["']?([a-fA-F0-9]{32,80})["']?/i
-            ];
-
-            for (let i = 0; i < regexPatterns.length; i++) {
-              const tokenMatch = authResponse.data.match(regexPatterns[i]);
-              if (tokenMatch) {
-                wialonToken = tokenMatch[1];
-                console.log(`✓ Token found via regex pattern ${i + 1}:`, tokenMatch[1].substring(0, 20) + '...');
-                break;
-              }
-            }
-          }
-        }
-
-        // Варіант 4: Аналіз всіх властивостей response об'єкта
-        if (!wialonToken) {
-          console.log('\n=== ВАРІАНТ 4: Аналіз response об\'єкта ===');
-          console.log('→ Response config URL:', authResponse.config?.url);
-          console.log('→ Response status:', authResponse.status);
-          console.log('→ Response statusText:', authResponse.statusText);
-          
-          // Перевіряємо чи є якісь властивості з токеном
-          const responseString = JSON.stringify(authResponse, null, 2);
-          const tokenInResponse = responseString.match(/access_token[^a-fA-F0-9]*([a-fA-F0-9]{32,80})/i);
-          if (tokenInResponse) {
-            wialonToken = tokenInResponse[1];
-            console.log('✓ Token found in response object:', tokenInResponse[1].substring(0, 20) + '...');
-          }
-        }
-
-        // Варіант 5: Manual History/Redirect tracking
-        if (!wialonToken) {
-          console.log('\n=== ВАРІАНТ 5: Перевірка redirect history ===');
-          if (authResponse.request && authResponse.request._redirects) {
-            console.log('→ Redirect history:', authResponse.request._redirects);
-          }
-          
-          // Можливо токен в останньому редиректі
-          if (authResponse.request && authResponse.request.res && authResponse.request.res.headers) {
-            const location = authResponse.request.res.headers.location;
-            if (location) {
-              console.log('→ Last redirect location:', location);
-              const tokenMatch = location.match(/access_token=([a-fA-F0-9]{32,80})/i);
-              if (tokenMatch) {
-                wialonToken = tokenMatch[1];
-                console.log('✓ Token found in redirect location:', tokenMatch[1].substring(0, 20) + '...');
-              }
-            }
-          }
+          console.log('✗ No token found in response');
+          console.log('Response preview:', authResponse.data?.substring(0, 500));
+          console.log('Available URL sources:', {
+            responseURL: authResponse.request?.responseURL,
+            'res.responseUrl': authResponse.request?.res?.responseUrl,
+            path: authResponse.request?.path,
+            location: authResponse.headers?.location
+          });
         }
 
         if (!wialonToken) {
@@ -491,8 +402,10 @@ router.post('/login', async (req, res) => {
       );
 
       await AuditService.log({
+        // userId: null, // не передаємо для клієнтів
         actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_SUCCESS,
         entityType: 'CLIENT',
+        entityId: client.id, // передаємо ID клієнта
         newValues: { 
           client_id: client.id, 
           wialon_username: email 
