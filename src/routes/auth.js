@@ -171,190 +171,156 @@ router.post('/login', async (req, res) => {
 
     console.log('Wialon API URL:', tokenData.api_url);
 
-    // Спробуємо отримати токен через нову Wialon авторизацію
+    // Спробуємо отримати токен через правильну Wialon авторизацію
     try {
       console.log('→ Attempting new Wialon token-based authentication...');
       
-      // Визначаємо базовий URL для Wialon Hosting
-      const wialonBaseUrl = tokenData.api_url.includes('hst-api') 
-        ? 'https://hosting.wialon.com' 
-        : tokenData.api_url.replace('/wialon/ajax.html', '').replace('hst-api', 'hosting');
+      // Використовуємо правильний API URL
+      const wialonApiUrl = tokenData.api_url; // https://hst-api.wialon.com
+      const wialonHostingUrl = wialonApiUrl.replace('hst-api', 'hosting');
       
-      console.log('Using Wialon base URL:', wialonBaseUrl);
+      console.log('Using Wialon API URL:', wialonApiUrl);
+      console.log('Using Wialon Hosting URL:', wialonHostingUrl);
 
-      // Спосіб 1: POST запит до oauth.html (як в форумі Wialon)
       let wialonToken = null;
       
       try {
-        console.log('→ Trying POST to oauth.html...');
+        console.log('→ Getting authorization form to extract sign parameter...');
         
-        const oauthParams = {
-          client_id: 'CustomApp',
+        // Спочатку отримуємо форму авторизації для витягування sign параметра
+        const formResponse = await axios.get(
+          `${wialonHostingUrl}/login.html?client_id=wialon&access_type=-1&activation_time=0&duration=2592000&flags=6`,
+          {
+            headers: { 
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:139.0) Gecko/20100101 Firefox/139.0'
+            },
+            timeout: 10000
+          }
+        );
+
+        console.log('← Form response status:', formResponse.status);
+
+        // Витягуємо sign параметр з HTML форми
+        let signValue = '';
+        if (formResponse.data && typeof formResponse.data === 'string') {
+          const signMatch = formResponse.data.match(/name="sign"[^>]*value="([^"]+)"/);
+          if (signMatch) {
+            signValue = signMatch[1];
+            console.log('✓ Found sign value:', signValue.substring(0, 20) + '...');
+          } else {
+            console.log('⚠ Sign parameter not found in form');
+          }
+        }
+
+        if (!signValue) {
+          throw new Error('Could not extract sign parameter from authorization form');
+        }
+
+        console.log('→ Sending POST to oauth/authorize.html...');
+
+        // Тепер відправляємо POST запит з правильними параметрами
+        const authParams = {
           response_type: 'token',
-          access_type: -1, // повний доступ
+          wialon_sdk_url: wialonApiUrl,
+          success_uri: '',
+          login_uri: `${wialonHostingUrl}/login.html`,
+          client_id: 'wialon',
+          redirect_uri: `${wialonHostingUrl}/login.html`,
+          access_type: -1,
           activation_time: 0,
-          duration: 3600, // 1 година в секундах
-          flags: 1, // повернути username
+          duration: 2592000, // 30 днів
+          flags: 6,
+          sign: signValue,
           login: email,
-          passw: password,
-          redirect_uri: `${wialonBaseUrl}/post_token.html`
+          passw: password
         };
 
-        const oauthResponse = await axios.post(
-          `${wialonBaseUrl}/oauth.html`,
-          new URLSearchParams(oauthParams).toString(),
+        console.log('POST parameters:', {
+          ...authParams,
+          passw: '[HIDDEN]',
+          sign: signValue.substring(0, 20) + '...'
+        });
+
+        const authResponse = await axios.post(
+          `${wialonApiUrl}/oauth/authorize.html`,
+          new URLSearchParams(authParams).toString(),
           {
             headers: { 
               'Content-Type': 'application/x-www-form-urlencoded',
-              'User-Agent': 'Mozilla/5.0 (compatible; CustomApp/1.0)'
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:139.0) Gecko/20100101 Firefox/139.0',
+              'Referer': `${wialonHostingUrl}/login.html`
             },
             timeout: 15000,
-            maxRedirects: 5,
+            maxRedirects: 10, // слідкуємо за редиректами
             validateStatus: function (status) {
               return status >= 200 && status < 400;
             }
           }
         );
 
-        console.log('← OAuth POST response status:', oauthResponse.status);
-        
-        // Парсимо токен з відповіді
-        if (oauthResponse.data && typeof oauthResponse.data === 'string') {
-          // Шукаємо токен в HTML відповіді
-          const tokenMatch = oauthResponse.data.match(/access_token[=:][\s]*["']?([a-fA-F0-9]{72})["']?/);
+        console.log('← Auth response status:', authResponse.status);
+        console.log('← Auth response URL:', authResponse.request?.responseURL || 'N/A');
+
+        // Шукаємо токен в різних місцях
+        // 1. В URL відповіді (після редиректів)
+        if (authResponse.request?.responseURL) {
+          const responseUrl = new URL(authResponse.request.responseURL);
+          const tokenFromUrl = responseUrl.searchParams.get('access_token') || 
+                              responseUrl.hash.match(/access_token=([^&]+)/)?.[1];
+          if (tokenFromUrl) {
+            wialonToken = tokenFromUrl;
+            console.log('✓ Token found in response URL');
+          }
+        }
+
+        // 2. В тілі відповіді
+        if (!wialonToken && authResponse.data && typeof authResponse.data === 'string') {
+          const tokenMatch = authResponse.data.match(/access_token[=:][\s]*["']?([a-fA-F0-9]{72})["']?/);
           if (tokenMatch) {
             wialonToken = tokenMatch[1];
-            console.log('✓ Token found in POST response');
+            console.log('✓ Token found in response body');
           }
         }
-              } catch (postError) {
-        console.log('⚠ POST to oauth.html failed:', postError.message);
-        console.log('POST oauth.html error details:', {
-          status: postError.response?.status,
-          statusText: postError.response?.statusText,
-          data: postError.response?.data,
-          url: `${wialonBaseUrl}/oauth.html`
+
+        // 3. В заголовках Location (якщо є редирект)
+        if (!wialonToken && authResponse.headers.location) {
+          const locationUrl = new URL(authResponse.headers.location);
+          const tokenFromLocation = locationUrl.searchParams.get('access_token') || 
+                                   locationUrl.hash.match(/access_token=([^&]+)/)?.[1];
+          if (tokenFromLocation) {
+            wialonToken = tokenFromLocation;
+            console.log('✓ Token found in Location header');
+          }
+        }
+
+        if (!wialonToken) {
+          console.log('✗ No token found in response');
+          console.log('Response preview:', authResponse.data?.substring(0, 500));
+        }
+
+      } catch (authError) {
+        console.log('✗ Wialon authorization failed:', authError.message);
+        console.log('Authorization error details:', {
+          status: authError.response?.status,
+          statusText: authError.response?.statusText,
+          headers: authError.response?.headers,
+          url: authError.config?.url,
+          data: typeof authError.response?.data === 'string' 
+            ? authError.response.data.substring(0, 500)
+            : authError.response?.data
         });
-      }
-
-      // Спосіб 2: POST запит до login.html (якщо перший не спрацював)
-      if (!wialonToken) {
-        try {
-          console.log('→ Trying POST to login.html...');
-          
-          const loginParams = {
-            client_id: 'CustomApp',
-            access_type: -1,
-            activation_time: 0,
-            duration: 3600,
-            flags: 1,
-            user: email, // тут може бути user замість login
-            password: password
-          };
-
-          const loginResponse = await axios.post(
-            `${wialonBaseUrl}/login.html`,
-            new URLSearchParams(loginParams).toString(),
-            {
-              headers: { 
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'User-Agent': 'Mozilla/5.0 (compatible; CustomApp/1.0)'
-              },
-              timeout: 15000,
-              maxRedirects: 5,
-              validateStatus: function (status) {
-                return status >= 200 && status < 400;
-              }
-            }
-          );
-
-          console.log('← Login POST response status:', loginResponse.status);
-          
-          if (loginResponse.data && typeof loginResponse.data === 'string') {
-            const tokenMatch = loginResponse.data.match(/access_token[=:][\s]*["']?([a-fA-F0-9]{72})["']?/);
-            if (tokenMatch) {
-              wialonToken = tokenMatch[1];
-              console.log('✓ Token found in login.html response');
-            }
-          }
-        } catch (loginError) {
-          console.log('⚠ POST to login.html failed:', loginError.message);
+        
+        // Якщо це помилка авторизації (401, 403) - неправильні дані
+        if (authError.response?.status === 401 || authError.response?.status === 403) {
+          return res.status(401).json({ message: 'Invalid credentials' });
         }
-      }
-
-      // Спосіб 3: Спробуємо симулювати відправку форми
-      if (!wialonToken) {
-        try {
-          console.log('→ Trying form simulation...');
-          
-          // Спочатку отримуємо форму для витягування hidden полів
-          const formResponse = await axios.get(
-            `${wialonBaseUrl}/login.html?client_id=CustomApp&access_type=-1&activation_time=0&duration=3600&flags=1`,
-            {
-              headers: { 
-                'User-Agent': 'Mozilla/5.0 (compatible; CustomApp/1.0)'
-              },
-              timeout: 10000
-            }
-          );
-
-          // Шукаємо приховані поля в HTML
-          let signValue = '';
-          if (formResponse.data && typeof formResponse.data === 'string') {
-            const signMatch = formResponse.data.match(/name="sign"[^>]*value="([^"]+)"/);
-            if (signMatch) {
-              signValue = signMatch[1];
-              console.log('✓ Found sign value in form');
-            }
-          }
-
-          // Відправляємо форму з усіма параметрами
-          const formParams = {
-            response_type: 'token',
-            client_id: 'CustomApp',
-            redirect_uri: `${wialonBaseUrl}/post_token.html`,
-            access_type: -1,
-            activation_time: 0,
-            duration: 3600,
-            flags: 1,
-            sign: signValue,
-            login: email,
-            passw: password
-          };
-
-          const formSubmitResponse = await axios.post(
-            `${wialonBaseUrl}/oauth.html`,
-            new URLSearchParams(formParams).toString(),
-            {
-              headers: { 
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'User-Agent': 'Mozilla/5.0 (compatible; CustomApp/1.0)',
-                'Referer': `${wialonBaseUrl}/login.html`
-              },
-              timeout: 15000,
-              maxRedirects: 5,
-              validateStatus: function (status) {
-                return status >= 200 && status < 400;
-              }
-            }
-          );
-
-          console.log('← Form submit response status:', formSubmitResponse.status);
-          
-          if (formSubmitResponse.data && typeof formSubmitResponse.data === 'string') {
-            const tokenMatch = formSubmitResponse.data.match(/access_token[=:][\s]*["']?([a-fA-F0-9]{72})["']?/);
-            if (tokenMatch) {
-              wialonToken = tokenMatch[1];
-              console.log('✓ Token found in form submit response');
-            }
-          }
-        } catch (formError) {
-          console.log('⚠ Form simulation failed:', formError.message);
-        }
+        
+        // Для інших помилок - пробуємо далі або повертаємо помилку сервісу
+        throw authError;
       }
 
       if (!wialonToken) {
-        console.log('✗ All Wialon authentication methods failed - invalid credentials');
+        console.log('✗ No Wialon token received - invalid credentials or service error');
         return res.status(401).json({ message: 'Invalid credentials' });
       }
 
@@ -401,7 +367,7 @@ router.post('/login', async (req, res) => {
             client.id,
             wialonToken.substring(0, 32), // перші 32 символи як session ID
             wialonToken,
-            new Date(Date.now() + 3600 * 1000), // 1 година
+            new Date(Date.now() + 2592000 * 1000), // 30 днів
             req.ip,
             req.headers['user-agent']
           ]
@@ -424,7 +390,7 @@ router.post('/login', async (req, res) => {
           permissions: ['customer_portal.read', 'tickets.read', 'tickets.create', 'chat.read', 'chat.create']
         },
         process.env.JWT_SECRET,
-        { expiresIn: '1h' } // відповідає терміну дії Wialon токена
+        { expiresIn: '30d' } // відповідає терміну дії Wialon токена
       );
 
       await AuditService.log({
