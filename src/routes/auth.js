@@ -227,8 +227,14 @@ router.post('/login', async (req, res) => {
             console.log('✓ Token found in POST response');
           }
         }
-      } catch (postError) {
+              } catch (postError) {
         console.log('⚠ POST to oauth.html failed:', postError.message);
+        console.log('POST oauth.html error details:', {
+          status: postError.response?.status,
+          statusText: postError.response?.statusText,
+          data: postError.response?.data,
+          url: `${wialonBaseUrl}/oauth.html`
+        });
       }
 
       // Спосіб 2: POST запит до login.html (якщо перший не спрацював)
