@@ -3,6 +3,7 @@ const router = express.Router();
 const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { restrictToOwnData, staffOrClient } = require('../middleware/clientAccess');
+const PDFService = require('../services/pdfService');
 
 // Get client profile
 router.get('/profile', authenticate, restrictToOwnData, async (req, res) => {
@@ -80,23 +81,56 @@ router.get('/invoices', authenticate, restrictToOwnData, async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
-    const result = await pool.query(
-      `SELECT 
-        i.id, i.invoice_number, i.invoice_date, i.billing_month, 
-        i.billing_year, i.total_amount, i.status,
-        p.payment_date, p.amount as paid_amount
-       FROM services.invoices i
-       LEFT JOIN billing.payments p ON i.payment_id = p.id
-       WHERE i.client_id = $1
-       ORDER BY i.billing_year DESC, i.billing_month DESC
-       LIMIT $2 OFFSET $3`,
-      [req.user.clientId, limit, offset]
-    );
+    // Build WHERE conditions
+    let whereConditions = ['i.client_id = $1'];
+    let queryParams = [req.user.clientId];
+    let paramIndex = 2;
 
-    const countResult = await pool.query(
-      'SELECT COUNT(*) FROM services.invoices WHERE client_id = $1',
-      [req.user.clientId]
-    );
+    if (req.query.status) {
+      whereConditions.push(`i.status = $${paramIndex}`);
+      queryParams.push(req.query.status);
+      paramIndex++;
+    }
+
+    if (req.query.year) {
+      whereConditions.push(`i.billing_year = $${paramIndex}`);
+      queryParams.push(parseInt(req.query.year));
+      paramIndex++;
+    }
+
+    if (req.query.month) {
+      whereConditions.push(`i.billing_month = $${paramIndex}`);
+      queryParams.push(parseInt(req.query.month));
+      paramIndex++;
+    }
+
+    const whereClause = whereConditions.join(' AND ');
+
+    // Get invoices with pagination
+    const invoicesQuery = `
+      SELECT 
+        i.id, i.invoice_number, i.invoice_date, i.billing_month, 
+        i.billing_year, i.total_amount, i.status, i.created_at,
+        p.payment_date, p.amount as paid_amount
+      FROM services.invoices i
+      LEFT JOIN billing.payments p ON i.payment_id = p.id
+      WHERE ${whereClause}
+      ORDER BY i.billing_year DESC, i.billing_month DESC, i.created_at DESC
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+    `;
+
+    queryParams.push(limit, offset);
+
+    const result = await pool.query(invoicesQuery, queryParams);
+
+    // Get total count
+    const countQuery = `
+      SELECT COUNT(*) FROM services.invoices i WHERE ${whereClause}
+    `;
+    const countResult = await pool.query(countQuery, queryParams.slice(0, paramIndex - 2));
+
+    const total = parseInt(countResult.rows[0].count);
+    const totalPages = Math.ceil(total / limit);
 
     res.json({
       success: true,
@@ -104,13 +138,166 @@ router.get('/invoices', authenticate, restrictToOwnData, async (req, res) => {
       pagination: {
         page,
         limit,
-        total: parseInt(countResult.rows[0].count),
-        totalPages: Math.ceil(countResult.rows[0].count / limit)
+        total,
+        totalPages
       }
     });
   } catch (error) {
     console.error('Error fetching client invoices:', error);
     res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get single invoice details
+router.get('/invoices/:id', authenticate, restrictToOwnData, async (req, res) => {
+  try {
+    if (req.user.userType !== 'client') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const invoiceId = req.params.id;
+
+    // Get invoice details
+    const invoiceQuery = `
+      SELECT 
+        i.id, i.invoice_number, i.invoice_date, i.billing_month, 
+        i.billing_year, i.total_amount, i.status, i.created_at,
+        p.payment_date, p.amount as paid_amount
+      FROM services.invoices i
+      LEFT JOIN billing.payments p ON i.payment_id = p.id
+      WHERE i.id = $1 AND i.client_id = $2
+    `;
+
+    const invoiceResult = await pool.query(invoiceQuery, [invoiceId, req.user.clientId]);
+
+    if (invoiceResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Invoice not found' });
+    }
+
+    const invoice = invoiceResult.rows[0];
+
+    // Get invoice items
+    const itemsQuery = `
+      SELECT 
+        ii.id, ii.service_id, ii.quantity, ii.unit_price, ii.total_price,
+        ii.description, s.name as service_name
+      FROM services.invoice_items ii
+      LEFT JOIN services.services s ON ii.service_id = s.id
+      WHERE ii.invoice_id = $1
+      ORDER BY ii.id
+    `;
+
+    const itemsResult = await pool.query(itemsQuery, [invoiceId]);
+    invoice.items = itemsResult.rows;
+
+    res.json({
+      success: true,
+      invoice
+    });
+  } catch (error) {
+    console.error('Error fetching invoice details:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get invoice items
+router.get('/invoices/:id/items', authenticate, restrictToOwnData, async (req, res) => {
+  try {
+    if (req.user.userType !== 'client') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const invoiceId = req.params.id;
+
+    // Verify invoice belongs to client
+    const invoiceCheck = await pool.query(
+      'SELECT id FROM services.invoices WHERE id = $1 AND client_id = $2',
+      [invoiceId, req.user.clientId]
+    );
+
+    if (invoiceCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Invoice not found' });
+    }
+
+    // Get invoice items
+    const itemsQuery = `
+      SELECT 
+        ii.id, ii.service_id, ii.quantity, ii.unit_price, ii.total_price,
+        ii.description, s.name as service_name
+      FROM services.invoice_items ii
+      LEFT JOIN services.services s ON ii.service_id = s.id
+      WHERE ii.invoice_id = $1
+      ORDER BY ii.id
+    `;
+
+    const result = await pool.query(itemsQuery, [invoiceId]);
+
+    res.json({
+      success: true,
+      items: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching invoice items:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Download invoice PDF
+router.get('/invoices/:id/download', authenticate, restrictToOwnData, async (req, res) => {
+  try {
+    if (req.user.userType !== 'client') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const invoiceId = req.params.id;
+
+    // Get invoice with all details
+    const invoiceQuery = `
+      SELECT 
+        i.*,
+        c.name as client_name, c.full_name as client_full_name,
+        c.address as client_address, c.phone as client_phone,
+        c.email as client_email
+      FROM services.invoices i
+      JOIN clients.clients c ON i.client_id = c.id
+      WHERE i.id = $1 AND i.client_id = $2
+    `;
+
+    const invoiceResult = await pool.query(invoiceQuery, [invoiceId, req.user.clientId]);
+
+    if (invoiceResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Invoice not found' });
+    }
+
+    const invoice = invoiceResult.rows[0];
+
+    // Get invoice items
+    const itemsQuery = `
+      SELECT 
+        ii.*,
+        s.name as service_name
+      FROM services.invoice_items ii
+      LEFT JOIN services.services s ON ii.service_id = s.id
+      WHERE ii.invoice_id = $1
+      ORDER BY ii.id
+    `;
+
+    const itemsResult = await pool.query(itemsQuery, [invoiceId]);
+    invoice.items = itemsResult.rows;
+
+    // Generate PDF
+    const pdfBuffer = await PDFService.generateInvoicePdf(invoice);
+
+    // Set response headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoice_number}.pdf"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+
+    // Send PDF
+    res.end(pdfBuffer);
+  } catch (error) {
+    console.error('Error downloading invoice PDF:', error);
+    res.status(500).json({ success: false, message: 'Error generating PDF' });
   }
 });
 
@@ -138,6 +325,195 @@ router.get('/documents', authenticate, restrictToOwnData, async (req, res) => {
   } catch (error) {
     console.error('Error fetching client documents:', error);
     res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get client payment status (Wialon)
+router.get('/payment-status', authenticate, restrictToOwnData, async (req, res) => {
+  try {
+    if (req.user.userType !== 'client') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const ClientService = require('../services/clients.service');
+    const paymentInfo = await ClientService.getClientPaymentInfo(req.user.clientId);
+    
+    res.json({
+      success: true,
+      paymentInfo
+    });
+  } catch (error) {
+    console.error('Error fetching client payment status:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Помилка при отриманні платіжної інформації'
+    });
+  }
+});
+
+// Get client tickets
+router.get('/tickets', authenticate, restrictToOwnData, async (req, res) => {
+  try {
+    if (req.user.userType !== 'client') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // Build WHERE conditions
+    let whereConditions = ['t.client_id = $1'];
+    let queryParams = [req.user.clientId];
+    let paramIndex = 2;
+
+    if (req.query.status) {
+      whereConditions.push(`t.status = ${paramIndex}`);
+      queryParams.push(req.query.status);
+      paramIndex++;
+    }
+
+    if (req.query.priority) {
+      whereConditions.push(`t.priority = ${paramIndex}`);
+      queryParams.push(req.query.priority);
+      paramIndex++;
+    }
+
+    if (req.query.category_id) {
+      whereConditions.push(`t.category_id = ${paramIndex}`);
+      queryParams.push(req.query.category_id);
+      paramIndex++;
+    }
+
+    const whereClause = whereConditions.join(' AND ');
+
+    // Get tickets with pagination
+    const ticketsQuery = `
+      SELECT 
+        t.id, t.ticket_number, t.title, t.description, t.priority, t.status,
+        t.created_at, t.resolved_at, t.closed_at,
+        tc.name as category_name, tc.color as category_color,
+        wo.name as object_name,
+        COUNT(tcm.id) FILTER (WHERE tcm.is_internal = false) as comments_count
+      FROM tickets.tickets t
+      LEFT JOIN tickets.ticket_categories tc ON t.category_id = tc.id
+      LEFT JOIN wialon.objects wo ON t.object_id = wo.id
+      LEFT JOIN tickets.ticket_comments tcm ON t.id = tcm.ticket_id
+      WHERE ${whereClause}
+      GROUP BY t.id, tc.name, tc.color, wo.name
+      ORDER BY t.created_at DESC
+      LIMIT ${paramIndex} OFFSET ${paramIndex + 1}
+    `;
+
+    queryParams.push(limit, offset);
+
+    const result = await pool.query(ticketsQuery, queryParams);
+
+    // Get total count
+    const countQuery = `
+      SELECT COUNT(*) FROM tickets.tickets t WHERE ${whereClause}
+    `;
+    const countResult = await pool.query(countQuery, queryParams.slice(0, paramIndex - 2));
+
+    const total = parseInt(countResult.rows[0].count);
+    const totalPages = Math.ceil(total / limit);
+
+    res.json({
+      success: true,
+      tickets: result.rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching client tickets:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Generate unique ticket number
+const generateTicketNumber = async () => {
+  const year = new Date().getFullYear();
+  const result = await pool.query(
+    'SELECT COUNT(*) as count FROM tickets.tickets WHERE EXTRACT(YEAR FROM created_at) = $1',
+    [year]
+  );
+  const count = parseInt(result.rows[0].count) + 1;
+  return `T${year}-${count.toString().padStart(4, '0')}`;
+};
+
+// Create ticket (client)
+router.post('/tickets', authenticate, restrictToOwnData, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    if (req.user.userType !== 'client') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    await client.query('BEGIN');
+
+    const { title, description, category_id, object_id, priority = 'medium' } = req.body;
+
+    // Validate required fields
+    if (!title || !description) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Title and description are required' 
+      });
+    }
+
+    // Validate object belongs to client if specified
+    if (object_id) {
+      const objectCheck = await client.query(
+        'SELECT id FROM wialon.objects WHERE id = $1 AND client_id = $2',
+        [object_id, req.user.clientId]
+      );
+      
+      if (objectCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Object not found or access denied' 
+        });
+      }
+    }
+
+    const ticketNumber = await generateTicketNumber();
+
+    const result = await client.query(
+      `INSERT INTO tickets.tickets 
+       (ticket_number, client_id, category_id, object_id, title, description, priority, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [ticketNumber, req.user.clientId, category_id, object_id, title, description, priority, req.user.clientId]
+    );
+
+    const ticket = result.rows[0];
+
+    // Create initial comment with ticket description
+    await client.query(
+      `INSERT INTO tickets.ticket_comments 
+       (ticket_id, comment_text, created_by, created_by_type)
+       VALUES ($1, $2, $3, $4)`,
+      [ticket.id, description, req.user.clientId, 'client']
+    );
+
+    await client.query('COMMIT');
+
+    res.status(201).json({
+      success: true,
+      ticket
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error creating ticket:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 
