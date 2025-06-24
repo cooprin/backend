@@ -71,7 +71,6 @@ router.get('/objects', authenticate, restrictToOwnData, async (req, res) => {
 });
 
 // Get client invoices
-// Get client invoices
 router.get('/invoices', authenticate, restrictToOwnData, async (req, res) => {
   try {
     if (req.user.userType !== 'client') {
@@ -253,65 +252,6 @@ router.get('/invoices/:id/items', authenticate, restrictToOwnData, async (req, r
   }
 });
 
-// Download invoice PDF
-router.get('/invoices/:id/download', authenticate, restrictToOwnData, async (req, res) => {
-  try {
-    if (req.user.userType !== 'client') {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
-
-    const invoiceId = req.params.id;
-
-    // Get invoice with all details
-    const invoiceQuery = `
-      SELECT 
-        i.*,
-        c.name as client_name, c.full_name as client_full_name,
-        c.address as client_address, c.phone as client_phone,
-        c.email as client_email
-      FROM services.invoices i
-      JOIN clients.clients c ON i.client_id = c.id
-      WHERE i.id = $1 AND i.client_id = $2
-    `;
-
-    const invoiceResult = await pool.query(invoiceQuery, [invoiceId, req.user.clientId]);
-
-    if (invoiceResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Invoice not found' });
-    }
-
-    const invoice = invoiceResult.rows[0];
-
-    // Get invoice items
-    const itemsQuery = `
-      SELECT 
-        ii.*,
-        s.name as service_name
-      FROM services.invoice_items ii
-      LEFT JOIN services.services s ON ii.service_id = s.id
-      WHERE ii.invoice_id = $1
-      ORDER BY ii.id
-    `;
-
-    const itemsResult = await pool.query(itemsQuery, [invoiceId]);
-    invoice.items = itemsResult.rows;
-
-    // Generate PDF
-    const pdfBuffer = await PDFService.generateInvoicePdf(invoice);
-
-    // Set response headers
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoice_number}.pdf"`);
-    res.setHeader('Content-Length', pdfBuffer.length);
-
-    // Send PDF
-    res.end(pdfBuffer);
-  } catch (error) {
-    console.error('Error downloading invoice PDF:', error);
-    res.status(500).json({ success: false, message: 'Error generating PDF' });
-  }
-});
-
 // Get client documents
 router.get('/documents', authenticate, restrictToOwnData, async (req, res) => {
   try {
@@ -441,6 +381,90 @@ router.get('/tickets', authenticate, restrictToOwnData, async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching client tickets:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get invoice documents
+router.get('/invoices/:id/documents', authenticate, restrictToOwnData, async (req, res) => {
+  try {
+    if (req.user.userType !== 'client') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const invoiceId = req.params.id;
+
+    // Verify invoice belongs to client
+    const invoiceCheck = await pool.query(
+      'SELECT id FROM services.invoices WHERE id = $1 AND client_id = $2',
+      [invoiceId, req.user.clientId]
+    );
+
+    if (invoiceCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Invoice not found' });
+    }
+
+    // Get invoice documents
+    const documentsQuery = `
+      SELECT 
+        id, document_name, document_type, file_size, created_at
+      FROM services.invoice_documents 
+      WHERE invoice_id = $1
+      ORDER BY created_at DESC
+    `;
+
+    const result = await pool.query(documentsQuery, [invoiceId]);
+
+    res.json({
+      success: true,
+      documents: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching invoice documents:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Download invoice document
+router.get('/invoice-documents/:id/download', authenticate, restrictToOwnData, async (req, res) => {
+  try {
+    if (req.user.userType !== 'client') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const documentId = req.params.id;
+
+    // Get document with invoice verification
+    const documentQuery = `
+      SELECT 
+        id.document_name, id.file_path, id.document_type
+      FROM services.invoice_documents id
+      JOIN services.invoices i ON id.invoice_id = i.id
+      WHERE id.id = $1 AND i.client_id = $2
+    `;
+
+    const result = await pool.query(documentQuery, [documentId, req.user.clientId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Document not found' });
+    }
+
+    const document = result.rows[0];
+    const filePath = path.join(process.env.UPLOAD_DIR, document.file_path);
+
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, message: 'File not found' });
+    }
+
+    // Set headers for download
+    res.setHeader('Content-Disposition', `attachment; filename="${document.document_name}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+
+    // Send file
+    res.sendFile(filePath);
+  } catch (error) {
+    console.error('Error downloading invoice document:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
