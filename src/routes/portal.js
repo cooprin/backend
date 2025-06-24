@@ -71,6 +71,7 @@ router.get('/objects', authenticate, restrictToOwnData, async (req, res) => {
 });
 
 // Get client invoices
+// Get client invoices
 router.get('/invoices', authenticate, restrictToOwnData, async (req, res) => {
   try {
     if (req.user.userType !== 'client') {
@@ -129,9 +130,10 @@ router.get('/invoices', authenticate, restrictToOwnData, async (req, res) => {
 
     const result = await pool.query(invoicesQuery, queryParams);
 
-    // Get total count
+    // Get total count - ВИПРАВЛЕННЯ ТУТ
     const countQuery = `SELECT COUNT(*) FROM services.invoices i WHERE ${whereClause}`;
-    const countParams = queryParams.slice(0, paramIndex - 2);
+    // Беремо параметри БЕЗ limit та offset (останні 2 елементи)
+    const countParams = queryParams.slice(0, -2);
     
     console.log('Count Query:', countQuery);
     console.log('Count Params:', countParams);
