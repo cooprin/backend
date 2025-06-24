@@ -434,9 +434,7 @@ router.get('/tickets', authenticate, restrictToOwnData, async (req, res) => {
   }
 });
 
-// Додайте цей код в portal.js після існуючих роутів
-
-// Get client invoices (portal version)
+// Get client invoices
 router.get('/invoices', authenticate, restrictToOwnData, async (req, res) => {
   try {
     if (req.user.userType !== 'client') {
@@ -493,7 +491,8 @@ router.get('/invoices', authenticate, restrictToOwnData, async (req, res) => {
     const countQuery = `
       SELECT COUNT(*) FROM services.invoices i WHERE ${whereClause}
     `;
-    const countResult = await pool.query(countQuery, queryParams.slice(0, paramIndex - 2));
+    const countParams = queryParams.slice(0, paramIndex - 2);
+    const countResult = await pool.query(countQuery, countParams);
 
     const total = parseInt(countResult.rows[0].count);
     const totalPages = Math.ceil(total / limit);
@@ -514,7 +513,7 @@ router.get('/invoices', authenticate, restrictToOwnData, async (req, res) => {
   }
 });
 
-// Get single invoice details (portal version)
+// Get single invoice details
 router.get('/invoices/:id', authenticate, restrictToOwnData, async (req, res) => {
   try {
     if (req.user.userType !== 'client') {
@@ -566,7 +565,7 @@ router.get('/invoices/:id', authenticate, restrictToOwnData, async (req, res) =>
   }
 });
 
-// Download invoice PDF (portal version)
+// Download invoice PDF
 router.get('/invoices/:id/download', authenticate, restrictToOwnData, async (req, res) => {
   try {
     if (req.user.userType !== 'client') {
@@ -609,20 +608,22 @@ router.get('/invoices/:id/download', authenticate, restrictToOwnData, async (req
     const itemsResult = await pool.query(itemsQuery, [invoiceId]);
     invoice.items = itemsResult.rows;
 
-    // Generate PDF
-    const PDFService = require('../services/pdfService');
-    const pdfBuffer = await PDFService.generateInvoicePdf(invoice);
+    // Generate PDF (якщо є PDFService)
+    try {
+      const PDFService = require('../services/pdfService');
+      const pdfBuffer = await PDFService.generateInvoicePdf(invoice);
 
-    // Set response headers
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoice_number}.pdf"`);
-    res.setHeader('Content-Length', pdfBuffer.length);
-
-    // Send PDF
-    res.end(pdfBuffer);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoice_number}.pdf"`);
+      res.setHeader('Content-Length', pdfBuffer.length);
+      res.end(pdfBuffer);
+    } catch (pdfError) {
+      console.error('PDF generation error:', pdfError);
+      res.status(500).json({ success: false, message: 'Error generating PDF' });
+    }
   } catch (error) {
     console.error('Error downloading invoice PDF:', error);
-    res.status(500).json({ success: false, message: 'Error generating PDF' });
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
