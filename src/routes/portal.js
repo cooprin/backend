@@ -434,4 +434,196 @@ router.get('/tickets', authenticate, restrictToOwnData, async (req, res) => {
   }
 });
 
+// Додайте цей код в portal.js після існуючих роутів
+
+// Get client invoices (portal version)
+router.get('/invoices', authenticate, restrictToOwnData, async (req, res) => {
+  try {
+    if (req.user.userType !== 'client') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // Build WHERE conditions
+    let whereConditions = ['i.client_id = $1'];
+    let queryParams = [req.user.clientId];
+    let paramIndex = 2;
+
+    if (req.query.status) {
+      whereConditions.push(`i.status = $${paramIndex}`);
+      queryParams.push(req.query.status);
+      paramIndex++;
+    }
+
+    if (req.query.year) {
+      whereConditions.push(`i.billing_year = $${paramIndex}`);
+      queryParams.push(parseInt(req.query.year));
+      paramIndex++;
+    }
+
+    if (req.query.month) {
+      whereConditions.push(`i.billing_month = $${paramIndex}`);
+      queryParams.push(parseInt(req.query.month));
+      paramIndex++;
+    }
+
+    const whereClause = whereConditions.join(' AND ');
+
+    // Get invoices with pagination
+    const invoicesQuery = `
+      SELECT 
+        i.id, i.invoice_number, i.invoice_date, i.billing_month, 
+        i.billing_year, i.total_amount, i.status, i.created_at,
+        p.payment_date, p.amount as paid_amount
+      FROM services.invoices i
+      LEFT JOIN billing.payments p ON i.payment_id = p.id
+      WHERE ${whereClause}
+      ORDER BY i.billing_year DESC, i.billing_month DESC, i.created_at DESC
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+    `;
+
+    queryParams.push(limit, offset);
+
+    const result = await pool.query(invoicesQuery, queryParams);
+
+    // Get total count
+    const countQuery = `
+      SELECT COUNT(*) FROM services.invoices i WHERE ${whereClause}
+    `;
+    const countResult = await pool.query(countQuery, queryParams.slice(0, paramIndex - 2));
+
+    const total = parseInt(countResult.rows[0].count);
+    const totalPages = Math.ceil(total / limit);
+
+    res.json({
+      success: true,
+      invoices: result.rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching client invoices:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get single invoice details (portal version)
+router.get('/invoices/:id', authenticate, restrictToOwnData, async (req, res) => {
+  try {
+    if (req.user.userType !== 'client') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const invoiceId = req.params.id;
+
+    // Get invoice details
+    const invoiceQuery = `
+      SELECT 
+        i.id, i.invoice_number, i.invoice_date, i.billing_month, 
+        i.billing_year, i.total_amount, i.status, i.created_at,
+        p.payment_date, p.amount as paid_amount
+      FROM services.invoices i
+      LEFT JOIN billing.payments p ON i.payment_id = p.id
+      WHERE i.id = $1 AND i.client_id = $2
+    `;
+
+    const invoiceResult = await pool.query(invoiceQuery, [invoiceId, req.user.clientId]);
+
+    if (invoiceResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Invoice not found' });
+    }
+
+    const invoice = invoiceResult.rows[0];
+
+    // Get invoice items
+    const itemsQuery = `
+      SELECT 
+        ii.id, ii.service_id, ii.quantity, ii.unit_price, ii.total_price,
+        ii.description, s.name as service_name
+      FROM services.invoice_items ii
+      LEFT JOIN services.services s ON ii.service_id = s.id
+      WHERE ii.invoice_id = $1
+      ORDER BY ii.id
+    `;
+
+    const itemsResult = await pool.query(itemsQuery, [invoiceId]);
+    invoice.items = itemsResult.rows;
+
+    res.json({
+      success: true,
+      invoice
+    });
+  } catch (error) {
+    console.error('Error fetching invoice details:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Download invoice PDF (portal version)
+router.get('/invoices/:id/download', authenticate, restrictToOwnData, async (req, res) => {
+  try {
+    if (req.user.userType !== 'client') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const invoiceId = req.params.id;
+
+    // Get invoice with all details
+    const invoiceQuery = `
+      SELECT 
+        i.*,
+        c.name as client_name, c.full_name as client_full_name,
+        c.address as client_address, c.phone as client_phone,
+        c.email as client_email
+      FROM services.invoices i
+      JOIN clients.clients c ON i.client_id = c.id
+      WHERE i.id = $1 AND i.client_id = $2
+    `;
+
+    const invoiceResult = await pool.query(invoiceQuery, [invoiceId, req.user.clientId]);
+
+    if (invoiceResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Invoice not found' });
+    }
+
+    const invoice = invoiceResult.rows[0];
+
+    // Get invoice items
+    const itemsQuery = `
+      SELECT 
+        ii.*,
+        s.name as service_name
+      FROM services.invoice_items ii
+      LEFT JOIN services.services s ON ii.service_id = s.id
+      WHERE ii.invoice_id = $1
+      ORDER BY ii.id
+    `;
+
+    const itemsResult = await pool.query(itemsQuery, [invoiceId]);
+    invoice.items = itemsResult.rows;
+
+    // Generate PDF
+    const PDFService = require('../services/pdfService');
+    const pdfBuffer = await PDFService.generateInvoicePdf(invoice);
+
+    // Set response headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${invoice.invoice_number}.pdf"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+
+    // Send PDF
+    res.end(pdfBuffer);
+  } catch (error) {
+    console.error('Error downloading invoice PDF:', error);
+    res.status(500).json({ success: false, message: 'Error generating PDF' });
+  }
+});
+
 module.exports = router;
