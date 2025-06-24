@@ -100,11 +100,22 @@ static async generateInvoicePdf(invoice, templateId = null) {
         `;
         
         // Генерація PDF
-        const browser = await puppeteer.launch({
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-            headless: 'new',
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium'
-        });
+const browser = await puppeteer.launch({
+    args: [
+        '--no-sandbox', 
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',      // Додано
+        '--disable-accelerated-2d-canvas',  // Додано
+        '--no-first-run',               // Додано
+        '--no-zygote',                  // Додано
+        '--single-process',             // Додано
+        '--disable-gpu'                 // Додано
+    ],
+    headless: 'new',
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+    timeout: 60000,                     // Збільшено timeout до 60 сек
+    protocolTimeout: 60000              // Додано протокол timeout
+});
         
         const page = await browser.newPage();
         await page.setContent(fullHtml, { waitUntil: 'networkidle0' });

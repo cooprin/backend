@@ -271,7 +271,9 @@ router.post('/invoices/:id/documents', authenticate, checkPermission('invoices.u
             throw new Error('Рахунок не знайдено');
         }
         
-        // Збереження документа
+        // Збереження документа з правильним шляхом
+        const relativePath = req.file.path.replace(process.env.UPLOAD_DIR, '').replace(/^\/+/, '');
+        
         const result = await client.query(
             `INSERT INTO services.invoice_documents (
                 invoice_id, document_name, document_type, 
@@ -283,7 +285,7 @@ router.post('/invoices/:id/documents', authenticate, checkPermission('invoices.u
                 req.params.id,
                 req.body.document_name || req.file.originalname,
                 req.body.document_type || path.extname(req.file.originalname).substring(1),
-                req.file.path.replace(process.env.UPLOAD_DIR, ''),
+                relativePath,
                 req.file.size,
                 req.user.userId
             ]
@@ -300,8 +302,12 @@ router.post('/invoices/:id/documents', authenticate, checkPermission('invoices.u
         console.error('Error uploading document:', error);
         
         // Видалення файлу, якщо він був завантажений
-        if (req.file) {
-            fs.unlinkSync(req.file.path);
+        if (req.file && fs.existsSync(req.file.path)) {
+            try {
+                fs.unlinkSync(req.file.path);
+            } catch (unlinkError) {
+                console.error('Error removing uploaded file:', unlinkError);
+            }
         }
         
         res.status(400).json({
@@ -651,5 +657,37 @@ router.post('/invoices/generate', authenticate, checkPermission('invoices.create
       client.release();
     }
   });
+
+  // Редагування рахунку - додати після існуючих маршрутів рахунків
+router.put('/invoices/:id', authenticate, checkPermission('invoices.update'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        const invoice = await ServiceService.updateInvoice(
+            client, 
+            req.params.id, 
+            req.body, 
+            req.user.userId,
+            req
+        );
+        
+        await client.query('COMMIT');
+        
+        res.json({
+            success: true,
+            invoice
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error updating invoice:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при оновленні рахунку'
+        });
+    } finally {
+        client.release();
+    }
+});
 
 module.exports = router;
