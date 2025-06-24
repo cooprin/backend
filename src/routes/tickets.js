@@ -171,13 +171,38 @@ router.post('/', authenticate, staffOrClient, async (req, res) => {
 
     const { title, description, category_id, object_id, priority = 'medium' } = req.body;
 
-    // Determine client_id and created_by
+    // Validate required fields
+    if (!title || !description) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Title and description are required' 
+      });
+    }
+
+    // Determine client_id, created_by, and created_by_type
     let clientId, createdBy, createdByType;
     
     if (req.user.userType === 'client') {
       clientId = req.user.clientId;
       createdBy = req.user.clientId;
       createdByType = 'client';
+
+      // Validate object belongs to client if specified
+      if (object_id) {
+        const objectCheck = await client.query(
+          'SELECT id FROM wialon.objects WHERE id = $1 AND client_id = $2',
+          [object_id, req.user.clientId]
+        );
+        
+        if (objectCheck.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ 
+            success: false, 
+            message: 'Object not found or access denied' 
+          });
+        }
+      }
     } else {
       // Staff creating ticket - client_id should be provided
       clientId = req.body.client_id;
@@ -188,16 +213,27 @@ router.post('/', authenticate, staffOrClient, async (req, res) => {
         await client.query('ROLLBACK');
         return res.status(400).json({ success: false, message: 'client_id is required' });
       }
+
+      // Validate client exists
+      const clientCheck = await client.query(
+        'SELECT id FROM clients.clients WHERE id = $1',
+        [clientId]
+      );
+      
+      if (clientCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ success: false, message: 'Client not found' });
+      }
     }
 
     const ticketNumber = await generateTicketNumber();
 
     const result = await client.query(
       `INSERT INTO tickets.tickets 
-       (ticket_number, client_id, category_id, object_id, title, description, priority, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       (ticket_number, client_id, category_id, object_id, title, description, priority, created_by, created_by_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
-      [ticketNumber, clientId, category_id, object_id, title, description, priority, createdBy]
+      [ticketNumber, clientId, category_id, object_id, title, description, priority, createdBy, createdByType]
     );
 
     const ticket = result.rows[0];
@@ -214,17 +250,24 @@ router.post('/', authenticate, staffOrClient, async (req, res) => {
 
     await client.query('COMMIT');
 
-    // Audit log
-    await AuditService.log({
-      userId: req.user.userType === 'staff' ? req.user.userId : null,
-      actionType: 'TICKET_CREATE',
-      entityType: 'TICKET',
-      entityId: ticket.id,
-      newValues: ticket,
-      ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS,
-      req
-    });
+    // Audit log only for staff actions
+    if (req.user.userType === 'staff') {
+      try {
+        await AuditService.log({
+          userId: req.user.userId,
+          actionType: 'TICKET_CREATE',
+          entityType: 'TICKET',
+          entityId: ticket.id,
+          newValues: ticket,
+          ipAddress: req.ip,
+          auditType: AUDIT_TYPES.BUSINESS,
+          req
+        });
+      } catch (auditError) {
+        console.error('Audit log failed:', auditError);
+        // Don't fail the request if audit fails
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -260,6 +303,23 @@ router.put('/:id', authenticate, staffOnly, async (req, res) => {
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Ticket not found' });
+    }
+
+    // Audit log for staff actions
+    try {
+      await AuditService.log({
+        userId: req.user.userId,
+        actionType: 'TICKET_UPDATE',
+        entityType: 'TICKET',
+        entityId: req.params.id,
+        newValues: result.rows[0],
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } catch (auditError) {
+      console.error('Audit log failed:', auditError);
+      // Don't fail the request if audit fails
     }
 
     res.json({

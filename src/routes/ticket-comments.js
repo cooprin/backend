@@ -129,17 +129,24 @@ router.post('/ticket/:ticketId', authenticate, staffOrClient, async (req, res) =
       );
     }
 
-    // Audit log
-    await AuditService.log({
-      userId: req.user.userType === 'staff' ? req.user.userId : null,
-      actionType: 'TICKET_COMMENT_CREATE',
-      entityType: 'TICKET_COMMENT',
-      entityId: comment.id,
-      newValues: comment,
-      ipAddress: req.ip,
-      auditType: AUDIT_TYPES.BUSINESS,
-      req
-    });
+    // Audit log only for staff actions
+    if (req.user.userType === 'staff') {
+      try {
+        await AuditService.log({
+          userId: req.user.userId,
+          actionType: 'TICKET_COMMENT_CREATE',
+          entityType: 'TICKET_COMMENT',
+          entityId: comment.id,
+          newValues: comment,
+          ipAddress: req.ip,
+          auditType: AUDIT_TYPES.BUSINESS,
+          req
+        });
+      } catch (auditError) {
+        console.error('Audit log failed:', auditError);
+        // Don't fail the request if audit fails
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -186,6 +193,25 @@ router.put('/:id', authenticate, staffOrClient, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Comment not found or access denied' });
     }
 
+    // Audit log only for staff actions
+    if (req.user.userType === 'staff') {
+      try {
+        await AuditService.log({
+          userId: req.user.userId,
+          actionType: 'TICKET_COMMENT_UPDATE',
+          entityType: 'TICKET_COMMENT',
+          entityId: id,
+          newValues: result.rows[0],
+          ipAddress: req.ip,
+          auditType: AUDIT_TYPES.BUSINESS,
+          req
+        });
+      } catch (auditError) {
+        console.error('Audit log failed:', auditError);
+        // Don't fail the request if audit fails
+      }
+    }
+
     res.json({
       success: true,
       comment: result.rows[0]
@@ -218,6 +244,25 @@ router.delete('/:id', authenticate, staffOrClient, async (req, res) => {
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Comment not found or access denied' });
+    }
+
+    // Audit log only for staff actions
+    if (req.user.userType === 'staff') {
+      try {
+        await AuditService.log({
+          userId: req.user.userId,
+          actionType: 'TICKET_COMMENT_DELETE',
+          entityType: 'TICKET_COMMENT',
+          entityId: id,
+          oldValues: result.rows[0],
+          ipAddress: req.ip,
+          auditType: AUDIT_TYPES.BUSINESS,
+          req
+        });
+      } catch (auditError) {
+        console.error('Audit log failed:', auditError);
+        // Don't fail the request if audit fails
+      }
     }
 
     res.json({
