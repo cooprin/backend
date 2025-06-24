@@ -1809,8 +1809,7 @@ static async updateInvoice(client, id, data, userId, req) {
         let paramIndex = 1;
 
         const updateableFields = [
-            'invoice_number', 'invoice_date', 'billing_month', 
-            'billing_year', 'notes'
+            'invoice_number', 'invoice_date', 'notes'
         ];
 
         updateableFields.forEach(field => {
