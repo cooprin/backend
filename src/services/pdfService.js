@@ -135,9 +135,14 @@ class PDFService {
         // Реєструємо та встановлюємо шрифт з підтримкою кирилиці
         try {
             const fontPath = path.join(__dirname, '../fonts/DejaVuSans.ttf');
-            doc.registerFont('DejaVu', fontPath);
-            doc.font('DejaVu');
-            console.log('DejaVu font loaded successfully');
+            if (fs.existsSync(fontPath)) {
+                doc.registerFont('DejaVu', fontPath);
+                doc.font('DejaVu');
+                console.log('DejaVu font loaded successfully');
+            } else {
+                console.log('DejaVu font not found, using Helvetica');
+                doc.font('Helvetica');
+            }
         } catch (error) {
             console.error('Error loading DejaVu font, falling back to Helvetica:', error);
             doc.font('Helvetica');
@@ -248,23 +253,37 @@ class PDFService {
 
         // Таблиця позицій
         if (invoice.items && invoice.items.length > 0) {
-            // Заголовок таблиці
-            doc.fontSize(9)
-               .fillColor('white');
-               
-            doc.rect(50, yPos, pageWidth, 22)
+            // Заголовок таблиці - ВИПРАВЛЕНО
+            const headerHeight = 25;
+            
+            // Фон заголовка
+            doc.rect(50, yPos, pageWidth, headerHeight)
                .fillColor('#2c5aa0')
                .fill();
                
             // Заголовки колонок з перекладами
-            doc.text(t.number, 55, yPos + 7);
-            doc.text(t.service, 85, yPos + 7);
-            doc.text(t.description, 240, yPos + 7);
-            doc.text(t.quantity, 370, yPos + 7);
-            doc.text(t.price, 420, yPos + 7);
-            doc.text(t.total, 480, yPos + 7);
+            doc.fontSize(10)
+               .fillColor('white');
+               
+            // Колонки таблиці з правильним позиціонуванням
+            const colPositions = {
+                number: 55,
+                service: 85,
+                description: 240, 
+                quantity: 370,
+                price: 430,
+                total: 490
+            };
+            
+            const headerY = yPos + 8;
+            doc.text(t.number, colPositions.number, headerY);
+            doc.text(t.service, colPositions.service, headerY);
+            doc.text(t.description, colPositions.description, headerY);
+            doc.text(t.quantity, colPositions.quantity, headerY);
+            doc.text(t.price, colPositions.price, headerY);
+            doc.text(t.total, colPositions.total, headerY);
 
-            yPos += 22;
+            yPos += headerHeight;
             
             // Позиції таблиці
             doc.fillColor('black');
@@ -276,8 +295,12 @@ class PDFService {
                     // Встановити шрифт знову на новій сторінці
                     try {
                         const fontPath = path.join(__dirname, '../fonts/DejaVuSans.ttf');
-                        doc.registerFont('DejaVu', fontPath);
-                        doc.font('DejaVu');
+                        if (fs.existsSync(fontPath)) {
+                            doc.registerFont('DejaVu', fontPath);
+                            doc.font('DejaVu');
+                        } else {
+                            doc.font('Helvetica');
+                        }
                     } catch (error) {
                         doc.font('Helvetica');
                     }
@@ -285,7 +308,7 @@ class PDFService {
                 }
                 
                 const bgColor = index % 2 === 0 ? '#f9f9f9' : 'white';
-                const rowHeight = 18;
+                const rowHeight = 25;
                 
                 if (bgColor === '#f9f9f9') {
                     doc.rect(50, yPos, pageWidth, rowHeight)
@@ -293,22 +316,21 @@ class PDFService {
                        .fill();
                 }
                 
-                doc.fontSize(8)
+                doc.fontSize(9)
                    .fillColor('black');
                 
-                // Текст з переносами
-                const serviceName = this.wrapText(
-                    item.service_name || (userLanguage === 'en' ? 'Service' : 'Послуга'), 
-                    18
-                );
-                const description = this.wrapText(item.description || '', 15);
+                const textY = yPos + 8;
                 
-                doc.text((index + 1).toString(), 55, yPos + 5)
-                   .text(serviceName, 85, yPos + 5, { width: 150, height: rowHeight })
-                   .text(description, 240, yPos + 5, { width: 125, height: rowHeight })
-                   .text(item.quantity.toString(), 370, yPos + 5)
-                   .text(this.formatCurrency(item.unit_price, t.currency), 420, yPos + 5)
-                   .text(this.formatCurrency(item.total_price, t.currency), 480, yPos + 5);
+                // Текст з обмеженням довжини
+                const serviceName = this.truncateText(item.service_name || (userLanguage === 'en' ? 'Service' : 'Послуга'), 20);
+                const description = this.truncateText(item.description || '', 25);
+                
+                doc.text((index + 1).toString(), colPositions.number, textY)
+                   .text(serviceName, colPositions.service, textY, { width: 150 })
+                   .text(description, colPositions.description, textY, { width: 125 })
+                   .text(item.quantity ? item.quantity.toString() : '1', colPositions.quantity, textY)
+                   .text(this.formatCurrency(item.unit_price, t.currency), colPositions.price, textY)
+                   .text(this.formatCurrency(item.total_price, t.currency), colPositions.total, textY);
                    
                 yPos += rowHeight;
             });
@@ -346,31 +368,11 @@ class PDFService {
            .text(company.legal_name || company.name || '', 50, footerY + 12);
     }
 
-    // Функція для переносу тексту
-    static wrapText(text, maxLength) {
+    // Функція для обрізання тексту
+    static truncateText(text, maxLength) {
         if (!text) return '';
         if (text.length <= maxLength) return text;
-        
-        const words = text.split(' ');
-        let result = '';
-        let currentLine = '';
-        
-        words.forEach(word => {
-            if ((currentLine + word).length <= maxLength) {
-                currentLine += (currentLine ? ' ' : '') + word;
-            } else {
-                if (result) result += '\n';
-                result += currentLine;
-                currentLine = word;
-            }
-        });
-        
-        if (currentLine) {
-            if (result) result += '\n';
-            result += currentLine;
-        }
-        
-        return result;
+        return text.substring(0, maxLength - 3) + '...';
     }
 
     // Форматування валюти з підтримкою мови

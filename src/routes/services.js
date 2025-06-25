@@ -502,6 +502,7 @@ router.delete('/:id', authenticate, checkPermission('services.delete'), async (r
 });
 
 // Генерація PDF для рахунку
+// Генерація PDF для рахунку
 router.get('/invoices/:id/pdf', authenticate, checkPermission('invoices.read'), async (req, res) => {
     try {
         const invoice = await ServiceService.getInvoiceDetails(req.params.id);
@@ -517,7 +518,7 @@ router.get('/invoices/:id/pdf', authenticate, checkPermission('invoices.read'), 
         const userLanguage = req.query.lang || 'uk';
         
         // Генеруємо PDF з мовою користувача
-        const pdfBuffer = await PDFService.generateInvoicePdf(invoice, req.params.templateId, userLanguage);
+        const pdfBuffer = await PDFService.generateInvoicePdf(invoice, userLanguage);
         
         // Відправляємо PDF клієнту
         res.setHeader('Content-Type', 'application/pdf');
