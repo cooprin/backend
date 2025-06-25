@@ -182,37 +182,43 @@ class PDFService {
 
         yPos += 80;
            
-        // Інформація про компанію
+        // Інформація про компанію з переносом тексту
         doc.fontSize(9)
            .fillColor('black');
            
         if (company.legal_address || company.address) {
-            doc.text(t.address + ' ' + (company.legal_address || company.address), 50, yPos);
-            yPos += 12;
+            const addressText = t.address + ' ' + (company.legal_address || company.address);
+            doc.text(addressText, 50, yPos, { width: 300, align: 'left' });
+            yPos += doc.heightOfString(addressText, { width: 300 }) + 5;
         }
         if (company.phone) {
-            doc.text(t.phone + ' ' + company.phone, 50, yPos);
-            yPos += 12;
+            const phoneText = t.phone + ' ' + company.phone;
+            doc.text(phoneText, 50, yPos, { width: 300, align: 'left' });
+            yPos += doc.heightOfString(phoneText, { width: 300 }) + 5;
         }
         if (company.email) {
-            doc.text(t.email + ' ' + company.email, 50, yPos);
-            yPos += 12;
+            const emailText = t.email + ' ' + company.email;
+            doc.text(emailText, 50, yPos, { width: 300, align: 'left' });
+            yPos += doc.heightOfString(emailText, { width: 300 }) + 5;
         }
         
-        // Додаємо банківські реквізити
+        // Додаємо банківські реквізити з переносом
         if (company.bank_accounts && company.bank_accounts.length > 0) {
             const defaultBank = company.bank_accounts.find(acc => acc.is_default) || company.bank_accounts[0];
             if (defaultBank.bank_name) {
-                doc.text(t.bank + ' ' + defaultBank.bank_name, 50, yPos);
-                yPos += 12;
+                const bankText = t.bank + ' ' + defaultBank.bank_name;
+                doc.text(bankText, 50, yPos, { width: 300, align: 'left' });
+                yPos += doc.heightOfString(bankText, { width: 300 }) + 5;
             }
             if (defaultBank.account_number) {
-                doc.text(t.account + ' ' + defaultBank.account_number, 50, yPos);
-                yPos += 12;
+                const accountText = t.account + ' ' + defaultBank.account_number;
+                doc.text(accountText, 50, yPos, { width: 300, align: 'left' });
+                yPos += doc.heightOfString(accountText, { width: 300 }) + 5;
             }
             if (defaultBank.iban) {
-                doc.text('IBAN: ' + defaultBank.iban, 50, yPos);
-                yPos += 12;
+                const ibanText = 'IBAN: ' + defaultBank.iban;
+                doc.text(ibanText, 50, yPos, { width: 300, align: 'left' });
+                yPos += doc.heightOfString(ibanText, { width: 300 }) + 5;
             }
         }
 
@@ -238,9 +244,12 @@ class PDFService {
             return date.toLocaleDateString('uk-UA');
         };
 
-        // Ліва колонка - клієнт
-        doc.text(t.client, 50, yPos);
-        doc.text(invoice.client_name || 'Client Name', 50, yPos + 18);
+        // Ліва колонка - клієнт з переносом
+        const clientText = t.client;
+        const clientName = invoice.client_name || 'Client Name';
+        
+        doc.text(clientText, 50, yPos);
+        doc.text(clientName, 50, yPos + 18, { width: 250, align: 'left' });
         
         // Права колонка - деталі рахунку
         doc.text(t.date, 350, yPos);
@@ -249,11 +258,13 @@ class PDFService {
         doc.text(t.period, 350, yPos + 36);
         doc.text(t.months[invoice.billing_month] + ' ' + invoice.billing_year, 350, yPos + 54);
 
-        yPos += 90;
+        // Враховуємо висоту імені клієнта
+        const clientNameHeight = doc.heightOfString(clientName, { width: 250 });
+        yPos += Math.max(90, clientNameHeight + 60);
 
         // Таблиця позицій
         if (invoice.items && invoice.items.length > 0) {
-            // Заголовок таблиці - ВИПРАВЛЕНО
+            // Заголовок таблиці
             const headerHeight = 25;
             
             // Фон заголовка
@@ -271,17 +282,27 @@ class PDFService {
                 service: 85,
                 description: 240, 
                 quantity: 370,
-                price: 430,
-                total: 490
+                price: 420,
+                total: 480
+            };
+            
+            // Ширина колонок
+            const colWidths = {
+                number: 25,
+                service: 150,
+                description: 125,
+                quantity: 45,
+                price: 55,
+                total: 65
             };
             
             const headerY = yPos + 8;
-            doc.text(t.number, colPositions.number, headerY);
-            doc.text(t.service, colPositions.service, headerY);
-            doc.text(t.description, colPositions.description, headerY);
-            doc.text(t.quantity, colPositions.quantity, headerY);
-            doc.text(t.price, colPositions.price, headerY);
-            doc.text(t.total, colPositions.total, headerY);
+            doc.text(t.number, colPositions.number, headerY, { width: colWidths.number, align: 'center' });
+            doc.text(t.service, colPositions.service, headerY, { width: colWidths.service, align: 'left' });
+            doc.text(t.description, colPositions.description, headerY, { width: colWidths.description, align: 'left' });
+            doc.text(t.quantity, colPositions.quantity, headerY, { width: colWidths.quantity, align: 'center' });
+            doc.text(t.price, colPositions.price, headerY, { width: colWidths.price, align: 'right' });
+            doc.text(t.total, colPositions.total, headerY, { width: colWidths.total, align: 'right' });
 
             yPos += headerHeight;
             
@@ -290,7 +311,7 @@ class PDFService {
             
             invoice.items.forEach((item, index) => {
                 // Перевірка чи потрібна нова сторінка
-                if (yPos > 720) {
+                if (yPos > 650) { // Зменшив поріг для кращого розміщення
                     doc.addPage();
                     // Встановити шрифт знову на новій сторінці
                     try {
@@ -307,32 +328,71 @@ class PDFService {
                     yPos = 50;
                 }
                 
-                const bgColor = index % 2 === 0 ? '#f9f9f9' : 'white';
-                const rowHeight = 25;
+                // Підготовка тексту для всіх колонок
+                const serviceName = item.service_name || (userLanguage === 'en' ? 'Service' : 'Послуга');
+                const description = item.description || '';
+                const quantity = item.quantity ? item.quantity.toString() : '1';
+                const unitPrice = this.formatCurrency(item.unit_price, t.currency);
+                const totalPrice = this.formatCurrency(item.total_price, t.currency);
+                const rowNumber = (index + 1).toString();
+
+                // Розраховуємо потрібну висоту для кожної колонки
+                const serviceHeight = doc.heightOfString(serviceName, { width: colWidths.service });
+                const descHeight = doc.heightOfString(description, { width: colWidths.description });
+                const qtyHeight = doc.heightOfString(quantity, { width: colWidths.quantity });
+                const priceHeight = doc.heightOfString(unitPrice, { width: colWidths.price });
+                const totalHeight = doc.heightOfString(totalPrice, { width: colWidths.total });
+                const numberHeight = doc.heightOfString(rowNumber, { width: colWidths.number });
+
+                // Беремо максимальну висоту + відступи
+                const actualRowHeight = Math.max(25, serviceHeight + 10, descHeight + 10, qtyHeight + 10, priceHeight + 10, totalHeight + 10, numberHeight + 10);
                 
+                const bgColor = index % 2 === 0 ? '#f9f9f9' : 'white';
+                
+                // Фон рядка з правильною висотою
                 if (bgColor === '#f9f9f9') {
-                    doc.rect(50, yPos, pageWidth, rowHeight)
+                    doc.rect(50, yPos, pageWidth, actualRowHeight)
                        .fillColor(bgColor)
                        .fill();
                 }
                 
                 doc.fontSize(9)
                    .fillColor('black');
+
+                const textY = yPos + 5;
                 
-                const textY = yPos + 8;
+                // Текст з переносом для всіх колонок
+                doc.text(rowNumber, colPositions.number, textY, { 
+                    width: colWidths.number, 
+                    align: 'center' 
+                });
                 
-                // Текст з обмеженням довжини
-                const serviceName = this.truncateText(item.service_name || (userLanguage === 'en' ? 'Service' : 'Послуга'), 20);
-                const description = this.truncateText(item.description || '', 25);
+                doc.text(serviceName, colPositions.service, textY, { 
+                    width: colWidths.service, 
+                    align: 'left'
+                });
                 
-                doc.text((index + 1).toString(), colPositions.number, textY)
-                   .text(serviceName, colPositions.service, textY, { width: 150 })
-                   .text(description, colPositions.description, textY, { width: 125 })
-                   .text(item.quantity ? item.quantity.toString() : '1', colPositions.quantity, textY)
-                   .text(this.formatCurrency(item.unit_price, t.currency), colPositions.price, textY)
-                   .text(this.formatCurrency(item.total_price, t.currency), colPositions.total, textY);
+                doc.text(description, colPositions.description, textY, { 
+                    width: colWidths.description, 
+                    align: 'left'
+                });
+                
+                doc.text(quantity, colPositions.quantity, textY, { 
+                    width: colWidths.quantity, 
+                    align: 'center'
+                });
+                
+                doc.text(unitPrice, colPositions.price, textY, { 
+                    width: colWidths.price, 
+                    align: 'right'
+                });
+                
+                doc.text(totalPrice, colPositions.total, textY, { 
+                    width: colWidths.total, 
+                    align: 'right'
+                });
                    
-                yPos += rowHeight;
+                yPos += actualRowHeight;
             });
         }
 
@@ -342,10 +402,13 @@ class PDFService {
         doc.fontSize(14)
            .fillColor('#2c5aa0');
            
-        doc.text(t.totalAmount, 350, yPos);
-        doc.text(this.formatCurrency(invoice.total_amount, t.currency), 480, yPos);
+        const totalAmountText = t.totalAmount;
+        const totalAmountValue = this.formatCurrency(invoice.total_amount, t.currency);
+        
+        doc.text(totalAmountText, 350, yPos, { width: 120, align: 'left' });
+        doc.text(totalAmountValue, 480, yPos, { width: 65, align: 'right' });
 
-        // Примітки
+        // Примітки з переносом
         if (invoice.notes) {
             yPos += 40;
             
@@ -356,23 +419,20 @@ class PDFService {
             doc.fontSize(9)
                .text(invoice.notes, 50, yPos + 18, { 
                    width: pageWidth,
+                   align: 'left',
                    lineGap: 3
                });
         }
 
-        // Футер
+        // Футер з переносом тексту
         const footerY = doc.page.height - 80;
+        const generatedText = t.generated + ' ' + formatDate(new Date());
+        const companyNameText = company.legal_name || company.name || '';
+        
         doc.fontSize(7)
            .fillColor('gray')
-           .text(t.generated + ' ' + formatDate(new Date()), 50, footerY)
-           .text(company.legal_name || company.name || '', 50, footerY + 12);
-    }
-
-    // Функція для обрізання тексту
-    static truncateText(text, maxLength) {
-        if (!text) return '';
-        if (text.length <= maxLength) return text;
-        return text.substring(0, maxLength - 3) + '...';
+           .text(generatedText, 50, footerY, { width: pageWidth, align: 'left' })
+           .text(companyNameText, 50, footerY + 12, { width: pageWidth, align: 'left' });
     }
 
     // Форматування валюти з підтримкою мови
