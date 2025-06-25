@@ -1,14 +1,63 @@
 const PDFDocument = require('pdfkit');
-const fs = require('fs');
-const path = require('path');
 const CompanyService = require('./company.service');
-const InvoiceTemplatesService = require('./invoice-templates.service');
 
 class PDFService {
-    // Генерація PDF для рахунку з PDFKit
-    static async generateInvoicePdf(invoice, templateId = null) {
+    // Переклади для PDF
+    static translations = {
+        uk: {
+            invoice: 'РАХУНОК',
+            client: 'Клієнт:',
+            date: 'Дата:',
+            period: 'Період:',
+            number: '№',
+            service: 'Послуга',
+            description: 'Опис',
+            quantity: 'Кільк.',
+            price: 'Ціна',
+            total: 'Сума',
+            totalAmount: 'Загальна сума:',
+            notes: 'Примітки:',
+            generated: 'Рахунок згенеровано',
+            address: 'Адреса:',
+            phone: 'Телефон:',
+            email: 'Email:',
+            currency: 'грн',
+            months: {
+                1: 'Січень', 2: 'Лютий', 3: 'Березень', 4: 'Квітень',
+                5: 'Травень', 6: 'Червень', 7: 'Липень', 8: 'Серпень',
+                9: 'Вересень', 10: 'Жовтень', 11: 'Листопад', 12: 'Грудень'
+            }
+        },
+        en: {
+            invoice: 'INVOICE',
+            client: 'Client:',
+            date: 'Date:',
+            period: 'Period:',
+            number: '№',
+            service: 'Service',
+            description: 'Description',
+            quantity: 'Qty.',
+            price: 'Price',
+            total: 'Total',
+            totalAmount: 'Total Amount:',
+            notes: 'Notes:',
+            generated: 'Invoice generated',
+            address: 'Address:',
+            phone: 'Phone:',
+            email: 'Email:',
+            currency: 'UAH',
+            months: {
+                1: 'January', 2: 'February', 3: 'March', 4: 'April',
+                5: 'May', 6: 'June', 7: 'July', 8: 'August',
+                9: 'September', 10: 'October', 11: 'November', 12: 'December'
+            }
+        }
+    };
+
+    // Генерація PDF для рахунку з мультимовою підтримкою
+    static async generateInvoicePdf(invoice, userLanguage = 'uk') {
         try {
-            console.log('Starting PDF generation with PDFKit for invoice:', invoice.id);
+            console.log(`Starting PDF generation with PDFKit for invoice: ${invoice.id}, language: ${userLanguage}`);
             
             // Отримуємо дані компанії
             const companyData = await CompanyService.getOrganizationDetails();
@@ -17,8 +66,19 @@ class PDFService {
                 throw new Error('Дані компанії не знайдено');
             }
 
-            // Створюємо PDF документ
-            const doc = new PDFDocument({ margin: 50 });
+            // Вибираємо переклади
+            const t = this.translations[userLanguage] || this.translations.uk;
+
+            // Створюємо PDF документ з підтримкою UTF-8
+            const doc = new PDFDocument({ 
+                margin: 50,
+                bufferPages: true,
+                autoFirstPage: true
+            });
+            
+            // Використовуємо вбудований шрифт з підтримкою кирилиці
+            doc.font('Times-Roman');
+            
             const chunks = [];
             
             // Збираємо PDF у буфер
@@ -34,8 +94,8 @@ class PDFService {
                 doc.on('error', reject);
 
                 try {
-                    // Генеруємо контент PDF
-                    this.generatePDFContent(doc, invoice, companyData);
+                    // Генеруємо контент PDF з перекладами
+                    this.generatePDFContent(doc, invoice, companyData, t, userLanguage);
                     
                     // Завершуємо документ
                     doc.end();
@@ -50,14 +110,20 @@ class PDFService {
         }
     }
 
-    // Генерація контенту PDF
-    static generatePDFContent(doc, invoice, company) {
-        const pageWidth = doc.page.width - 100; // Враховуємо margins
+    // Генерація контенту PDF з правильним кодуванням та мовою
+    static generatePDFContent(doc, invoice, company, t, userLanguage) {
+        const pageWidth = doc.page.width - 100;
+        
+        // Встановлюємо шрифт для кирилиці та латиниці
+        doc.font('Times-Roman');
         
         // Заголовок компанії
         doc.fontSize(20)
            .fillColor('#2c5aa0')
-           .text(company.name || 'Назва компанії', 50, 50);
+           .text(company.name || 'Company Name', 50, 50, { 
+               width: pageWidth * 0.6,
+               align: 'left'
+           });
            
         // Інформація про компанію
         let yPos = 80;
@@ -65,26 +131,26 @@ class PDFService {
            .fillColor('black');
            
         if (company.address) {
-            doc.text(`Адреса: ${company.address}`, 50, yPos);
+            doc.text(t.address + ' ' + company.address, 50, yPos);
             yPos += 15;
         }
         if (company.phone) {
-            doc.text(`Телефон: ${company.phone}`, 50, yPos);
+            doc.text(t.phone + ' ' + company.phone, 50, yPos);
             yPos += 15;
         }
         if (company.email) {
-            doc.text(`Email: ${company.email}`, 50, yPos);
+            doc.text(t.email + ' ' + company.email, 50, yPos);
             yPos += 15;
         }
         
-        // Заголовок рахунку
+        // Заголовок рахунку (праворуч)
         doc.fontSize(24)
            .fillColor('#2c5aa0')
-           .text('РАХУНОК', 400, 50);
+           .text(t.invoice, 400, 50);
            
         doc.fontSize(18)
            .fillColor('black')
-           .text(`№ ${invoice.invoice_number}`, 400, 80);
+           .text(t.number + ' ' + invoice.invoice_number, 400, 80);
 
         // Лінія розділювач
         yPos = Math.max(yPos + 20, 120);
@@ -101,25 +167,23 @@ class PDFService {
            .fillColor('black');
            
         const formatDate = (dateString) => {
-            return new Date(dateString).toLocaleDateString('uk-UA');
-        };
-
-        const monthNames = {
-            1: 'Січень', 2: 'Лютий', 3: 'Березень', 4: 'Квітень',
-            5: 'Травень', 6: 'Червень', 7: 'Липень', 8: 'Серпень',
-            9: 'Вересень', 10: 'Жовтень', 11: 'Листопад', 12: 'Грудень'
+            const date = new Date(dateString);
+            if (userLanguage === 'en') {
+                return date.toLocaleDateString('en-US');
+            }
+            return date.toLocaleDateString('uk-UA');
         };
 
         // Ліва колонка - клієнт
-        doc.text('Клієнт:', 50, yPos);
+        doc.text(t.client, 50, yPos);
         doc.text(invoice.client_name, 50, yPos + 20);
         
         // Права колонка - деталі рахунку
-        doc.text('Дата:', 350, yPos);
+        doc.text(t.date, 350, yPos);
         doc.text(formatDate(invoice.invoice_date), 350, yPos + 20);
         
-        doc.text('Період:', 350, yPos + 40);
-        doc.text(`${monthNames[invoice.billing_month]} ${invoice.billing_year}`, 350, yPos + 60);
+        doc.text(t.period, 350, yPos + 40);
+        doc.text(t.months[invoice.billing_month] + ' ' + invoice.billing_year, 350, yPos + 60);
 
         yPos += 100;
 
@@ -133,12 +197,13 @@ class PDFService {
                .fillColor('#2c5aa0')
                .fill();
                
-            doc.text('№', 60, yPos + 8);
-            doc.text('Послуга', 90, yPos + 8);
-            doc.text('Опис', 250, yPos + 8);
-            doc.text('Кільк.', 380, yPos + 8);
-            doc.text('Ціна', 430, yPos + 8);
-            doc.text('Сума', 480, yPos + 8);
+            // Заголовки колонок з перекладами
+            doc.text(t.number, 60, yPos + 8);
+            doc.text(t.service, 90, yPos + 8);
+            doc.text(t.description, 250, yPos + 8);
+            doc.text(t.quantity, 380, yPos + 8);
+            doc.text(t.price, 430, yPos + 8);
+            doc.text(t.total, 480, yPos + 8);
 
             yPos += 25;
             
@@ -149,6 +214,7 @@ class PDFService {
                 // Перевірка чи потрібна нова сторінка
                 if (yPos > 700) {
                     doc.addPage();
+                    doc.font('Times-Roman'); // Встановити шрифт знову на новій сторінці
                     yPos = 50;
                 }
                 
@@ -162,11 +228,11 @@ class PDFService {
                 
                 doc.fillColor('black')
                    .text((index + 1).toString(), 60, yPos + 5)
-                   .text(item.service_name || 'Послуга', 90, yPos + 5)
+                   .text(item.service_name || (userLanguage === 'en' ? 'Service' : 'Послуга'), 90, yPos + 5)
                    .text(item.description || '', 250, yPos + 5)
                    .text(item.quantity.toString(), 380, yPos + 5)
-                   .text(this.formatCurrency(item.unit_price), 430, yPos + 5)
-                   .text(this.formatCurrency(item.total_price), 480, yPos + 5);
+                   .text(this.formatCurrency(item.unit_price, t.currency), 430, yPos + 5)
+                   .text(this.formatCurrency(item.total_price, t.currency), 480, yPos + 5);
                    
                 yPos += 20;
             });
@@ -178,8 +244,8 @@ class PDFService {
         doc.fontSize(16)
            .fillColor('#2c5aa0');
            
-        doc.text('Загальна сума:', 350, yPos);
-        doc.text(this.formatCurrency(invoice.total_amount), 480, yPos);
+        doc.text(t.totalAmount, 350, yPos);
+        doc.text(this.formatCurrency(invoice.total_amount, t.currency), 480, yPos);
 
         // Примітки
         if (invoice.notes) {
@@ -187,7 +253,7 @@ class PDFService {
             
             doc.fontSize(12)
                .fillColor('black')
-               .text('Примітки:', 50, yPos);
+               .text(t.notes, 50, yPos);
                
             doc.fontSize(10)
                .text(invoice.notes, 50, yPos + 20, { width: pageWidth });
@@ -197,17 +263,20 @@ class PDFService {
         const footerY = doc.page.height - 100;
         doc.fontSize(8)
            .fillColor('gray')
-           .text(`Рахунок згенеровано ${new Date().toLocaleDateString('uk-UA')}`, 50, footerY)
+           .text(t.generated + ' ' + formatDate(new Date()), 50, footerY)
            .text(company.name || '', 50, footerY + 15);
     }
 
-    // Форматування валюти
-    static formatCurrency(amount) {
-        if (amount === null || amount === undefined) return '0.00 ₴';
-        return parseFloat(amount).toLocaleString('uk-UA', { 
+    // Форматування валюти з підтримкою мови
+    static formatCurrency(amount, currency = 'грн') {
+        if (amount === null || amount === undefined) return '0.00 ' + currency;
+        
+        const formattedAmount = parseFloat(amount).toLocaleString('uk-UA', { 
             minimumFractionDigits: 2,
             maximumFractionDigits: 2
-        }) + ' ₴';
+        });
+        
+        return formattedAmount + ' ' + currency;
     }
 }
 

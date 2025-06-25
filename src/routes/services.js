@@ -513,8 +513,11 @@ router.get('/invoices/:id/pdf', authenticate, checkPermission('invoices.read'), 
             });
         }
         
-        // Генеруємо PDF
-        const pdfBuffer = await PDFService.generateInvoicePdf(invoice);
+        // Отримуємо мову користувача з query параметра
+        const userLanguage = req.query.lang || 'uk';
+        
+        // Генеруємо PDF з мовою користувача
+        const pdfBuffer = await PDFService.generateInvoicePdf(invoice, req.params.templateId, userLanguage);
         
         // Відправляємо PDF клієнту
         res.setHeader('Content-Type', 'application/pdf');
@@ -529,33 +532,6 @@ router.get('/invoices/:id/pdf', authenticate, checkPermission('invoices.read'), 
     }
 });
 
-// Генерація PDF з вибором шаблону
-router.get('/invoices/:id/pdf/:templateId?', authenticate, checkPermission('invoices.read'), async (req, res) => {
-    try {
-        const invoice = await ServiceService.getInvoiceDetails(req.params.id);
-        
-        if (!invoice) {
-            return res.status(404).json({
-                success: false,
-                message: 'Рахунок не знайдено'
-            });
-        }
-        
-        // Генеруємо PDF
-        const pdfBuffer = await ServiceService.generateInvoicePdf(invoice, req.params.templateId);
-        
-        // Відправляємо PDF клієнту
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="invoice-${invoice.invoice_number}.pdf"`);
-        res.send(pdfBuffer);
-    } catch (error) {
-        console.error('Error generating PDF:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Помилка при генерації PDF'
-        });
-    }
-});
 
 // Генерація рахунків для конкретного клієнта за певний період
 router.post('/invoices/generate-for-client/:clientId', authenticate, checkPermission('invoices.create'), async (req, res) => {
