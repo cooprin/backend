@@ -60,24 +60,35 @@ class PDFService {
             console.log(`Starting PDF generation with PDFKit for invoice: ${invoice.id}, language: ${userLanguage}`);
             
             // Отримуємо дані компанії
-            const companyData = await CompanyService.getOrganizationDetails();
-            
-            if (!companyData) {
-                throw new Error('Дані компанії не знайдено');
+            let companyData;
+            try {
+                companyData = await CompanyService.getOrganizationDetails();
+                console.log('Company data loaded:', companyData);
+            } catch (error) {
+                console.error('Error loading company data:', error);
+                // Використовуємо дефолтні дані якщо не вдалося завантажити
+                companyData = {
+                    name: 'Your Company Name',
+                    address: 'Company Address',
+                    phone: 'Company Phone',
+                    email: 'company@email.com'
+                };
             }
 
             // Вибираємо переклади
             const t = this.translations[userLanguage] || this.translations.uk;
 
-            // Створюємо PDF документ з підтримкою UTF-8
+            // Створюємо PDF документ
             const doc = new PDFDocument({ 
                 margin: 50,
                 bufferPages: true,
-                autoFirstPage: true
+                autoFirstPage: true,
+                info: {
+                    Title: `Invoice ${invoice.invoice_number}`,
+                    Author: companyData.name || 'Company',
+                    Creator: 'Invoice System'
+                }
             });
-            
-            // Використовуємо вбудований шрифт з підтримкою кирилиці
-            doc.font('Helvetica');
             
             const chunks = [];
             
@@ -100,6 +111,7 @@ class PDFService {
                     // Завершуємо документ
                     doc.end();
                 } catch (error) {
+                    console.error('Error in PDF content generation:', error);
                     reject(error);
                 }
             });
@@ -114,13 +126,17 @@ class PDFService {
     static generatePDFContent(doc, invoice, company, t, userLanguage) {
         const pageWidth = doc.page.width - 100;
         
-        // Встановлюємо шрифт для кирилиці та латиниці
-       doc.font('Helvetica');
+        // Функція для безпечного виводу тексту з кирилицею
+        const safeText = (text) => {
+            if (!text) return '';
+            // Конвертуємо в UTF-8 і забезпечуємо правильне кодування
+            return Buffer.from(text, 'utf8').toString('utf8');
+        };
         
         // Заголовок компанії
         doc.fontSize(20)
            .fillColor('#2c5aa0')
-           .text(company.name || 'Company Name', 50, 50, { 
+           .text(safeText(company.name || 'Company Name'), 50, 50, { 
                width: pageWidth * 0.6,
                align: 'left'
            });
@@ -131,26 +147,26 @@ class PDFService {
            .fillColor('black');
            
         if (company.address) {
-            doc.text(t.address + ' ' + company.address, 50, yPos);
+            doc.text(safeText(t.address + ' ' + company.address), 50, yPos);
             yPos += 15;
         }
         if (company.phone) {
-            doc.text(t.phone + ' ' + company.phone, 50, yPos);
+            doc.text(safeText(t.phone + ' ' + company.phone), 50, yPos);
             yPos += 15;
         }
         if (company.email) {
-            doc.text(t.email + ' ' + company.email, 50, yPos);
+            doc.text(safeText(t.email + ' ' + company.email), 50, yPos);
             yPos += 15;
         }
         
         // Заголовок рахунку (праворуч)
         doc.fontSize(24)
            .fillColor('#2c5aa0')
-           .text(t.invoice, 400, 50);
+           .text(safeText(t.invoice), 400, 50);
            
         doc.fontSize(18)
            .fillColor('black')
-           .text(t.number + ' ' + invoice.invoice_number, 400, 80);
+           .text(safeText(t.number + ' ' + invoice.invoice_number), 400, 80);
 
         // Лінія розділювач
         yPos = Math.max(yPos + 20, 120);
@@ -175,15 +191,15 @@ class PDFService {
         };
 
         // Ліва колонка - клієнт
-        doc.text(t.client, 50, yPos);
-        doc.text(invoice.client_name, 50, yPos + 20);
+        doc.text(safeText(t.client), 50, yPos);
+        doc.text(safeText(invoice.client_name || 'Client Name'), 50, yPos + 20);
         
         // Права колонка - деталі рахунку
-        doc.text(t.date, 350, yPos);
+        doc.text(safeText(t.date), 350, yPos);
         doc.text(formatDate(invoice.invoice_date), 350, yPos + 20);
         
-        doc.text(t.period, 350, yPos + 40);
-        doc.text(t.months[invoice.billing_month] + ' ' + invoice.billing_year, 350, yPos + 60);
+        doc.text(safeText(t.period), 350, yPos + 40);
+        doc.text(safeText(t.months[invoice.billing_month] + ' ' + invoice.billing_year), 350, yPos + 60);
 
         yPos += 100;
 
@@ -198,12 +214,12 @@ class PDFService {
                .fill();
                
             // Заголовки колонок з перекладами
-            doc.text(t.number, 60, yPos + 8);
-            doc.text(t.service, 90, yPos + 8);
-            doc.text(t.description, 250, yPos + 8);
-            doc.text(t.quantity, 380, yPos + 8);
-            doc.text(t.price, 430, yPos + 8);
-            doc.text(t.total, 480, yPos + 8);
+            doc.text(safeText(t.number), 60, yPos + 8);
+            doc.text(safeText(t.service), 90, yPos + 8);
+            doc.text(safeText(t.description), 250, yPos + 8);
+            doc.text(safeText(t.quantity), 380, yPos + 8);
+            doc.text(safeText(t.price), 430, yPos + 8);
+            doc.text(safeText(t.total), 480, yPos + 8);
 
             yPos += 25;
             
@@ -214,7 +230,6 @@ class PDFService {
                 // Перевірка чи потрібна нова сторінка
                 if (yPos > 700) {
                     doc.addPage();
-                    doc.font('Helvetica'); // Встановити шрифт знову на новій сторінці
                     yPos = 50;
                 }
                 
@@ -228,8 +243,8 @@ class PDFService {
                 
                 doc.fillColor('black')
                    .text((index + 1).toString(), 60, yPos + 5)
-                   .text(item.service_name || (userLanguage === 'en' ? 'Service' : 'Послуга'), 90, yPos + 5)
-                   .text(item.description || '', 250, yPos + 5)
+                   .text(safeText(item.service_name || (userLanguage === 'en' ? 'Service' : 'Послуга')), 90, yPos + 5)
+                   .text(safeText(item.description || ''), 250, yPos + 5)
                    .text(item.quantity.toString(), 380, yPos + 5)
                    .text(this.formatCurrency(item.unit_price, t.currency), 430, yPos + 5)
                    .text(this.formatCurrency(item.total_price, t.currency), 480, yPos + 5);
@@ -244,7 +259,7 @@ class PDFService {
         doc.fontSize(16)
            .fillColor('#2c5aa0');
            
-        doc.text(t.totalAmount, 350, yPos);
+        doc.text(safeText(t.totalAmount), 350, yPos);
         doc.text(this.formatCurrency(invoice.total_amount, t.currency), 480, yPos);
 
         // Примітки
@@ -253,18 +268,18 @@ class PDFService {
             
             doc.fontSize(12)
                .fillColor('black')
-               .text(t.notes, 50, yPos);
+               .text(safeText(t.notes), 50, yPos);
                
             doc.fontSize(10)
-               .text(invoice.notes, 50, yPos + 20, { width: pageWidth });
+               .text(safeText(invoice.notes), 50, yPos + 20, { width: pageWidth });
         }
 
         // Футер
         const footerY = doc.page.height - 100;
         doc.fontSize(8)
            .fillColor('gray')
-           .text(t.generated + ' ' + formatDate(new Date()), 50, footerY)
-           .text(company.name || '', 50, footerY + 15);
+           .text(safeText(t.generated + ' ' + formatDate(new Date())), 50, footerY)
+           .text(safeText(company.name || ''), 50, footerY + 15);
     }
 
     // Форматування валюти з підтримкою мови
