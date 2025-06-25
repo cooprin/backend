@@ -69,8 +69,8 @@ class PDFService {
                 console.error('Error loading company data:', error);
                 // Використовуємо дефолтні дані якщо не вдалося завантажити
                 companyData = {
-                    name: 'Your Company Name',
-                    address: 'Company Address',
+                    legal_name: 'Your Company Name',
+                    legal_address: 'Company Address',
                     phone: 'Company Phone',
                     email: 'company@email.com'
                 };
@@ -86,7 +86,7 @@ class PDFService {
                 autoFirstPage: true,
                 info: {
                     Title: `Invoice ${invoice.invoice_number}`,
-                    Author: companyData.name || 'Company',
+                    Author: companyData.legal_name || companyData.name || 'Company',
                     Creator: 'Invoice System'
                 }
             });
@@ -141,7 +141,7 @@ class PDFService {
         // Заголовок компанії
         doc.fontSize(20)
            .fillColor('#2c5aa0')
-           .text(company.name || 'Company Name', 50, 50, { 
+           .text(company.legal_name || company.name || 'Company Name', 50, 50, { 
                width: pageWidth * 0.6,
                align: 'left'
            });
@@ -151,8 +151,8 @@ class PDFService {
         doc.fontSize(10)
            .fillColor('black');
            
-        if (company.address) {
-            doc.text(t.address + ' ' + company.address, 50, yPos);
+        if (company.legal_address || company.address) {
+            doc.text(t.address + ' ' + (company.legal_address || company.address), 50, yPos);
             yPos += 15;
         }
         if (company.phone) {
@@ -162,6 +162,23 @@ class PDFService {
         if (company.email) {
             doc.text(t.email + ' ' + company.email, 50, yPos);
             yPos += 15;
+        }
+        
+        // Додаємо банківські реквізити
+        if (company.bank_accounts && company.bank_accounts.length > 0) {
+            const defaultBank = company.bank_accounts.find(acc => acc.is_default) || company.bank_accounts[0];
+            if (defaultBank.bank_name) {
+                doc.text('Банк: ' + defaultBank.bank_name, 50, yPos);
+                yPos += 15;
+            }
+            if (defaultBank.account_number) {
+                doc.text('Рахунок: ' + defaultBank.account_number, 50, yPos);
+                yPos += 15;
+            }
+            if (defaultBank.iban) {
+                doc.text('IBAN: ' + defaultBank.iban, 50, yPos);
+                yPos += 15;
+            }
         }
         
         // Заголовок рахунку (праворуч)
@@ -254,10 +271,17 @@ class PDFService {
                        .fill();
                 }
                 
+                // Обрізаємо текст якщо він занадто довгий
+                const serviceName = this.truncateText(
+                    item.service_name || (userLanguage === 'en' ? 'Service' : 'Послуга'), 
+                    20
+                );
+                const description = this.truncateText(item.description || '', 25);
+                
                 doc.fillColor('black')
                    .text((index + 1).toString(), 60, yPos + 5)
-                   .text(item.service_name || (userLanguage === 'en' ? 'Service' : 'Послуга'), 90, yPos + 5)
-                   .text(item.description || '', 250, yPos + 5)
+                   .text(serviceName, 90, yPos + 5)
+                   .text(description, 250, yPos + 5)
                    .text(item.quantity.toString(), 380, yPos + 5)
                    .text(this.formatCurrency(item.unit_price, t.currency), 430, yPos + 5)
                    .text(this.formatCurrency(item.total_price, t.currency), 480, yPos + 5);
@@ -284,7 +308,10 @@ class PDFService {
                .text(t.notes, 50, yPos);
                
             doc.fontSize(10)
-               .text(invoice.notes, 50, yPos + 20, { width: pageWidth });
+               .text(invoice.notes, 50, yPos + 20, { 
+                   width: pageWidth,
+                   lineGap: 5
+               });
         }
 
         // Футер
@@ -292,7 +319,14 @@ class PDFService {
         doc.fontSize(8)
            .fillColor('gray')
            .text(t.generated + ' ' + formatDate(new Date()), 50, footerY)
-           .text(company.name || '', 50, footerY + 15);
+           .text(company.legal_name || company.name || '', 50, footerY + 15);
+    }
+
+    // Функція для обрізання тексту
+    static truncateText(text, maxLength) {
+        if (!text) return '';
+        if (text.length <= maxLength) return text;
+        return text.substring(0, maxLength - 3) + '...';
     }
 
     // Форматування валюти з підтримкою мови
