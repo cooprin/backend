@@ -77,7 +77,7 @@ class PDFService {
             });
             
             // Використовуємо вбудований шрифт з підтримкою кирилиці
-            doc.font('Times-Roman');
+            doc.font('Helvetica');
             
             const chunks = [];
             
@@ -115,7 +115,7 @@ class PDFService {
         const pageWidth = doc.page.width - 100;
         
         // Встановлюємо шрифт для кирилиці та латиниці
-        doc.font('Times-Roman');
+       doc.font('Helvetica');
         
         // Заголовок компанії
         doc.fontSize(20)
@@ -214,7 +214,7 @@ class PDFService {
                 // Перевірка чи потрібна нова сторінка
                 if (yPos > 700) {
                     doc.addPage();
-                    doc.font('Times-Roman'); // Встановити шрифт знову на новій сторінці
+                    doc.font('Helvetica'); // Встановити шрифт знову на новій сторінці
                     yPos = 50;
                 }
                 

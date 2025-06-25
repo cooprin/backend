@@ -457,12 +457,14 @@ router.get('/invoice-documents/:id/download', authenticate, restrictToOwnData, a
       return res.status(404).json({ success: false, message: 'File not found' });
     }
 
-    // Set headers for download
-    res.setHeader('Content-Disposition', `attachment; filename="${document.document_name}"`);
-    res.setHeader('Content-Type', 'application/octet-stream');
 
-    // Send file
-    res.sendFile(filePath);
+// Set headers for download
+res.setHeader('Content-Disposition', `attachment; filename="${document.document_name}"`);
+res.setHeader('Content-Type', 'application/octet-stream');
+
+// Send file
+const absolutePath = path.resolve(filePath);
+res.sendFile(absolutePath);
   } catch (error) {
     console.error('Error downloading invoice document:', error);
     res.status(500).json({ success: false, message: 'Server error' });
