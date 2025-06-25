@@ -26,7 +26,6 @@ const servicesRouter = require('./routes/services');
 const paymentsRoutes = require('./routes/payments');
 const companyRouter = require('./routes/company');
 const wialonIntegrationRouter = require('./routes/wialon-integration');
-const invoiceTemplatesRouter = require('./routes/invoice-templates');
 const wialonSyncRouter = require('./routes/wialon-sync');
 const portalRoutes = require('./routes/portal');
 const ticketsRoutes = require('./routes/tickets');
@@ -71,7 +70,6 @@ app.use('/billing/payments', authenticate, staffOnly, paymentsRoutes);
 app.use('/company', authenticate, staffOnly, companyRouter);
 app.use('/wialon-integration', authenticate, staffOnly, wialonIntegrationRouter);
 app.use('/wialon-sync', authenticate, staffOnly, wialonSyncRouter);
-app.use('/invoice-templates', authenticate, staffOnly, invoiceTemplatesRouter);
 
 // Customer portal routes (clients + staff)
 app.use('/portal', portalRoutes);
