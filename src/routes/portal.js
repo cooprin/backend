@@ -4,6 +4,8 @@ const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { restrictToOwnData, staffOrClient } = require('../middleware/clientAccess');
 const PDFService = require('../services/pdfService');
+const path = require('path');
+const fs = require('fs');
 
 // Get client profile
 router.get('/profile', authenticate, restrictToOwnData, async (req, res) => {
