@@ -1,5 +1,6 @@
 const PDFDocument = require('pdfkit');
 const CompanyService = require('./company.service');
+const path = require('path');
 
 class PDFService {
     // Переклади для PDF
@@ -126,17 +127,21 @@ class PDFService {
     static generatePDFContent(doc, invoice, company, t, userLanguage) {
         const pageWidth = doc.page.width - 100;
         
-        // Функція для безпечного виводу тексту з кирилицею
-        const safeText = (text) => {
-            if (!text) return '';
-            // Конвертуємо в UTF-8 і забезпечуємо правильне кодування
-            return Buffer.from(text, 'utf8').toString('utf8');
-        };
+        // Реєструємо та встановлюємо шрифт з підтримкою кирилиці
+        try {
+            const fontPath = path.join(__dirname, '../fonts/DejaVuSans.ttf');
+            doc.registerFont('DejaVu', fontPath);
+            doc.font('DejaVu');
+            console.log('DejaVu font loaded successfully');
+        } catch (error) {
+            console.error('Error loading DejaVu font, falling back to Helvetica:', error);
+            doc.font('Helvetica');
+        }
         
         // Заголовок компанії
         doc.fontSize(20)
            .fillColor('#2c5aa0')
-           .text(safeText(company.name || 'Company Name'), 50, 50, { 
+           .text(company.name || 'Company Name', 50, 50, { 
                width: pageWidth * 0.6,
                align: 'left'
            });
@@ -147,26 +152,26 @@ class PDFService {
            .fillColor('black');
            
         if (company.address) {
-            doc.text(safeText(t.address + ' ' + company.address), 50, yPos);
+            doc.text(t.address + ' ' + company.address, 50, yPos);
             yPos += 15;
         }
         if (company.phone) {
-            doc.text(safeText(t.phone + ' ' + company.phone), 50, yPos);
+            doc.text(t.phone + ' ' + company.phone, 50, yPos);
             yPos += 15;
         }
         if (company.email) {
-            doc.text(safeText(t.email + ' ' + company.email), 50, yPos);
+            doc.text(t.email + ' ' + company.email, 50, yPos);
             yPos += 15;
         }
         
         // Заголовок рахунку (праворуч)
         doc.fontSize(24)
            .fillColor('#2c5aa0')
-           .text(safeText(t.invoice), 400, 50);
+           .text(t.invoice, 400, 50);
            
         doc.fontSize(18)
            .fillColor('black')
-           .text(safeText(t.number + ' ' + invoice.invoice_number), 400, 80);
+           .text(t.number + ' ' + invoice.invoice_number, 400, 80);
 
         // Лінія розділювач
         yPos = Math.max(yPos + 20, 120);
@@ -191,15 +196,15 @@ class PDFService {
         };
 
         // Ліва колонка - клієнт
-        doc.text(safeText(t.client), 50, yPos);
-        doc.text(safeText(invoice.client_name || 'Client Name'), 50, yPos + 20);
+        doc.text(t.client, 50, yPos);
+        doc.text(invoice.client_name || 'Client Name', 50, yPos + 20);
         
         // Права колонка - деталі рахунку
-        doc.text(safeText(t.date), 350, yPos);
+        doc.text(t.date, 350, yPos);
         doc.text(formatDate(invoice.invoice_date), 350, yPos + 20);
         
-        doc.text(safeText(t.period), 350, yPos + 40);
-        doc.text(safeText(t.months[invoice.billing_month] + ' ' + invoice.billing_year), 350, yPos + 60);
+        doc.text(t.period, 350, yPos + 40);
+        doc.text(t.months[invoice.billing_month] + ' ' + invoice.billing_year, 350, yPos + 60);
 
         yPos += 100;
 
@@ -214,12 +219,12 @@ class PDFService {
                .fill();
                
             // Заголовки колонок з перекладами
-            doc.text(safeText(t.number), 60, yPos + 8);
-            doc.text(safeText(t.service), 90, yPos + 8);
-            doc.text(safeText(t.description), 250, yPos + 8);
-            doc.text(safeText(t.quantity), 380, yPos + 8);
-            doc.text(safeText(t.price), 430, yPos + 8);
-            doc.text(safeText(t.total), 480, yPos + 8);
+            doc.text(t.number, 60, yPos + 8);
+            doc.text(t.service, 90, yPos + 8);
+            doc.text(t.description, 250, yPos + 8);
+            doc.text(t.quantity, 380, yPos + 8);
+            doc.text(t.price, 430, yPos + 8);
+            doc.text(t.total, 480, yPos + 8);
 
             yPos += 25;
             
@@ -230,6 +235,14 @@ class PDFService {
                 // Перевірка чи потрібна нова сторінка
                 if (yPos > 700) {
                     doc.addPage();
+                    // Встановити шрифт знову на новій сторінці
+                    try {
+                        const fontPath = path.join(__dirname, '../fonts/DejaVuSans.ttf');
+                        doc.registerFont('DejaVu', fontPath);
+                        doc.font('DejaVu');
+                    } catch (error) {
+                        doc.font('Helvetica');
+                    }
                     yPos = 50;
                 }
                 
@@ -243,8 +256,8 @@ class PDFService {
                 
                 doc.fillColor('black')
                    .text((index + 1).toString(), 60, yPos + 5)
-                   .text(safeText(item.service_name || (userLanguage === 'en' ? 'Service' : 'Послуга')), 90, yPos + 5)
-                   .text(safeText(item.description || ''), 250, yPos + 5)
+                   .text(item.service_name || (userLanguage === 'en' ? 'Service' : 'Послуга'), 90, yPos + 5)
+                   .text(item.description || '', 250, yPos + 5)
                    .text(item.quantity.toString(), 380, yPos + 5)
                    .text(this.formatCurrency(item.unit_price, t.currency), 430, yPos + 5)
                    .text(this.formatCurrency(item.total_price, t.currency), 480, yPos + 5);
@@ -259,7 +272,7 @@ class PDFService {
         doc.fontSize(16)
            .fillColor('#2c5aa0');
            
-        doc.text(safeText(t.totalAmount), 350, yPos);
+        doc.text(t.totalAmount, 350, yPos);
         doc.text(this.formatCurrency(invoice.total_amount, t.currency), 480, yPos);
 
         // Примітки
@@ -268,18 +281,18 @@ class PDFService {
             
             doc.fontSize(12)
                .fillColor('black')
-               .text(safeText(t.notes), 50, yPos);
+               .text(t.notes, 50, yPos);
                
             doc.fontSize(10)
-               .text(safeText(invoice.notes), 50, yPos + 20, { width: pageWidth });
+               .text(invoice.notes, 50, yPos + 20, { width: pageWidth });
         }
 
         // Футер
         const footerY = doc.page.height - 100;
         doc.fontSize(8)
            .fillColor('gray')
-           .text(safeText(t.generated + ' ' + formatDate(new Date())), 50, footerY)
-           .text(safeText(company.name || ''), 50, footerY + 15);
+           .text(t.generated + ' ' + formatDate(new Date()), 50, footerY)
+           .text(company.name || '', 50, footerY + 15);
     }
 
     // Форматування валюти з підтримкою мови
