@@ -1,372 +1,213 @@
-const puppeteer = require('puppeteer');
-const handlebars = require('handlebars');
-const { pool } = require('../database');
+const PDFDocument = require('pdfkit');
+const fs = require('fs');
+const path = require('path');
 const CompanyService = require('./company.service');
 const InvoiceTemplatesService = require('./invoice-templates.service');
 
 class PDFService {
-    // Черга для обробки PDF генерації
-    static pdfQueue = [];
-    static isProcessing = false;
-    static maxConcurrent = 1; // Максимум 1 PDF одночасно
-    static queueTimeout = 30000; // 30 секунд на один PDF
-
-    // Публічний метод для генерації PDF (з чергою)
+    // Генерація PDF для рахунку з PDFKit
     static async generateInvoicePdf(invoice, templateId = null) {
-        return new Promise((resolve, reject) => {
-            const queueItem = {
-                invoice,
-                templateId,
-                resolve,
-                reject,
-                timestamp: Date.now()
-            };
-
-            this.pdfQueue.push(queueItem);
-            console.log(`PDF queued for invoice ${invoice.id}. Queue length: ${this.pdfQueue.length}`);
-            
-            // Запускаємо обробку черги
-            this.processQueue();
-        });
-    }
-
-    // Обробка черги PDF генерації
-    static async processQueue() {
-        if (this.isProcessing || this.pdfQueue.length === 0) {
-            return;
-        }
-
-        this.isProcessing = true;
-        
         try {
-            const queueItem = this.pdfQueue.shift();
-            const { invoice, templateId, resolve, reject, timestamp } = queueItem;
-
-            console.log(`Processing PDF for invoice ${invoice.id}. Remaining in queue: ${this.pdfQueue.length}`);
-
-            // Перевірка timeout
-            if (Date.now() - timestamp > this.queueTimeout) {
-                console.log(`PDF generation timeout for invoice ${invoice.id}`);
-                reject(new Error('PDF generation timeout'));
-                return;
-            }
-
-            try {
-                const result = await this.generateInvoicePdfInternal(invoice, templateId);
-                console.log(`PDF generated successfully for invoice ${invoice.id}`);
-                resolve(result);
-            } catch (error) {
-                console.error(`PDF generation failed for invoice ${invoice.id}:`, error.message);
-                reject(error);
-            }
-
-        } catch (error) {
-            console.error('Error in PDF queue processing:', error);
-        } finally {
-            this.isProcessing = false;
-            
-            // Пауза між генераціями для зниження навантаження на CPU
-            setTimeout(() => {
-                this.processQueue();
-            }, 2000); // 2 секунди пауза
-        }
-    }
-
-    // Внутрішній метод генерації PDF
-    static async generateInvoicePdfInternal(invoice, templateId = null) {
-        let browser = null;
-        const startTime = Date.now();
-        
-        try {
-            console.log(`Starting PDF generation for invoice: ${invoice.id}`);
+            console.log('Starting PDF generation with PDFKit for invoice:', invoice.id);
             
             // Отримуємо дані компанії
-            const companyDataRaw = await CompanyService.getOrganizationDetails();
+            const companyData = await CompanyService.getOrganizationDetails();
             
-            if (!companyDataRaw) {
+            if (!companyData) {
                 throw new Error('Дані компанії не знайдено');
             }
-            
-            const companyData = {...companyDataRaw};
-            
-            // Додавання повного URL до логотипу, якщо він є
-            if (companyData.logo_path) {
-                companyData.logo_path = `${process.env.API_URL}/uploads/${companyData.logo_path}`;
-            }
-            
-            // Отримуємо шаблон
-            let template;
-            
-            if (templateId) {
-                template = await InvoiceTemplatesService.getTemplateById(templateId);
-            } else if (invoice.template_id) {
-                template = await InvoiceTemplatesService.getTemplateById(invoice.template_id);
-            } else {
-                template = await InvoiceTemplatesService.getDefaultTemplate();
-            }
-            
-            if (!template) {
-                console.log('No template found, using fallback template');
-                // Створюємо мінімальний шаблон як fallback
-                template = {
-                    html_template: `
-                        <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto;">
-                            <div style="text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px;">
-                                <h1 style="color: #333; margin: 0;">РАХУНОК №{{invoice.invoice_number}}</h1>
-                                <p style="margin: 10px 0; color: #666;">від {{formattedDate}}</p>
-                            </div>
-                            
-                            <div style="margin-bottom: 20px;">
-                                <p><strong>Клієнт:</strong> {{invoice.client_name}}</p>
-                                <p><strong>Розрахунковий період:</strong> {{invoice.billing_month}}/{{invoice.billing_year}}</p>
-                            </div>
-                            
-                            {{#if invoice.items}}
-                            <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-                                <thead>
-                                    <tr style="background: #f5f5f5;">
-                                        <th style="border: 1px solid #ddd; padding: 10px; text-align: left;">Послуга</th>
-                                        <th style="border: 1px solid #ddd; padding: 10px; text-align: left;">Опис</th>
-                                        <th style="border: 1px solid #ddd; padding: 10px; text-align: center;">Кільк.</th>
-                                        <th style="border: 1px solid #ddd; padding: 10px; text-align: right;">Ціна</th>
-                                        <th style="border: 1px solid #ddd; padding: 10px; text-align: right;">Сума</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {{#each invoice.items}}
-                                    <tr>
-                                        <td style="border: 1px solid #ddd; padding: 10px;">{{service_name}}</td>
-                                        <td style="border: 1px solid #ddd; padding: 10px;">{{description}}</td>
-                                        <td style="border: 1px solid #ddd; padding: 10px; text-align: center;">{{quantity}}</td>
-                                        <td style="border: 1px solid #ddd; padding: 10px; text-align: right;">{{formatCurrency unit_price}}</td>
-                                        <td style="border: 1px solid #ddd; padding: 10px; text-align: right;">{{formatCurrency total_price}}</td>
-                                    </tr>
-                                    {{/each}}
-                                </tbody>
-                            </table>
-                            {{/if}}
-                            
-                            <div style="margin-top: 30px; text-align: right; border-top: 2px solid #333; padding-top: 20px;">
-                                <h2 style="color: #333; margin: 0;">Загальна сума: {{formattedTotal}}</h2>
-                            </div>
-                            
-                            {{#if invoice.notes}}
-                            <div style="margin-top: 30px; padding: 15px; background: #f9f9f9; border-left: 4px solid #333;">
-                                <strong>Примітки:</strong> {{invoice.notes}}
-                            </div>
-                            {{/if}}
-                        </div>
-                    `,
-                    css_styles: ''
-                };
-            }
 
-            // Реєструємо хелпери Handlebars
-            handlebars.registerHelper('inc', function(value) {
-                return parseInt(value) + 1;
-            });
+            // Створюємо PDF документ
+            const doc = new PDFDocument({ margin: 50 });
+            const chunks = [];
             
-            handlebars.registerHelper('formatCurrency', function(value) {
-                if (value === undefined || value === null) return '0.00';
-                return parseFloat(value).toLocaleString('uk-UA', { 
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2
-                }) + ' ₴';
-            });
+            // Збираємо PDF у буфер
+            doc.on('data', chunk => chunks.push(chunk));
             
-            // Підготовка даних для шаблону
-            const templateData = {
-                invoice: invoice,
-                company: companyData,
-                currentDate: new Date().toLocaleDateString('uk-UA'),
-                formattedDate: invoice.invoice_date ? new Date(invoice.invoice_date).toLocaleDateString('uk-UA') : new Date().toLocaleDateString('uk-UA'),
-                formattedTotal: parseFloat(invoice.total_amount).toLocaleString('uk-UA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₴'
-            };
-            
-            // Компіляція шаблону
-            console.log('Compiling template...');
-            const compiledTemplate = handlebars.compile(template.html_template);
-            const html = compiledTemplate(templateData);
-            
-            // Додавання CSS і створення повного HTML
-            const fullHtml = `
-                <!DOCTYPE html>
-                <html lang="uk">
-                <head>
-                    <meta charset="utf-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <style>
-                        @page {
-                            size: A4;
-                            margin: 2cm;
-                        }
-                        
-                        ${template.css_styles || ''}
-                        
-                        * {
-                            box-sizing: border-box;
-                        }
-                        
-                        body {
-                            font-family: 'DejaVu Sans', Arial, sans-serif;
-                            padding: 0;
-                            margin: 0;
-                            font-size: 12px;
-                            line-height: 1.4;
-                            color: #333;
-                        }
-                        
-                        table {
-                            width: 100%;
-                            border-collapse: collapse;
-                            margin: 10px 0;
-                        }
-                        
-                        th, td {
-                            border: 1px solid #ddd;
-                            padding: 8px;
-                            text-align: left;
-                        }
-                        
-                        th {
-                            background-color: #f2f2f2;
-                            font-weight: bold;
-                        }
-                        
-                        .text-right {
-                            text-align: right;
-                        }
-                        
-                        .text-center {
-                            text-align: center;
-                        }
-                    </style>
-                </head>
-                <body>
-                    ${html}
-                </body>
-                </html>
-            `;
-            
-            console.log('Launching browser with CPU-optimized settings...');
-            
-            // Запуск браузера з оптимізацією для CPU
-            browser = await puppeteer.launch({
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--no-first-run',
-                    '--no-zygote',
-                    '--single-process',
-                    '--disable-gpu',
-                    '--disable-extensions',
-                    '--disable-background-timer-throttling',
-                    '--disable-renderer-backgrounding',
-                    '--disable-features=TranslateUI,VizDisplayCompositor',
-                    '--disable-backgrounding-occluded-windows',
-                    '--disable-ipc-flooding-protection',
-                    '--memory-pressure-off',
-                    '--max_old_space_size=1024',
-                    '--disable-web-security',
-                    '--disable-features=site-per-process',
-                    '--js-flags="--max-old-space-size=1024"'
-                ],
-                headless: 'new',
-                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-                timeout: 60000,
-                protocolTimeout: 60000,
-                ignoreDefaultArgs: ['--disable-extensions'],
-                dumpio: false,
-                pipe: true, // Використовувати pipe замість websocket для стабільності
-                defaultViewport: {
-                    width: 794,
-                    height: 1123
+            return new Promise((resolve, reject) => {
+                doc.on('end', () => {
+                    const pdfBuffer = Buffer.concat(chunks);
+                    console.log('PDF generated successfully with PDFKit');
+                    resolve(pdfBuffer);
+                });
+
+                doc.on('error', reject);
+
+                try {
+                    // Генеруємо контент PDF
+                    this.generatePDFContent(doc, invoice, companyData);
+                    
+                    // Завершуємо документ
+                    doc.end();
+                } catch (error) {
+                    reject(error);
                 }
             });
-            
-            console.log('Browser launched, creating new page...');
-            
-            const page = await browser.newPage();
-            
-            // Встановлюємо обмеження ресурсів для сторінки
-            await page.setCacheEnabled(false);
-            await page.setJavaScriptEnabled(false); // Вимикаємо JS для швидшості
-            
-            // Встановлюємо контент з timeout
-            console.log('Setting page content...');
-            await page.setContent(fullHtml, { 
-                waitUntil: 'domcontentloaded',
-                timeout: 30000 
-            });
-            
-            // Мінімальна затримка для стабільності
-            await page.waitForTimeout(500);
-            
-            console.log('Generating PDF...');
-            const pdfBuffer = await page.pdf({
-                format: 'A4',
-                printBackground: true,
-                margin: { 
-                    top: '2cm', 
-                    right: '2cm', 
-                    bottom: '2cm', 
-                    left: '2cm' 
-                },
-                timeout: 30000,
-                preferCSSPageSize: true
-            });
-            
-            const endTime = Date.now();
-            console.log(`PDF generated successfully in ${endTime - startTime}ms, closing browser...`);
-            
-            await browser.close();
-            browser = null;
-            
-            return pdfBuffer;
             
         } catch (error) {
-            const endTime = Date.now();
-            console.error(`PDF generation failed after ${endTime - startTime}ms:`, {
-                message: error.message,
-                stack: error.stack,
-                invoice_id: invoice?.id,
-                template_id: templateId,
-                error_type: error.constructor.name
-            });
-            
-            // Закриваємо браузер у випадку помилки
-            if (browser) {
-                try {
-                    console.log('Closing browser due to error...');
-                    await browser.close();
-                } catch (closeError) {
-                    console.error('Error closing browser:', closeError);
-                }
-            }
-            
+            console.error('Error generating PDF with PDFKit:', error);
             throw error;
         }
     }
 
-    // Статистика черги
-    static getQueueStats() {
-        return {
-            queueLength: this.pdfQueue.length,
-            isProcessing: this.isProcessing,
-            maxConcurrent: this.maxConcurrent
+    // Генерація контенту PDF
+    static generatePDFContent(doc, invoice, company) {
+        const pageWidth = doc.page.width - 100; // Враховуємо margins
+        
+        // Заголовок компанії
+        doc.fontSize(20)
+           .fillColor('#2c5aa0')
+           .text(company.name || 'Назва компанії', 50, 50);
+           
+        // Інформація про компанію
+        let yPos = 80;
+        doc.fontSize(10)
+           .fillColor('black');
+           
+        if (company.address) {
+            doc.text(`Адреса: ${company.address}`, 50, yPos);
+            yPos += 15;
+        }
+        if (company.phone) {
+            doc.text(`Телефон: ${company.phone}`, 50, yPos);
+            yPos += 15;
+        }
+        if (company.email) {
+            doc.text(`Email: ${company.email}`, 50, yPos);
+            yPos += 15;
+        }
+        
+        // Заголовок рахунку
+        doc.fontSize(24)
+           .fillColor('#2c5aa0')
+           .text('РАХУНОК', 400, 50);
+           
+        doc.fontSize(18)
+           .fillColor('black')
+           .text(`№ ${invoice.invoice_number}`, 400, 80);
+
+        // Лінія розділювач
+        yPos = Math.max(yPos + 20, 120);
+        doc.moveTo(50, yPos)
+           .lineTo(550, yPos)
+           .strokeColor('#2c5aa0')
+           .lineWidth(2)
+           .stroke();
+
+        yPos += 30;
+
+        // Інформація про рахунок
+        doc.fontSize(12)
+           .fillColor('black');
+           
+        const formatDate = (dateString) => {
+            return new Date(dateString).toLocaleDateString('uk-UA');
         };
+
+        const monthNames = {
+            1: 'Січень', 2: 'Лютий', 3: 'Березень', 4: 'Квітень',
+            5: 'Травень', 6: 'Червень', 7: 'Липень', 8: 'Серпень',
+            9: 'Вересень', 10: 'Жовтень', 11: 'Листопад', 12: 'Грудень'
+        };
+
+        // Ліва колонка - клієнт
+        doc.text('Клієнт:', 50, yPos);
+        doc.text(invoice.client_name, 50, yPos + 20);
+        
+        // Права колонка - деталі рахунку
+        doc.text('Дата:', 350, yPos);
+        doc.text(formatDate(invoice.invoice_date), 350, yPos + 20);
+        
+        doc.text('Період:', 350, yPos + 40);
+        doc.text(`${monthNames[invoice.billing_month]} ${invoice.billing_year}`, 350, yPos + 60);
+
+        yPos += 100;
+
+        // Таблиця позицій
+        if (invoice.items && invoice.items.length > 0) {
+            // Заголовок таблиці
+            doc.fontSize(10)
+               .fillColor('white');
+               
+            doc.rect(50, yPos, pageWidth, 25)
+               .fillColor('#2c5aa0')
+               .fill();
+               
+            doc.text('№', 60, yPos + 8);
+            doc.text('Послуга', 90, yPos + 8);
+            doc.text('Опис', 250, yPos + 8);
+            doc.text('Кільк.', 380, yPos + 8);
+            doc.text('Ціна', 430, yPos + 8);
+            doc.text('Сума', 480, yPos + 8);
+
+            yPos += 25;
+            
+            // Позиції таблиці
+            doc.fillColor('black');
+            
+            invoice.items.forEach((item, index) => {
+                // Перевірка чи потрібна нова сторінка
+                if (yPos > 700) {
+                    doc.addPage();
+                    yPos = 50;
+                }
+                
+                const bgColor = index % 2 === 0 ? '#f9f9f9' : 'white';
+                
+                if (bgColor === '#f9f9f9') {
+                    doc.rect(50, yPos, pageWidth, 20)
+                       .fillColor(bgColor)
+                       .fill();
+                }
+                
+                doc.fillColor('black')
+                   .text((index + 1).toString(), 60, yPos + 5)
+                   .text(item.service_name || 'Послуга', 90, yPos + 5)
+                   .text(item.description || '', 250, yPos + 5)
+                   .text(item.quantity.toString(), 380, yPos + 5)
+                   .text(this.formatCurrency(item.unit_price), 430, yPos + 5)
+                   .text(this.formatCurrency(item.total_price), 480, yPos + 5);
+                   
+                yPos += 20;
+            });
+        }
+
+        yPos += 30;
+
+        // Загальна сума
+        doc.fontSize(16)
+           .fillColor('#2c5aa0');
+           
+        doc.text('Загальна сума:', 350, yPos);
+        doc.text(this.formatCurrency(invoice.total_amount), 480, yPos);
+
+        // Примітки
+        if (invoice.notes) {
+            yPos += 50;
+            
+            doc.fontSize(12)
+               .fillColor('black')
+               .text('Примітки:', 50, yPos);
+               
+            doc.fontSize(10)
+               .text(invoice.notes, 50, yPos + 20, { width: pageWidth });
+        }
+
+        // Футер
+        const footerY = doc.page.height - 100;
+        doc.fontSize(8)
+           .fillColor('gray')
+           .text(`Рахунок згенеровано ${new Date().toLocaleDateString('uk-UA')}`, 50, footerY)
+           .text(company.name || '', 50, footerY + 15);
     }
 
-    // Очистити чергу (для аварійних ситуацій)
-    static clearQueue() {
-        console.log(`Clearing PDF queue. ${this.pdfQueue.length} items removed.`);
-        this.pdfQueue.forEach(item => {
-            item.reject(new Error('Queue cleared'));
-        });
-        this.pdfQueue = [];
-        this.isProcessing = false;
+    // Форматування валюти
+    static formatCurrency(amount) {
+        if (amount === null || amount === undefined) return '0.00 ₴';
+        return parseFloat(amount).toLocaleString('uk-UA', { 
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }) + ' ₴';
     }
 }
 
