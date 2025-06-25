@@ -331,5 +331,115 @@ router.put('/:id', authenticate, staffOnly, async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
+// Dashboard metrics routes
+
+// Get tickets metrics for dashboard
+router.get('/metrics', authenticate, staffOnly, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        COUNT(CASE WHEN status = 'open' THEN 1 END) as new_count,
+        COUNT(CASE WHEN status IN ('in_progress', 'waiting_client') THEN 1 END) as in_progress_count,
+        COUNT(CASE WHEN priority = 'urgent' AND status NOT IN ('resolved', 'closed', 'cancelled') THEN 1 END) as urgent_count,
+        COUNT(CASE WHEN status = 'resolved' AND DATE(resolved_at) = CURRENT_DATE THEN 1 END) as resolved_today_count
+      FROM tickets.tickets
+    `);
+
+    res.json({
+      success: true,
+      metrics: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error fetching tickets metrics:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get tickets status distribution for chart
+router.get('/status-distribution', authenticate, staffOnly, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        status,
+        COUNT(*) as count
+      FROM tickets.tickets
+      GROUP BY status
+      ORDER BY count DESC
+    `);
+
+    res.json({
+      success: true,
+      distribution: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching tickets status distribution:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get recent tickets
+router.get('/recent', authenticate, staffOnly, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 10;
+    
+    const result = await pool.query(`
+      SELECT 
+        t.id,
+        t.ticket_number,
+        t.title,
+        t.priority,
+        t.status,
+        t.created_at,
+        c.name as client_name
+      FROM tickets.tickets t
+      JOIN clients.clients c ON t.client_id = c.id
+      ORDER BY t.created_at DESC
+      LIMIT $1
+    `, [limit]);
+
+    res.json({
+      success: true,
+      tickets: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching recent tickets:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get tickets by category statistics
+router.get('/by-category', authenticate, staffOnly, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        tc.id as category_id,
+        tc.name as category_name,
+        tc.color as category_color,
+        COUNT(t.id) as total_count,
+        COUNT(CASE WHEN t.status = 'open' THEN 1 END) as new_count,
+        COUNT(CASE WHEN t.status IN ('in_progress', 'waiting_client') THEN 1 END) as in_progress_count,
+        COUNT(CASE WHEN t.status IN ('resolved', 'closed') THEN 1 END) as resolved_count,
+        AVG(
+          CASE 
+            WHEN t.status IN ('resolved', 'closed') AND t.resolved_at IS NOT NULL 
+            THEN EXTRACT(EPOCH FROM (t.resolved_at - t.created_at)) / 3600
+          END
+        ) as avg_resolution_time
+      FROM tickets.ticket_categories tc
+      LEFT JOIN tickets.tickets t ON tc.id = t.category_id
+      WHERE tc.is_active = true
+      GROUP BY tc.id, tc.name, tc.color
+      ORDER BY total_count DESC
+    `);
+
+    res.json({
+      success: true,
+      categories: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching tickets by category:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
 
 module.exports = router;
