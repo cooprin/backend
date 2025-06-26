@@ -24,8 +24,8 @@ router.post('/register', async (req, res) => {
     }
 
     // Хешування пароля
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    const salt = await bcryptjs.genSalt(10);
+    const hashedPassword = await bcryptjs.hash(password, salt);
 
     // Створення користувача
     const userResult = await pool.query(
@@ -47,6 +47,7 @@ router.post('/register', async (req, res) => {
     // Логування реєстрації
     await AuditService.log({
       userId: user.id,
+      userType: 'staff',
       actionType: AUDIT_LOG_TYPES.USER.CREATE,
       entityType: ENTITY_TYPES.USER,
       entityId: user.id,
@@ -104,6 +105,7 @@ router.post('/login', async (req, res) => {
         console.log('✗ Staff account inactive');
         await AuditService.log({
           userId: user.id,
+          userType: 'staff',
           actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
           entityType: ENTITY_TYPES.USER,
           entityId: user.id,
@@ -121,6 +123,7 @@ router.post('/login', async (req, res) => {
         console.log('✗ Invalid staff password');
         await AuditService.log({
           userId: user.id,
+          userType: 'staff',
           actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_FAILED,
           entityType: ENTITY_TYPES.USER,
           entityId: user.id,
@@ -153,6 +156,7 @@ router.post('/login', async (req, res) => {
       // Логування успішного входу
       await AuditService.log({
         userId: user.id,
+        userType: 'staff',
         actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_SUCCESS,
         entityType: ENTITY_TYPES.USER,
         entityId: user.id,
@@ -378,6 +382,22 @@ router.post('/login', async (req, res) => {
         
         // Якщо це помилка авторизації (401, 403) - неправильні дані
         if (authError.response?.status === 401 || authError.response?.status === 403) {
+          // Логування невдалого входу клієнта
+          await AuditService.log({
+            clientId: client.id,
+            userType: 'client',
+            actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.LOGIN_FAILED,
+            entityType: ENTITY_TYPES.CLIENT,
+            entityId: client.id,
+            newValues: { 
+              client_id: client.id, 
+              wialon_username: email,
+              reason: 'Invalid Wialon credentials'
+            },
+            ipAddress: req.ip,
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+          });
           return res.status(401).json({ message: 'Invalid credentials' });
         }
         
@@ -387,6 +407,22 @@ router.post('/login', async (req, res) => {
 
       if (!wialonToken) {
         console.log('✗ No Wialon token received - invalid credentials or service error');
+        // Логування невдалого входу клієнта
+        await AuditService.log({
+          clientId: client.id,
+          userType: 'client',
+          actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.LOGIN_FAILED,
+          entityType: ENTITY_TYPES.CLIENT,
+          entityId: client.id,
+          newValues: { 
+            client_id: client.id, 
+            wialon_username: email,
+            reason: 'No Wialon token received'
+          },
+          ipAddress: req.ip,
+          auditType: AUDIT_TYPES.BUSINESS,
+          req
+        });
         return res.status(401).json({ message: 'Invalid credentials' });
       }
 
@@ -410,6 +446,22 @@ router.post('/login', async (req, res) => {
         
         if (tokenLoginResponse.data && tokenLoginResponse.data.error) {
           console.log('✗ Token verification failed:', tokenLoginResponse.data.error);
+          // Логування невдалого входу клієнта
+          await AuditService.log({
+            clientId: client.id,
+            userType: 'client',
+            actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.LOGIN_FAILED,
+            entityType: ENTITY_TYPES.CLIENT,
+            entityId: client.id,
+            newValues: { 
+              client_id: client.id, 
+              wialon_username: email,
+              reason: 'Token verification failed'
+            },
+            ipAddress: req.ip,
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+          });
           return res.status(401).json({ message: 'Invalid credentials' });
         }
 
@@ -440,6 +492,23 @@ router.post('/login', async (req, res) => {
         );
         sessionId = sessionResult.rows[0].id;
         console.log('✓ Client session created:', sessionId);
+        
+        // Логування створення сесії
+        await AuditService.log({
+          clientId: client.id,
+          userType: 'client',
+          actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.SESSION_START,
+          entityType: ENTITY_TYPES.CLIENT_SESSION,
+          entityId: sessionId,
+          newValues: { 
+            client_id: client.id,
+            session_id: sessionId,
+            wialon_username: client.wialon_username
+          },
+          ipAddress: req.ip,
+          auditType: AUDIT_TYPES.BUSINESS,
+          req
+        });
       } catch (sessionError) {
         console.log('⚠ Session creation failed:', sessionError.message);
         // Таблиця сесій не існує - продовжуємо без неї
@@ -459,14 +528,17 @@ router.post('/login', async (req, res) => {
         { expiresIn: '30d' } // відповідає терміну дії Wialon токена
       );
 
+      // Логування успішного входу клієнта
       await AuditService.log({
-        // userId: null, // не передаємо для клієнтів
-        actionType: AUDIT_LOG_TYPES.AUTH.LOGIN_SUCCESS,
-        entityType: 'CLIENT',
-        entityId: client.id, // передаємо ID клієнта
+        clientId: client.id,
+        userType: 'client',
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.LOGIN,
+        entityType: ENTITY_TYPES.CLIENT,
+        entityId: client.id,
         newValues: { 
           client_id: client.id, 
-          wialon_username: email 
+          wialon_username: email,
+          client_name: client.name 
         },
         ipAddress: req.ip,
         auditType: AUDIT_TYPES.BUSINESS,

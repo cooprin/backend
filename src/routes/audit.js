@@ -18,6 +18,7 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
             actionType,
             entityType,
             auditType,
+            userType,
             dateFrom,
             dateTo,
             search,
@@ -72,6 +73,12 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
             paramIndex++;
         }
 
+        if (userType) {
+        conditions.push(`al.user_type = $${paramIndex}`);
+        params.push(userType);
+        paramIndex++;
+        }   
+
         if (dateFrom) {
             conditions.push(`al.created_at >= $${paramIndex}::timestamp`);
             params.push(dateFrom);
@@ -119,32 +126,42 @@ router.get('/', authenticate, checkPermission('audit.read'), async (req, res) =>
         const baseQuery = `
             FROM audit.audit_logs al
             LEFT JOIN auth.users u ON al.user_id = u.id
+            LEFT JOIN clients.clients c ON al.client_id = c.id
             ${whereClause}
         `;
 
         const countQuery = `SELECT COUNT(*) ${baseQuery}`;
 
-        let logsQuery = `
-            SELECT 
-                al.id,
-                al.user_id,
-                al.action_type,
-                al.entity_type,
-                al.entity_id,
-                al.old_values,
-                al.new_values,
-                al.changes,
-                al.ip_address,
-                al.browser_info,
-                al.user_agent,
-                al.table_schema,
-                al.table_name,
-                al.audit_type,
-                al.created_at,
-                u.email as user_email
-            ${baseQuery}
-            ORDER BY al.${sortBy} ${orderDirection}
-        `;
+       let logsQuery = `
+        SELECT 
+            al.id,
+            al.user_id,
+            al.client_id,
+            al.user_type,
+            al.action_type,
+            al.entity_type,
+            al.entity_id,
+            al.old_values,
+            al.new_values,
+            al.changes,
+            al.ip_address,
+            al.browser_info,
+            al.user_agent,
+            al.table_schema,
+            al.table_name,
+            al.audit_type,
+            al.created_at,
+            u.email as user_email,
+            c.name as client_name,
+            c.email as client_email,
+            CASE 
+                WHEN al.user_type = 'staff' THEN u.email
+                WHEN al.user_type = 'client' THEN c.name
+                ELSE 'System'
+            END as display_name
+        ${baseQuery}
+        ORDER BY al.${sortBy} ${orderDirection}
+    `;
 
         if (perPage) {
             logsQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
