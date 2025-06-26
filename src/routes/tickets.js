@@ -164,11 +164,19 @@ router.get('/', authenticate, staffOrClient, async (req, res) => {
     }
 
     // Add additional filters
-    if (req.query.status) {
-      whereClause += paramCount > 0 ? ' AND ' : ' WHERE ';
-      whereClause += `t.status = $${++paramCount}`;
-      queryParams.push(req.query.status);
-    }
+if (req.query.status) {
+  whereClause += paramCount > 0 ? ' AND ' : ' WHERE ';
+  
+  // Handle both single status and array of statuses
+  if (Array.isArray(req.query.status)) {
+    const statusPlaceholders = req.query.status.map((_, index) => `$${++paramCount}`).join(',');
+    whereClause += `t.status IN (${statusPlaceholders})`;
+    queryParams.push(...req.query.status);
+  } else {
+    whereClause += `t.status = $${++paramCount}`;
+    queryParams.push(req.query.status);
+  }
+}
 
     if (req.query.priority) {
       whereClause += paramCount > 0 ? ' AND ' : ' WHERE ';
