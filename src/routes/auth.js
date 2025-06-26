@@ -654,4 +654,83 @@ router.get('/me', authenticate, async (req, res) => {
   }
 });
 
+// Logout route
+router.post('/logout', authenticate, async (req, res) => {
+  try {
+    if (req.user.userType === 'staff') {
+      // Логування логауту для staff
+      await AuditService.log({
+        userId: req.user.userId,
+        userType: 'staff',
+        actionType: AUDIT_LOG_TYPES.AUTH.LOGOUT,
+        entityType: ENTITY_TYPES.USER,
+        entityId: req.user.userId,
+        newValues: {
+          user_id: req.user.userId,
+          email: req.user.email
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } else if (req.user.userType === 'client') {
+      // Завершення сесії клієнта (якщо таблиця існує)
+      if (req.user.sessionId) {
+        try {
+          await pool.query(
+            'UPDATE customer_portal.client_sessions SET ended_at = CURRENT_TIMESTAMP WHERE id = $1',
+            [req.user.sessionId]
+          );
+
+          // Логування завершення сесії
+          await AuditService.log({
+            clientId: req.user.clientId,
+            userType: 'client',
+            actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.SESSION_END,
+            entityType: ENTITY_TYPES.CLIENT_SESSION,
+            entityId: req.user.sessionId,
+            newValues: {
+              client_id: req.user.clientId,
+              session_id: req.user.sessionId,
+              wialon_username: req.user.wialonUsername
+            },
+            ipAddress: req.ip,
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+          });
+        } catch (sessionError) {
+          console.log('Session update failed:', sessionError.message);
+        }
+      }
+
+      // Логування логауту клієнта
+      await AuditService.log({
+        clientId: req.user.clientId,
+        userType: 'client',
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.LOGOUT,
+        entityType: ENTITY_TYPES.CLIENT,
+        entityId: req.user.clientId,
+        newValues: {
+          client_id: req.user.clientId,
+          wialon_username: req.user.wialonUsername
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    }
+
+    res.json({ 
+      success: true, 
+      message: 'Logged out successfully' 
+    });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error during logout' 
+    });
+  }
+});
+
 module.exports = router;

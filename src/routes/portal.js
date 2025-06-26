@@ -39,12 +39,13 @@ router.get('/profile', authenticate, restrictToOwnData, async (req, res) => {
       await AuditService.log({
         clientId: req.user.clientId,
         userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.PROFILE_VIEW,
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_PROFILE,
         entityType: ENTITY_TYPES.CLIENT,
         entityId: req.user.clientId,
         newValues: {
-          action: 'profile_view',
-          client_id: req.user.clientId
+          action: 'view_profile',
+          client_id: req.user.clientId,
+          client_name: result.rows[0].name
         },
         ipAddress: req.ip,
         auditType: AUDIT_TYPES.BUSINESS,
@@ -342,10 +343,10 @@ router.get('/invoices/:id/items', authenticate, restrictToOwnData, async (req, r
         entityType: ENTITY_TYPES.INVOICE,
         entityId: invoiceId,
         newValues: {
-          action: 'view_invoice_items',
+          action: 'view_invoice_details',
           client_id: req.user.clientId,
           invoice_id: invoiceId,
-          items_count: result.rows.length
+          invoice_number: invoice.invoice_number
         },
         ipAddress: req.ip,
         auditType: AUDIT_TYPES.BUSINESS,
@@ -387,7 +388,7 @@ router.get('/documents', authenticate, restrictToOwnData, async (req, res) => {
       await AuditService.log({
         clientId: req.user.clientId,
         userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.PROFILE_VIEW,
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_DOCUMENTS,
         entityType: ENTITY_TYPES.CLIENT_DOCUMENT,
         entityId: null,
         newValues: {
@@ -428,7 +429,7 @@ router.get('/payment-status', authenticate, restrictToOwnData, async (req, res) 
       await AuditService.log({
         clientId: req.user.clientId,
         userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.PROFILE_VIEW,
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_PAYMENT_STATUS,
         entityType: ENTITY_TYPES.CLIENT,
         entityId: req.user.clientId,
         newValues: {
@@ -662,7 +663,7 @@ router.get('/invoice-documents/:id/download', authenticate, restrictToOwnData, a
       await AuditService.log({
         clientId: req.user.clientId,
         userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_INVOICES,
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.DOWNLOAD_DOCUMENT,
         entityType: ENTITY_TYPES.INVOICE,
         entityId: documentId,
         newValues: {
