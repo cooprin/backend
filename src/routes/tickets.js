@@ -535,24 +535,37 @@ router.post('/', authenticate, staffOrClient, async (req, res) => {
 
     await client.query('COMMIT');
 
-    // Audit log only for staff actions
-    if (req.user.userType === 'staff') {
-      try {
-        await AuditService.log({
-          userId: req.user.userId,
-          actionType: 'TICKET_CREATE',
-          entityType: 'TICKET',
-          entityId: ticket.id,
-          newValues: ticket,
-          ipAddress: req.ip,
-          auditType: AUDIT_TYPES.BUSINESS,
-          req
-        });
-      } catch (auditError) {
-        console.error('Audit log failed:', auditError);
-        // Don't fail the request if audit fails
-      }
-    }
+
+// Audit log for both staff and clients
+try {
+  if (req.user.userType === 'staff') {
+    await AuditService.log({
+      userId: req.user.userId,
+      userType: 'staff',
+      actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.CREATE_TICKET,
+      entityType: ENTITY_TYPES.TICKET,
+      entityId: ticket.id,
+      newValues: ticket,
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
+    });
+  } else {
+    await AuditService.log({
+      clientId: req.user.clientId,
+      userType: 'client',
+      actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.CREATE_TICKET,
+      entityType: ENTITY_TYPES.TICKET,
+      entityId: ticket.id,
+      newValues: ticket,
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
+    });
+  }
+} catch (auditError) {
+  console.error('Audit log failed:', auditError);
+}
 
     res.status(201).json({
       success: true,

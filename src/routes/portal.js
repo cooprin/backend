@@ -3,6 +3,8 @@ const router = express.Router();
 const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { restrictToOwnData, staffOrClient } = require('../middleware/clientAccess');
+const AuditService = require('../services/auditService');
+const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
 const PDFService = require('../services/pdfService');
 const path = require('path');
 const fs = require('fs');
@@ -30,6 +32,26 @@ router.get('/profile', authenticate, restrictToOwnData, async (req, res) => {
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Client not found' });
+    }
+
+    // Log client profile view
+    try {
+      await AuditService.log({
+        clientId: req.user.clientId,
+        userType: 'client',
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.PROFILE_VIEW,
+        entityType: ENTITY_TYPES.CLIENT,
+        entityId: req.user.clientId,
+        newValues: {
+          action: 'profile_view',
+          client_id: req.user.clientId
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } catch (auditError) {
+      console.error('Audit log failed:', auditError);
     }
 
     res.json({
@@ -61,6 +83,27 @@ router.get('/objects', authenticate, restrictToOwnData, async (req, res) => {
        ORDER BY o.name`,
       [req.user.clientId]
     );
+
+    // Log client objects view
+    try {
+      await AuditService.log({
+        clientId: req.user.clientId,
+        userType: 'client',
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_OBJECTS,
+        entityType: ENTITY_TYPES.WIALON_OBJECT,
+        entityId: null,
+        newValues: {
+          action: 'view_objects',
+          client_id: req.user.clientId,
+          objects_count: result.rows.length
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } catch (auditError) {
+      console.error('Audit log failed:', auditError);
+    }
 
     res.json({
       success: true,
@@ -144,6 +187,30 @@ router.get('/invoices', authenticate, restrictToOwnData, async (req, res) => {
     const total = parseInt(countResult.rows[0].count);
     const totalPages = Math.ceil(total / limit);
 
+    // Log client invoices view
+    try {
+      await AuditService.log({
+        clientId: req.user.clientId,
+        userType: 'client',
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_INVOICES,
+        entityType: ENTITY_TYPES.INVOICE,
+        entityId: null,
+        newValues: {
+          action: 'view_invoices',
+          client_id: req.user.clientId,
+          filters: req.query,
+          page,
+          limit,
+          total_found: total
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } catch (auditError) {
+      console.error('Audit log failed:', auditError);
+    }
+
     res.json({
       success: true,
       invoices: result.rows,
@@ -202,6 +269,28 @@ router.get('/invoices/:id', authenticate, restrictToOwnData, async (req, res) =>
     const itemsResult = await pool.query(itemsQuery, [invoiceId]);
     invoice.items = itemsResult.rows;
 
+    // Log client invoice view
+    try {
+      await AuditService.log({
+        clientId: req.user.clientId,
+        userType: 'client',
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_INVOICES,
+        entityType: ENTITY_TYPES.INVOICE,
+        entityId: invoiceId,
+        newValues: {
+          action: 'view_invoice_details',
+          client_id: req.user.clientId,
+          invoice_id: invoiceId,
+          invoice_number: invoice.invoice_number
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } catch (auditError) {
+      console.error('Audit log failed:', auditError);
+    }
+
     res.json({
       success: true,
       invoice
@@ -244,6 +333,28 @@ router.get('/invoices/:id/items', authenticate, restrictToOwnData, async (req, r
 
     const result = await pool.query(itemsQuery, [invoiceId]);
 
+    // Log invoice items view
+    try {
+      await AuditService.log({
+        clientId: req.user.clientId,
+        userType: 'client',
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_INVOICES,
+        entityType: ENTITY_TYPES.INVOICE,
+        entityId: invoiceId,
+        newValues: {
+          action: 'view_invoice_items',
+          client_id: req.user.clientId,
+          invoice_id: invoiceId,
+          items_count: result.rows.length
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } catch (auditError) {
+      console.error('Audit log failed:', auditError);
+    }
+
     res.json({
       success: true,
       items: result.rows
@@ -271,6 +382,27 @@ router.get('/documents', authenticate, restrictToOwnData, async (req, res) => {
       [req.user.clientId]
     );
 
+    // Log client documents view
+    try {
+      await AuditService.log({
+        clientId: req.user.clientId,
+        userType: 'client',
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.PROFILE_VIEW,
+        entityType: ENTITY_TYPES.CLIENT_DOCUMENT,
+        entityId: null,
+        newValues: {
+          action: 'view_documents',
+          client_id: req.user.clientId,
+          documents_count: result.rows.length
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } catch (auditError) {
+      console.error('Audit log failed:', auditError);
+    }
+
     res.json({
       success: true,
       documents: result.rows
@@ -290,6 +422,26 @@ router.get('/payment-status', authenticate, restrictToOwnData, async (req, res) 
 
     const ClientService = require('../services/clients.service');
     const paymentInfo = await ClientService.getClientPaymentInfo(req.user.clientId);
+    
+    // Log payment status view
+    try {
+      await AuditService.log({
+        clientId: req.user.clientId,
+        userType: 'client',
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.PROFILE_VIEW,
+        entityType: ENTITY_TYPES.CLIENT,
+        entityId: req.user.clientId,
+        newValues: {
+          action: 'view_payment_status',
+          client_id: req.user.clientId
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } catch (auditError) {
+      console.error('Audit log failed:', auditError);
+    }
     
     res.json({
       success: true,
@@ -371,6 +523,30 @@ router.get('/tickets', authenticate, restrictToOwnData, async (req, res) => {
     const total = parseInt(countResult.rows[0].count);
     const totalPages = Math.ceil(total / limit);
 
+    // Log client tickets view
+    try {
+      await AuditService.log({
+        clientId: req.user.clientId,
+        userType: 'client',
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_TICKETS,
+        entityType: ENTITY_TYPES.TICKET,
+        entityId: null,
+        newValues: {
+          action: 'view_tickets',
+          client_id: req.user.clientId,
+          filters: req.query,
+          page,
+          limit,
+          total_found: total
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } catch (auditError) {
+      console.error('Audit log failed:', auditError);
+    }
+
     res.json({
       success: true,
       tickets: result.rows,
@@ -417,6 +593,28 @@ router.get('/invoices/:id/documents', authenticate, restrictToOwnData, async (re
 
     const result = await pool.query(documentsQuery, [invoiceId]);
 
+    // Log invoice documents view
+    try {
+      await AuditService.log({
+        clientId: req.user.clientId,
+        userType: 'client',
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_INVOICES,
+        entityType: ENTITY_TYPES.INVOICE,
+        entityId: invoiceId,
+        newValues: {
+          action: 'view_invoice_documents',
+          client_id: req.user.clientId,
+          invoice_id: invoiceId,
+          documents_count: result.rows.length
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } catch (auditError) {
+      console.error('Audit log failed:', auditError);
+    }
+
     res.json({
       success: true,
       documents: result.rows
@@ -459,14 +657,35 @@ router.get('/invoice-documents/:id/download', authenticate, restrictToOwnData, a
       return res.status(404).json({ success: false, message: 'File not found' });
     }
 
+    // Log document download
+    try {
+      await AuditService.log({
+        clientId: req.user.clientId,
+        userType: 'client',
+        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_INVOICES,
+        entityType: ENTITY_TYPES.INVOICE,
+        entityId: documentId,
+        newValues: {
+          action: 'download_invoice_document',
+          client_id: req.user.clientId,
+          document_id: documentId,
+          document_name: document.document_name
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } catch (auditError) {
+      console.error('Audit log failed:', auditError);
+    }
 
-// Set headers for download
-res.setHeader('Content-Disposition', `attachment; filename="${document.document_name}"`);
-res.setHeader('Content-Type', 'application/octet-stream');
+    // Set headers for download
+    res.setHeader('Content-Disposition', `attachment; filename="${document.document_name}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
 
-// Send file
-const absolutePath = path.resolve(filePath);
-res.sendFile(absolutePath);
+    // Send file
+    const absolutePath = path.resolve(filePath);
+    res.sendFile(absolutePath);
   } catch (error) {
     console.error('Error downloading invoice document:', error);
     res.status(500).json({ success: false, message: 'Server error' });
