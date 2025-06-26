@@ -3,7 +3,7 @@ const multer = require('multer');
 const { pool } = require('../database');
 const path = require('path');
 const fs = require('fs').promises;
-const bcrypt = require('bcrypt');
+const bcryptjs = require('bcryptjs');
 const AuditService = require('../services/auditService');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
@@ -135,8 +135,8 @@ router.post('/', authenticate, checkPermission('users.create'), async (req, res)
      });
    }
 
-   const salt = await bcrypt.genSalt(10);
-   const hashedPassword = await bcrypt.hash(password, salt);
+   const salt = await bcryptjs.genSalt(10);
+   const hashedPassword = await bcryptjs.hash(password, salt);
    
    const userResult = await client.query(
      `INSERT INTO auth.users (
@@ -410,8 +410,8 @@ router.put('/:id/password', authenticate, checkPermission('users.update'), async
     }
 
     // Hash new password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    const salt = await bcryptjs.genSalt(10);
+    const hashedPassword = await bcryptjs.hash(password, salt);
     
     // Update password
     await client.query(

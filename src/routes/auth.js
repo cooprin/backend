@@ -8,6 +8,64 @@ const authenticate = require('../middleware/auth');
 const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
 const axios = require('axios');
 
+// Register
+router.post('/register', async (req, res) => {
+  try {
+    const { email, password, first_name, last_name, phone } = req.body;
+    
+    // Перевірка існування користувача
+    const userCheck = await pool.query(
+      'SELECT * FROM auth.users WHERE email = $1',
+      [email]
+    );
+
+    if (userCheck.rows.length > 0) {
+      return res.status(400).json({ message: 'User already exists!' });
+    }
+
+    // Хешування пароля
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Створення користувача
+    const userResult = await pool.query(
+      `INSERT INTO auth.users (email, password, first_name, last_name, phone) 
+       VALUES ($1, $2, $3, $4, $5) 
+       RETURNING id, email, first_name, last_name, phone`,
+      [email, hashedPassword, first_name, last_name, phone]
+    );
+
+    const user = userResult.rows[0];
+
+    // Призначення ролі за замовчуванням
+    await pool.query(
+      `INSERT INTO auth.user_roles (user_id, role_id)
+       SELECT $1, id FROM auth.roles WHERE name = 'user'`,
+      [user.id]
+    );
+
+    // Логування реєстрації
+    await AuditService.log({
+      userId: user.id,
+      actionType: AUDIT_LOG_TYPES.USER.CREATE,
+      entityType: ENTITY_TYPES.USER,
+      entityId: user.id,
+      newValues: { email, first_name, last_name, phone },
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
+    });
+
+    res.status(201).json({
+      message: 'User registered successfully',
+      user
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Login
 router.post('/login', async (req, res) => {
   try {
