@@ -4,7 +4,7 @@ const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { staffOrClient } = require('../middleware/clientAccess');
 const AuditService = require('../services/auditService');
-const { AUDIT_TYPES } = require('../constants/constants');
+const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
 
 // Get comments for a ticket
 router.get('/ticket/:ticketId', authenticate, staffOrClient, async (req, res) => {
@@ -129,47 +129,67 @@ router.post('/ticket/:ticketId', authenticate, staffOrClient, async (req, res) =
       );
     }
 
-  // Audit log for both staff and clients
-  try {
-    if (req.user.userType === 'staff') {
-      await AuditService.log({
-        userId: req.user.userId,
-        userType: 'staff',
-        actionType: AUDIT_LOG_TYPES.TICKET.COMMENT_ADD,
-        entityType: ENTITY_TYPES.TICKET_COMMENT,
-        entityId: comment.id,
-        newValues: {
-          ticket_id: ticketId,
-          comment_text: comment.comment_text,
-          is_internal: comment.is_internal,
-          comment_id: comment.id
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } else {
-      await AuditService.log({
-        clientId: req.user.clientId,
-        userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.ADD_COMMENT,
-        entityType: ENTITY_TYPES.TICKET_COMMENT,
-        entityId: comment.id,
-        newValues: {
-          ticket_id: ticketId,
-          comment_text: comment.comment_text,
-          comment_id: comment.id,
-          client_id: req.user.clientId
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    }
-  } catch (auditError) {
-    console.error('Audit log failed:', auditError);
+// Audit log for both staff and clients
+try {
+  console.log('=== AUDIT LOG DEBUG ===');
+  console.log('User type:', req.user.userType);
+  console.log('User data:', req.user);
+  console.log('Comment data:', comment);
+  
+  if (req.user.userType === 'staff') {
+    console.log('Logging as STAFF with actionType:', AUDIT_LOG_TYPES.CLIENT_PORTAL.ADD_COMMENT);
+    
+    await AuditService.log({
+      userId: req.user.userId,
+      userType: 'staff',
+      actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.ADD_COMMENT,
+      entityType: ENTITY_TYPES.TICKET_COMMENT,
+      entityId: comment.id,
+      newValues: {
+        ticket_id: ticketId,
+        comment_text: comment.comment_text,
+        is_internal: comment.is_internal,
+        comment_id: comment.id,
+        created_by: createdBy,
+        created_by_type: createdByType
+      },
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
+    });
+    
+    console.log('✓ Staff audit log successful');
+  } else {
+    console.log('Logging as CLIENT with actionType:', AUDIT_LOG_TYPES.CLIENT_PORTAL.ADD_COMMENT);
+    
+    await AuditService.log({
+      clientId: req.user.clientId,
+      userType: 'client', 
+      actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.ADD_COMMENT,
+      entityType: ENTITY_TYPES.TICKET_COMMENT,
+      entityId: comment.id,
+      newValues: {
+        ticket_id: ticketId,
+        comment_text: comment.comment_text,
+        comment_id: comment.id,
+        client_id: req.user.clientId,
+        created_by: createdBy,
+        created_by_type: createdByType
+      },
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
+    });
+    
+    console.log('✓ Client audit log successful');
   }
-
+} catch (auditError) {
+  console.error('❌ Audit log failed:', auditError);
+  console.error('Error details:', {
+    message: auditError.message,
+    stack: auditError.stack
+  });
+}
     res.status(201).json({
       success: true,
       comment: {
@@ -216,45 +236,48 @@ router.put('/:id', authenticate, staffOrClient, async (req, res) => {
     }
 
 
-  // Audit log for both staff and clients
   try {
-    if (req.user.userType === 'staff') {
-      await AuditService.log({
-        userId: req.user.userId,
-        userType: 'staff',
-        actionType: AUDIT_LOG_TYPES.TICKET.COMMENT_UPDATE,
-        entityType: ENTITY_TYPES.TICKET_COMMENT,
-        entityId: id,
-        newValues: {
-          comment_id: id,
-          comment_text: result.rows[0].comment_text,
-          updated_at: result.rows[0].updated_at
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } else {
-      await AuditService.log({
-        clientId: req.user.clientId,
-        userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.UPDATE_COMMENT,
-        entityType: ENTITY_TYPES.TICKET_COMMENT,
-        entityId: id,
-        newValues: {
-          comment_id: id,
-          comment_text: result.rows[0].comment_text,
-          updated_at: result.rows[0].updated_at,
-          client_id: req.user.clientId
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    }
-  } catch (auditError) {
-    console.error('Audit log failed:', auditError);
+  console.log('=== UPDATE COMMENT AUDIT LOG ===');
+  console.log('User type:', req.user.userType);
+  
+  if (req.user.userType === 'staff') {
+    await AuditService.log({
+      userId: req.user.userId,
+      userType: 'staff',
+      actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.UPDATE_COMMENT,
+      entityType: ENTITY_TYPES.TICKET_COMMENT,
+      entityId: id,
+      newValues: {
+        comment_id: id,
+        comment_text: result.rows[0].comment_text,
+        updated_at: result.rows[0].updated_at
+      },
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
+    });
+  } else {
+    await AuditService.log({
+      clientId: req.user.clientId,
+      userType: 'client',
+      actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.UPDATE_COMMENT,
+      entityType: ENTITY_TYPES.TICKET_COMMENT,
+      entityId: id,
+      newValues: {
+        comment_id: id,
+        comment_text: result.rows[0].comment_text,
+        updated_at: result.rows[0].updated_at,
+        client_id: req.user.clientId
+      },
+      ipAddress: req.ip,
+      auditType: AUDIT_TYPES.BUSINESS,
+      req
+    });
   }
+} catch (auditError) {
+  console.error('Update comment audit log failed:', auditError);
+}
+
 
     res.json({
       success: true,
@@ -290,47 +313,52 @@ router.delete('/:id', authenticate, staffOrClient, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Comment not found or access denied' });
     }
 
-  // Audit log for both staff and clients
-  try {
-    if (req.user.userType === 'staff') {
-      await AuditService.log({
-        userId: req.user.userId,
-        userType: 'staff',
-        actionType: AUDIT_LOG_TYPES.TICKET.COMMENT_DELETE,
-        entityType: ENTITY_TYPES.TICKET_COMMENT,
-        entityId: id,
-        oldValues: {
-          comment_id: id,
-          comment_text: result.rows[0].comment_text,
-          ticket_id: result.rows[0].ticket_id,
-          created_by: result.rows[0].created_by,
-          created_by_type: result.rows[0].created_by_type
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } else {
-      await AuditService.log({
-        clientId: req.user.clientId,
-        userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.DELETE_COMMENT,
-        entityType: ENTITY_TYPES.TICKET_COMMENT,
-        entityId: id,
-        oldValues: {
-          comment_id: id,
-          comment_text: result.rows[0].comment_text,
-          ticket_id: result.rows[0].ticket_id,
-          client_id: req.user.clientId
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
+    // ОДИН БЛОК АУДИТУ (видалити дублювання):
+    try {
+      console.log('=== DELETE COMMENT AUDIT LOG ===');
+      console.log('User type:', req.user.userType);
+      
+      if (req.user.userType === 'staff') {
+        await AuditService.log({
+          userId: req.user.userId,
+          userType: 'staff',
+          actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.DELETE_COMMENT, // ← виправлено
+          entityType: ENTITY_TYPES.TICKET_COMMENT,
+          entityId: id,
+          oldValues: {
+            comment_id: id,
+            comment_text: result.rows[0].comment_text,
+            ticket_id: result.rows[0].ticket_id,
+            created_by: result.rows[0].created_by,
+            created_by_type: result.rows[0].created_by_type
+          },
+          ipAddress: req.ip,
+          auditType: AUDIT_TYPES.BUSINESS,
+          req
+        });
+        console.log('✓ Staff delete audit log successful');
+      } else {
+        await AuditService.log({
+          clientId: req.user.clientId,
+          userType: 'client',
+          actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.DELETE_COMMENT,
+          entityType: ENTITY_TYPES.TICKET_COMMENT,
+          entityId: id,
+          oldValues: {
+            comment_id: id,
+            comment_text: result.rows[0].comment_text,
+            ticket_id: result.rows[0].ticket_id,
+            client_id: req.user.clientId
+          },
+          ipAddress: req.ip,
+          auditType: AUDIT_TYPES.BUSINESS,
+          req
+        });
+        console.log('✓ Client delete audit log successful');
+      }
+    } catch (auditError) {
+      console.error('❌ Delete comment audit log failed:', auditError);
     }
-  } catch (auditError) {
-    console.error('Audit log failed:', auditError);
-  }
 
     res.json({
       success: true,
