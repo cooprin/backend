@@ -988,4 +988,42 @@ router.post('/bulk-priority', authenticate, staffOnly, async (req, res) => {
   }
 });
 
+router.get('/staff', authenticate, staffOnly, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT 
+        u.id, 
+        u.first_name, 
+        u.last_name, 
+        u.email,
+        u.is_active,
+        COALESCE(array_agg(DISTINCT r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[]) as roles
+       FROM auth.users u 
+       LEFT JOIN auth.user_roles ur ON u.id = ur.user_id
+       LEFT JOIN auth.roles r ON ur.role_id = r.id
+       WHERE u.is_active = true
+       GROUP BY u.id, u.first_name, u.last_name, u.email, u.is_active
+       ORDER BY u.first_name, u.last_name`
+    );
+
+    const staff = result.rows.map(user => ({
+      id: user.id,
+      label: `${user.first_name} ${user.last_name}`,
+      value: user.id,
+      email: user.email,
+      roles: user.roles || [],
+      // Додаткова інформація для відображення навантаження
+      department: (user.roles && user.roles.includes('admin')) ? 'Administration' : 'Support'
+    }));
+
+    res.json({
+      success: true,
+      staff
+    });
+  } catch (error) {
+    console.error('Error fetching staff:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 module.exports = router;
