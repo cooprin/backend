@@ -30,6 +30,8 @@ const wialonSyncRouter = require('./routes/wialon-sync');
 const portalRoutes = require('./routes/portal');
 const ticketsRoutes = require('./routes/tickets');
 const ticketCommentsRoutes = require('./routes/ticket-comments');
+const notificationsRoutes = require('./routes/notifications');
+const chatRoutes = require('./routes/chat');
 
 const app = express();
 app.set('trust proxy', true);
@@ -75,6 +77,8 @@ app.use('/wialon-sync', authenticate, staffOnly, wialonSyncRouter);
 app.use('/portal', portalRoutes);
 app.use('/tickets', ticketsRoutes);
 app.use('/ticket-comments', ticketCommentsRoutes);
+app.use('/notifications', authenticate, notificationsRoutes);
+app.use('/chat', authenticate, chatRoutes);
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
@@ -91,8 +95,24 @@ app.get('/health', async (req, res) => {
 // Database setup and server start
 setupDatabase()
   .then(() => {
-    app.listen(port, () => {
+    const server = require('http').createServer(app);
+    const io = require('socket.io')(server, {
+      cors: {
+        origin: process.env.CORS_ORIGIN,
+        credentials: true
+      }
+    });
+
+    // Підключаємо Socket.io логіку
+    require('./socket/socketHandler')(io);
+
+    // Підключаємо PostgreSQL notification слухач
+    const { setupNotificationListener } = require('./socket/notificationListener');
+    setupNotificationListener();
+
+    server.listen(port, () => {
       console.log(`Server running on port ${port}`);
+      console.log(`WebSocket server ready`);
     });
   })
   .catch(err => {
