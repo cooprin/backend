@@ -183,6 +183,305 @@ router.get('/categories', authenticate, staffOrClient, async (req, res) => {
   }
 });
 
+// Bulk assign tickets
+router.post('/bulk-assign', authenticate, staffOnly, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { ticket_ids, assigned_to, comment, notify_assignee, notify_clients, new_status } = req.body;
+
+    if (!ticket_ids || !Array.isArray(ticket_ids) || ticket_ids.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'ticket_ids array is required' 
+      });
+    }
+
+    if (!assigned_to) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'assigned_to is required' 
+      });
+    }
+
+    // Build update query
+    let updateFields = ['assigned_to = $1', 'updated_at = CURRENT_TIMESTAMP'];
+    let updateParams = [assigned_to];
+    let paramCount = 1;
+
+    if (new_status) {
+      updateFields.push(`status = $${++paramCount}`);
+      updateParams.push(new_status);
+    }
+
+    // Update all tickets
+    const placeholders = ticket_ids.map((_, index) => `$${++paramCount}`).join(',');
+    updateParams.push(...ticket_ids);
+
+    const result = await client.query(
+      `UPDATE tickets.tickets 
+       SET ${updateFields.join(', ')}
+       WHERE id IN (${placeholders})
+       RETURNING *`,
+      updateParams
+    );
+
+    // Add comments if provided
+    if (comment) {
+      for (const ticketId of ticket_ids) {
+        await client.query(
+          `INSERT INTO tickets.ticket_comments 
+           (ticket_id, comment_text, created_by, created_by_type, is_internal)
+           VALUES ($1, $2, $3, 'staff', true)`,
+          [ticketId, comment, req.user.userId]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+
+    try {
+      await AuditService.log({
+        userId: req.user.userId,
+        userType: 'staff',
+        actionType: AUDIT_LOG_TYPES.TICKET.ASSIGN,
+        entityType: ENTITY_TYPES.TICKET,
+        entityId: null,
+        newValues: {
+          action: 'bulk_assign',
+          ticket_ids: ticket_ids,
+          assigned_to: assigned_to,
+          new_status: new_status,
+          updated_count: result.rows.length,
+          comment: comment || null
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } catch (auditError) {
+      console.error('Audit log failed:', auditError);
+    }
+
+    res.json({
+      success: true,
+      updated_count: result.rows.length,
+      tickets: result.rows
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error bulk assigning tickets:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// Bulk update status
+router.post('/bulk-status', authenticate, staffOnly, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { ticket_ids, new_status, comment, set_resolved_date, set_closed_date } = req.body;
+
+    if (!ticket_ids || !Array.isArray(ticket_ids) || ticket_ids.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'ticket_ids array is required' 
+      });
+    }
+
+    if (!new_status) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'new_status is required' 
+      });
+    }
+
+    // Build update query
+    let updateFields = ['status = $1', 'updated_at = CURRENT_TIMESTAMP'];
+    let updateParams = [new_status];
+    let paramCount = 1;
+
+    if (new_status === 'resolved' && set_resolved_date) {
+      updateFields.push('resolved_at = CURRENT_TIMESTAMP');
+      updateFields.push(`resolved_by = $${++paramCount}`);
+      updateParams.push(req.user.userId);
+    }
+
+    if (new_status === 'closed' && set_closed_date) {
+      updateFields.push('closed_at = CURRENT_TIMESTAMP');
+      updateFields.push(`closed_by = $${++paramCount}`);
+      updateParams.push(req.user.userId);
+    }
+
+    // Update all tickets
+    const placeholders = ticket_ids.map((_, index) => `$${++paramCount}`).join(',');
+    updateParams.push(...ticket_ids);
+
+    const result = await client.query(
+      `UPDATE tickets.tickets 
+       SET ${updateFields.join(', ')}
+       WHERE id IN (${placeholders})
+       RETURNING *`,
+      updateParams
+    );
+
+    // Add comments if provided
+    if (comment) {
+      for (const ticketId of ticket_ids) {
+        await client.query(
+          `INSERT INTO tickets.ticket_comments 
+           (ticket_id, comment_text, created_by, created_by_type, is_internal)
+           VALUES ($1, $2, $3, 'staff', true)`,
+          [ticketId, comment, req.user.userId]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+
+    try {
+      await AuditService.log({
+        userId: req.user.userId,
+        userType: 'staff',
+        actionType: AUDIT_LOG_TYPES.TICKET.STATUS_CHANGE,
+        entityType: ENTITY_TYPES.TICKET,
+        entityId: null,
+        newValues: {
+          action: 'bulk_status_change',
+          ticket_ids: ticket_ids,
+          new_status: new_status,
+          updated_count: result.rows.length,
+          comment: comment || null,
+          set_resolved_date,
+          set_closed_date
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } catch (auditError) {
+      console.error('Audit log failed:', auditError);
+    }
+
+    res.json({
+      success: true,
+      updated_count: result.rows.length,
+      tickets: result.rows
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error bulk updating status:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// Bulk update priority
+router.post('/bulk-priority', authenticate, staffOnly, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { ticket_ids, new_priority, reason, custom_due_date } = req.body;
+
+    if (!ticket_ids || !Array.isArray(ticket_ids) || ticket_ids.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'ticket_ids array is required' 
+      });
+    }
+
+    if (!new_priority) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'new_priority is required' 
+      });
+    }
+
+    // Build update query
+    let updateFields = ['priority = $1', 'updated_at = CURRENT_TIMESTAMP'];
+    let updateParams = [new_priority];
+    let paramCount = 1;
+
+    if (custom_due_date) {
+      updateFields.push(`due_date = $${++paramCount}`);
+      updateParams.push(custom_due_date);
+    }
+
+    // Update all tickets
+    const placeholders = ticket_ids.map((_, index) => `$${++paramCount}`).join(',');
+    updateParams.push(...ticket_ids);
+
+    const result = await client.query(
+      `UPDATE tickets.tickets 
+       SET ${updateFields.join(', ')}
+       WHERE id IN (${placeholders})
+       RETURNING *`,
+      updateParams
+    );
+
+    // Add reason as comment if provided
+    if (reason) {
+      for (const ticketId of ticket_ids) {
+        await client.query(
+          `INSERT INTO tickets.ticket_comments 
+           (ticket_id, comment_text, created_by, created_by_type, is_internal)
+           VALUES ($1, $2, $3, 'staff', true)`,
+          [ticketId, `Priority changed to ${new_priority}: ${reason}`, req.user.userId]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+
+    try {
+      await AuditService.log({
+        userId: req.user.userId,
+        userType: 'staff',
+        actionType: AUDIT_LOG_TYPES.TICKET.UPDATE,
+        entityType: ENTITY_TYPES.TICKET,
+        entityId: null,
+        newValues: {
+          action: 'bulk_priority_change',
+          ticket_ids: ticket_ids,
+          new_priority: new_priority,
+          updated_count: result.rows.length,
+          reason: reason || null,
+          custom_due_date: custom_due_date || null
+        },
+        ipAddress: req.ip,
+        auditType: AUDIT_TYPES.BUSINESS,
+        req
+      });
+    } catch (auditError) {
+      console.error('Audit log failed:', auditError);
+    }
+
+    res.json({
+      success: true,
+      updated_count: result.rows.length,
+      tickets: result.rows
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error bulk updating priority:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
 // Get tickets
 router.get('/', authenticate, staffOrClient, async (req, res) => {
   try {
@@ -726,306 +1025,6 @@ router.put('/:id', authenticate, staffOnly, async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
-
-// Bulk assign tickets
-router.post('/bulk-assign', authenticate, staffOnly, async (req, res) => {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const { ticket_ids, assigned_to, comment, notify_assignee, notify_clients, new_status } = req.body;
-
-    if (!ticket_ids || !Array.isArray(ticket_ids) || ticket_ids.length === 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ 
-        success: false, 
-        message: 'ticket_ids array is required' 
-      });
-    }
-
-    if (!assigned_to) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ 
-        success: false, 
-        message: 'assigned_to is required' 
-      });
-    }
-
-    // Build update query
-    let updateFields = ['assigned_to = $1', 'updated_at = CURRENT_TIMESTAMP'];
-    let updateParams = [assigned_to];
-    let paramCount = 1;
-
-    if (new_status) {
-      updateFields.push(`status = $${++paramCount}`);
-      updateParams.push(new_status);
-    }
-
-    // Update all tickets
-    const placeholders = ticket_ids.map((_, index) => `$${++paramCount}`).join(',');
-    updateParams.push(...ticket_ids);
-
-    const result = await client.query(
-      `UPDATE tickets.tickets 
-       SET ${updateFields.join(', ')}
-       WHERE id IN (${placeholders})
-       RETURNING *`,
-      updateParams
-    );
-
-    // Add comments if provided
-    if (comment) {
-      for (const ticketId of ticket_ids) {
-        await client.query(
-          `INSERT INTO tickets.ticket_comments 
-           (ticket_id, comment_text, created_by, created_by_type, is_internal)
-           VALUES ($1, $2, $3, 'staff', true)`,
-          [ticketId, comment, req.user.userId]
-        );
-      }
-    }
-
-    await client.query('COMMIT');
-
-    try {
-      await AuditService.log({
-        userId: req.user.userId,
-        userType: 'staff',
-        actionType: AUDIT_LOG_TYPES.TICKET.ASSIGN,
-        entityType: ENTITY_TYPES.TICKET,
-        entityId: null,
-        newValues: {
-          action: 'bulk_assign',
-          ticket_ids: ticket_ids,
-          assigned_to: assigned_to,
-          new_status: new_status,
-          updated_count: result.rows.length,
-          comment: comment || null
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } catch (auditError) {
-      console.error('Audit log failed:', auditError);
-    }
-
-    res.json({
-      success: true,
-      updated_count: result.rows.length,
-      tickets: result.rows
-    });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Error bulk assigning tickets:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  } finally {
-    client.release();
-  }
-});
-
-// Bulk update status
-router.post('/bulk-status', authenticate, staffOnly, async (req, res) => {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const { ticket_ids, new_status, comment, set_resolved_date, set_closed_date } = req.body;
-
-    if (!ticket_ids || !Array.isArray(ticket_ids) || ticket_ids.length === 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ 
-        success: false, 
-        message: 'ticket_ids array is required' 
-      });
-    }
-
-    if (!new_status) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ 
-        success: false, 
-        message: 'new_status is required' 
-      });
-    }
-
-    // Build update query
-    let updateFields = ['status = $1', 'updated_at = CURRENT_TIMESTAMP'];
-    let updateParams = [new_status];
-    let paramCount = 1;
-
-    if (new_status === 'resolved' && set_resolved_date) {
-      updateFields.push('resolved_at = CURRENT_TIMESTAMP');
-      updateFields.push(`resolved_by = $${++paramCount}`);
-      updateParams.push(req.user.userId);
-    }
-
-    if (new_status === 'closed' && set_closed_date) {
-      updateFields.push('closed_at = CURRENT_TIMESTAMP');
-      updateFields.push(`closed_by = $${++paramCount}`);
-      updateParams.push(req.user.userId);
-    }
-
-    // Update all tickets
-    const placeholders = ticket_ids.map((_, index) => `$${++paramCount}`).join(',');
-    updateParams.push(...ticket_ids);
-
-    const result = await client.query(
-      `UPDATE tickets.tickets 
-       SET ${updateFields.join(', ')}
-       WHERE id IN (${placeholders})
-       RETURNING *`,
-      updateParams
-    );
-
-    // Add comments if provided
-    if (comment) {
-      for (const ticketId of ticket_ids) {
-        await client.query(
-          `INSERT INTO tickets.ticket_comments 
-           (ticket_id, comment_text, created_by, created_by_type, is_internal)
-           VALUES ($1, $2, $3, 'staff', true)`,
-          [ticketId, comment, req.user.userId]
-        );
-      }
-    }
-
-    await client.query('COMMIT');
-
-    try {
-      await AuditService.log({
-        userId: req.user.userId,
-        userType: 'staff',
-        actionType: AUDIT_LOG_TYPES.TICKET.STATUS_CHANGE,
-        entityType: ENTITY_TYPES.TICKET,
-        entityId: null,
-        newValues: {
-          action: 'bulk_status_change',
-          ticket_ids: ticket_ids,
-          new_status: new_status,
-          updated_count: result.rows.length,
-          comment: comment || null,
-          set_resolved_date,
-          set_closed_date
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } catch (auditError) {
-      console.error('Audit log failed:', auditError);
-    }
-
-    res.json({
-      success: true,
-      updated_count: result.rows.length,
-      tickets: result.rows
-    });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Error bulk updating status:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  } finally {
-    client.release();
-  }
-});
-
-// Bulk update priority
-router.post('/bulk-priority', authenticate, staffOnly, async (req, res) => {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const { ticket_ids, new_priority, reason, custom_due_date } = req.body;
-
-    if (!ticket_ids || !Array.isArray(ticket_ids) || ticket_ids.length === 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ 
-        success: false, 
-        message: 'ticket_ids array is required' 
-      });
-    }
-
-    if (!new_priority) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ 
-        success: false, 
-        message: 'new_priority is required' 
-      });
-    }
-
-    // Build update query
-    let updateFields = ['priority = $1', 'updated_at = CURRENT_TIMESTAMP'];
-    let updateParams = [new_priority];
-    let paramCount = 1;
-
-    if (custom_due_date) {
-      updateFields.push(`due_date = $${++paramCount}`);
-      updateParams.push(custom_due_date);
-    }
-
-    // Update all tickets
-    const placeholders = ticket_ids.map((_, index) => `$${++paramCount}`).join(',');
-    updateParams.push(...ticket_ids);
-
-    const result = await client.query(
-      `UPDATE tickets.tickets 
-       SET ${updateFields.join(', ')}
-       WHERE id IN (${placeholders})
-       RETURNING *`,
-      updateParams
-    );
-
-    // Add reason as comment if provided
-    if (reason) {
-      for (const ticketId of ticket_ids) {
-        await client.query(
-          `INSERT INTO tickets.ticket_comments 
-           (ticket_id, comment_text, created_by, created_by_type, is_internal)
-           VALUES ($1, $2, $3, 'staff', true)`,
-          [ticketId, `Priority changed to ${new_priority}: ${reason}`, req.user.userId]
-        );
-      }
-    }
-
-    await client.query('COMMIT');
-
-    try {
-      await AuditService.log({
-        userId: req.user.userId,
-        userType: 'staff',
-        actionType: AUDIT_LOG_TYPES.TICKET.UPDATE,
-        entityType: ENTITY_TYPES.TICKET,
-        entityId: null,
-        newValues: {
-          action: 'bulk_priority_change',
-          ticket_ids: ticket_ids,
-          new_priority: new_priority,
-          updated_count: result.rows.length,
-          reason: reason || null,
-          custom_due_date: custom_due_date || null
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } catch (auditError) {
-      console.error('Audit log failed:', auditError);
-    }
-
-    res.json({
-      success: true,
-      updated_count: result.rows.length,
-      tickets: result.rows
-    });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error('Error bulk updating priority:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  } finally {
-    client.release();
-  }
-});
-
 
 
 module.exports = router;
