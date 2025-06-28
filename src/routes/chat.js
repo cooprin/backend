@@ -284,17 +284,17 @@ router.post('/rooms/:roomId/messages', authenticate, staffOrClient, upload.array
     }
 
     // Real-time відправка повідомлення через Socket.io
-if (global.socketIO) {
-  global.socketIO.emitToChatRoom(roomId, 'new_message', {
-    message: {
-      ...message,
-      sender_name: senderName,
-      files,
-      files_count: files.length
-    },
-    room_id: roomId
-  });
-}
+    if (global.socketIO) {
+      global.socketIO.emitToChatRoom(roomId, 'new_message', {
+        message: {
+          ...message,
+          sender_name: senderName,
+          files,
+          files_count: files.length
+        },
+        room_id: roomId
+      });
+    }
 
     res.status(201).json({
       success: true,
@@ -508,13 +508,14 @@ router.patch('/rooms/:roomId/assign', authenticate, staffOrClient, async (req, r
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Chat room not found' });
     }
-// Real-time сповіщення про призначення
-if (global.socketIO) {
-  global.socketIO.emitToUser(staffId, 'chat_assigned', {
-    room_id: roomId,
-    message: 'Вам призначено новий чат'
-  });
-}
+
+    // Real-time сповіщення про призначення
+    if (global.socketIO) {
+      global.socketIO.emitToUser(staffId, 'chat_assigned', {
+        room_id: roomId,
+        message: 'Вам призначено новий чат'
+      });
+    }
 
     res.json({
       success: true,
@@ -530,12 +531,12 @@ if (global.socketIO) {
 // STAFF CHAT MANAGEMENT ENDPOINTS
 // ===========================================
 
-// ===========================================
-// STAFF CHAT MANAGEMENT ENDPOINTS
-// ===========================================
-
 // Get all chat rooms for staff (with filters and pagination)
-router.get('/staff/rooms', authenticate, staffOnly, async (req, res) => {
+router.get('/staff/rooms', authenticate, async (req, res) => {
+  if (req.user.userType !== 'staff') {
+    return res.status(403).json({ success: false, message: 'Access denied' });
+  }
+  
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
@@ -688,7 +689,11 @@ router.get('/staff/rooms', authenticate, staffOnly, async (req, res) => {
 });
 
 // Get chat metrics for staff dashboard
-router.get('/staff/metrics', authenticate, staffOnly, async (req, res) => {
+router.get('/staff/metrics', authenticate, async (req, res) => {
+  if (req.user.userType !== 'staff') {
+    return res.status(403).json({ success: false, message: 'Access denied' });
+  }
+  
   try {
     const result = await pool.query(`
       SELECT 
@@ -754,7 +759,11 @@ router.get('/staff/metrics', authenticate, staffOnly, async (req, res) => {
 });
 
 // Bulk assign chats
-router.post('/staff/bulk-assign', authenticate, staffOnly, async (req, res) => {
+router.post('/staff/bulk-assign', authenticate, async (req, res) => {
+  if (req.user.userType !== 'staff') {
+    return res.status(403).json({ success: false, message: 'Access denied' });
+  }
+  
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -810,7 +819,11 @@ router.post('/staff/bulk-assign', authenticate, staffOnly, async (req, res) => {
 });
 
 // Bulk close chats
-router.post('/staff/bulk-close', authenticate, staffOnly, async (req, res) => {
+router.post('/staff/bulk-close', authenticate, async (req, res) => {
+  if (req.user.userType !== 'staff') {
+    return res.status(403).json({ success: false, message: 'Access denied' });
+  }
+  
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -869,7 +882,11 @@ router.post('/staff/bulk-close', authenticate, staffOnly, async (req, res) => {
 });
 
 // Search in chats and messages
-router.get('/staff/search', authenticate, staffOnly, async (req, res) => {
+router.get('/staff/search', authenticate, async (req, res) => {
+  if (req.user.userType !== 'staff') {
+    return res.status(403).json({ success: false, message: 'Access denied' });
+  }
+  
   try {
     const { query, search_type = 'all', limit = 20 } = req.query;
 
@@ -955,7 +972,11 @@ router.get('/staff/search', authenticate, staffOnly, async (req, res) => {
 });
 
 // Get specific chat room by ID for staff
-router.get('/staff/rooms/:roomId', authenticate, staffOnly, async (req, res) => {
+router.get('/staff/rooms/:roomId', authenticate, async (req, res) => {
+  if (req.user.userType !== 'staff') {
+    return res.status(403).json({ success: false, message: 'Access denied' });
+  }
+  
   try {
     const { roomId } = req.params;
 
@@ -1012,39 +1033,13 @@ router.get('/staff/rooms/:roomId', authenticate, staffOnly, async (req, res) => 
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
-  try {
-    const result = await pool.query(`
-      SELECT 
-        u.id,
-        u.first_name || ' ' || u.last_name as name,
-        u.email,
-        COUNT(cr.id) as active_chats,
-        u.is_active
-      FROM auth.users u
-      LEFT JOIN chat.chat_rooms cr ON u.id = cr.assigned_staff_id AND cr.room_status = 'active'
-      WHERE u.is_active = true
-      AND EXISTS (
-        SELECT 1 FROM auth.user_roles ur
-        JOIN auth.role_permissions rp ON ur.role_id = rp.role_id
-        JOIN auth.permissions p ON rp.permission_id = p.id
-        WHERE ur.user_id = u.id AND p.code = 'chat.read'
-      )
-      GROUP BY u.id, u.first_name, u.last_name, u.email, u.is_active
-      ORDER BY active_chats ASC, u.first_name ASC
-    `);
-
-    res.json({
-      success: true,
-      staff: result.rows
-    });
-  } catch (error) {
-    console.error('Error fetching available staff:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
 
 // Get available staff for assignment
-router.get('/staff/available', authenticate, staffOnly, async (req, res) => {
+router.get('/staff/available', authenticate, async (req, res) => {
+  if (req.user.userType !== 'staff') {
+    return res.status(403).json({ success: false, message: 'Access denied' });
+  }
+  
   try {
     const result = await pool.query(`
       SELECT 
@@ -1075,7 +1070,5 @@ router.get('/staff/available', authenticate, staffOnly, async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
-
-
 
 module.exports = router;
