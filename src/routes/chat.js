@@ -42,6 +42,42 @@ const upload = multer({
   }
 });
 
+// NEW: Get active chat for client
+router.get('/active', authenticate, restrictToOwnData, async (req, res) => {
+  try {
+    if (req.user.userType !== 'client') {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const result = await pool.query(
+      `SELECT 
+        cr.id, cr.client_id, cr.ticket_id, cr.room_type, cr.assigned_staff_id,
+        cr.room_status, cr.last_message_at, cr.created_at,
+        t.ticket_number, t.title as ticket_title,
+        u.first_name || ' ' || u.last_name as assigned_staff_name,
+        COUNT(cm.id) FILTER (WHERE cm.is_read = false AND cm.sender_type = 'staff') as unread_staff_messages
+      FROM chat.chat_rooms cr
+      LEFT JOIN tickets.tickets t ON cr.ticket_id = t.id
+      LEFT JOIN auth.users u ON cr.assigned_staff_id = u.id
+      LEFT JOIN chat.chat_messages cm ON cr.id = cm.room_id
+      WHERE cr.client_id = $1 AND cr.room_status = 'active'
+      GROUP BY cr.id, t.ticket_number, t.title, u.first_name, u.last_name
+      ORDER BY cr.last_message_at DESC NULLS LAST, cr.created_at DESC
+      LIMIT 1`,
+      [req.user.clientId]
+    );
+
+    res.json({
+      success: true,
+      activeRoom: result.rows.length > 0 ? result.rows[0] : null,
+      hasActiveChat: result.rows.length > 0
+    });
+  } catch (error) {
+    console.error('Error fetching active chat:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 // Get chat rooms for client
 router.get('/rooms', authenticate, restrictToOwnData, async (req, res) => {
   try {
@@ -52,7 +88,7 @@ router.get('/rooms', authenticate, restrictToOwnData, async (req, res) => {
     const result = await pool.query(
       `SELECT 
         cr.id, cr.client_id, cr.ticket_id, cr.room_type, cr.assigned_staff_id,
-        cr.is_active, cr.last_message_at, cr.created_at,
+        cr.room_status, cr.last_message_at, cr.created_at,
         t.ticket_number, t.title as ticket_title,
         u.first_name || ' ' || u.last_name as assigned_staff_name,
         COUNT(cm.id) FILTER (WHERE cm.is_read = false AND cm.sender_type = 'staff') as unread_staff_messages
@@ -76,8 +112,9 @@ router.get('/rooms', authenticate, restrictToOwnData, async (req, res) => {
   }
 });
 
-// Create new chat room
+// MODIFIED: Create new chat room with active chat check
 router.post('/rooms', authenticate, restrictToOwnData, async (req, res) => {
+  const client = await pool.connect();
   try {
     if (req.user.userType !== 'client') {
       return res.status(403).json({ success: false, message: 'Access denied' });
@@ -85,14 +122,32 @@ router.post('/rooms', authenticate, restrictToOwnData, async (req, res) => {
 
     const { room_type = 'support', ticket_id } = req.body;
 
+    await client.query('BEGIN');
+
+    // Check if client already has an active chat
+    const existingChatCheck = await client.query(
+      'SELECT id FROM chat.chat_rooms WHERE client_id = $1 AND room_status = $2',
+      [req.user.clientId, 'active']
+    );
+
+    if (existingChatCheck.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'У вас вже є активний чат з підтримкою',
+        existingRoomId: existingChatCheck.rows[0].id
+      });
+    }
+
     // Validate ticket belongs to client if specified
     if (ticket_id) {
-      const ticketCheck = await pool.query(
+      const ticketCheck = await client.query(
         'SELECT id FROM tickets.tickets WHERE id = $1 AND client_id = $2',
         [ticket_id, req.user.clientId]
       );
       
       if (ticketCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
         return res.status(400).json({ 
           success: false, 
           message: 'Ticket not found or access denied' 
@@ -100,20 +155,25 @@ router.post('/rooms', authenticate, restrictToOwnData, async (req, res) => {
       }
     }
 
-    const result = await pool.query(
-      `INSERT INTO chat.chat_rooms (client_id, ticket_id, room_type)
-       VALUES ($1, $2, $3)
+    const result = await client.query(
+      `INSERT INTO chat.chat_rooms (client_id, ticket_id, room_type, room_status)
+       VALUES ($1, $2, $3, 'active')
        RETURNING *`,
       [req.user.clientId, ticket_id, room_type]
     );
+
+    await client.query('COMMIT');
 
     res.status(201).json({
       success: true,
       room: result.rows[0]
     });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Error creating chat room:', error);
     res.status(500).json({ success: false, message: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 
@@ -185,7 +245,7 @@ router.get('/rooms/:roomId/messages', authenticate, staffOrClient, async (req, r
 
     res.json({
       success: true,
-      messages: result.rows, // Прибрали .reverse() - тепер повідомлення в правильному порядку
+      messages: result.rows,
       pagination: {
         page,
         limit,
@@ -555,6 +615,76 @@ router.patch('/rooms/:roomId/assign', authenticate, staffOrClient, async (req, r
   } catch (error) {
     console.error('Error assigning chat room:', error);
     res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Delete chat room (staff only)
+router.delete('/rooms/:roomId', authenticate, async (req, res) => {
+  if (req.user.userType !== 'staff') {
+    return res.status(403).json({ success: false, message: 'Access denied' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { roomId } = req.params;
+
+    // Check if room exists
+    const roomCheck = await client.query(
+      'SELECT id, client_id FROM chat.chat_rooms WHERE id = $1',
+      [roomId]
+    );
+
+    if (roomCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, message: 'Chat room not found' });
+    }
+
+    // Delete files first (cascade will handle DB, but we need to clean filesystem)
+    const filesResult = await client.query(
+      `SELECT cf.file_path 
+       FROM chat.chat_files cf
+       JOIN chat.chat_messages cm ON cf.message_id = cm.id
+       WHERE cm.room_id = $1`,
+      [roomId]
+    );
+
+    // Delete physical files
+    for (const file of filesResult.rows) {
+      const filePath = path.join(process.env.UPLOAD_DIR, file.file_path);
+      if (fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (err) {
+          console.error('Error deleting file:', filePath, err);
+        }
+      }
+    }
+
+    // Delete chat room (cascade will handle messages and files)
+    await client.query('DELETE FROM chat.chat_rooms WHERE id = $1', [roomId]);
+
+    await client.query('COMMIT');
+
+    // Real-time notification about chat deletion
+    if (global.socketIO) {
+      global.socketIO.emitToChatRoom(roomId, 'chat_deleted', {
+        room_id: roomId,
+        message: 'Chat has been deleted by staff'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Chat room deleted successfully'
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error deleting chat room:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 
