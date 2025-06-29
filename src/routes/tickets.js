@@ -1016,6 +1016,13 @@ router.put('/:id', authenticate, staffOnly, async (req, res) => {
       console.error('Audit log failed:', auditError);
     }
 
+    // Real-time сповіщення про оновлення заявки через Socket.io
+    if (global.socketIO) {
+      global.socketIO.emitTicketUpdate(req.params.id, result.rows[0]);
+      
+      console.log(`✅ Emitted ticket update for ticket ${req.params.id}`);
+    }
+
     res.json({
       success: true,
       ticket: result.rows[0]

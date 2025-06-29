@@ -4,6 +4,7 @@ const { pool } = require('../database');
 // Зберігаємо активні з'єднання
 const activeConnections = new Map(); // userId -> socketId
 const staffRooms = new Map(); // socketId -> Set of room IDs
+const ticketRooms = new Map(); // socketId -> Set of ticket IDs
 
 // Middleware для аутентифікації Socket.io
 const authenticateSocket = async (socket, next) => {
@@ -69,6 +70,7 @@ module.exports = (io) => {
 
     // Обробники подій
     setupChatHandlers(io, socket);
+    setupTicketHandlers(io, socket);
     setupNotificationHandlers(io, socket);
 
     // Відключення
@@ -76,6 +78,7 @@ module.exports = (io) => {
       console.log(`User ${socket.user.email} disconnected`);
       activeConnections.delete(socket.user.id);
       staffRooms.delete(socket.id);
+      ticketRooms.delete(socket.id);
     });
   });
 
@@ -96,7 +99,22 @@ module.exports = (io) => {
       activeConnections.forEach((socketId, userId) => {
         io.to(`user_${userId}`).emit(event, data);
       });
-    }
+    },
+    emitToTicketRoom: (ticketId, event, data) => {
+      io.to(`ticket_${ticketId}`).emit(event, data);
+    },
+    emitTicketUpdate: (ticketId, updates) => {
+      io.to(`ticket_${ticketId}`).emit('ticket_updated', {
+        ticket_id: ticketId,
+        updates: updates
+      });
+    },
+    emitTicketCommentAdded: (ticketId, comment) => {
+      io.to(`ticket_${ticketId}`).emit('ticket_comment_added', {
+        ticket_id: ticketId,
+        comment: comment
+      });
+}
   };
 
   console.log('Socket.io server initialized');
@@ -186,6 +204,62 @@ function setupChatHandlers(io, socket) {
       userId: socket.user.id,
       userType: socket.user.userType
     });
+  });
+}
+
+// Обробники для заявок
+function setupTicketHandlers(io, socket) {
+  // Приєднання до кімнати заявки
+  socket.on('join_ticket_room', async (ticketId) => {
+    try {
+      // Перевіряємо доступ до заявки залежно від типу користувача
+      let ticketCheck;
+      if (socket.user.userType === 'client') {
+        ticketCheck = await pool.query(
+          'SELECT id FROM tickets.tickets WHERE id = $1 AND client_id = $2',
+          [ticketId, socket.user.id]
+        );
+      } else {
+        ticketCheck = await pool.query(
+          'SELECT id FROM tickets.tickets WHERE id = $1',
+          [ticketId]
+        );
+      }
+
+      if (ticketCheck.rows.length > 0) {
+        socket.join(`ticket_${ticketId}`);
+        
+        // Зберігаємо заявки
+        if (!ticketRooms.has(socket.id)) {
+          ticketRooms.set(socket.id, new Set());
+        }
+        ticketRooms.get(socket.id).add(ticketId);
+
+        const userName = socket.user.userType === 'client' ? 
+          socket.user.name : 
+          `${socket.user.first_name} ${socket.user.last_name}`;
+
+        console.log(`User ${userName} (${socket.user.userType}) joined ticket room ${ticketId}`);
+      }
+    } catch (error) {
+      console.error('Error joining ticket room:', error);
+      socket.emit('error', { message: 'Failed to join ticket room' });
+    }
+  });
+
+  // Покидання кімнати заявки
+  socket.on('leave_ticket_room', (ticketId) => {
+    socket.leave(`ticket_${ticketId}`);
+    
+    if (ticketRooms.has(socket.id)) {
+      ticketRooms.get(socket.id).delete(ticketId);
+    }
+
+    const userName = socket.user.userType === 'client' ? 
+      socket.user.name : 
+      `${socket.user.first_name} ${socket.user.last_name}`;
+
+    console.log(`User ${userName} left ticket room ${ticketId}`);
   });
 }
 
