@@ -1122,15 +1122,12 @@ static async getOverdueMetrics() {
                 FROM wialon.objects o
                 WHERE o.status = 'active'
             ),
-            valid_periods AS (
-                -- Генеруємо тільки валідні періоди між датою початку обслуговування та поточним місяцем
+            all_periods AS (
+                -- Генеруємо всі періоди для кожного об'єкта
                 SELECT 
                     o.id as object_id,
-                    period_date,
-                    t.price
+                    period_date
                 FROM wialon.objects o
-                JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
-                JOIN billing.tariffs t ON ot.tariff_id = t.id
                 JOIN object_start_dates osd ON o.id = osd.object_id,
                 LATERAL (
                     SELECT generate_series(
@@ -1143,8 +1140,54 @@ static async getOverdueMetrics() {
                     ) as period_date
                 ) dates
                 WHERE o.status = 'active'
-                  AND period_date >= date_trunc('month', osd.start_date)
-                  AND period_date <= date_trunc('month', COALESCE(ot.effective_to, '9999-12-31'::date))
+                AND period_date >= date_trunc('month', osd.start_date)
+            ),
+            period_tariffs AS (
+                -- Для кожного періоду знаходимо всі тарифи що діяли в цьому місяці
+                SELECT 
+                    ap.object_id,
+                    ap.period_date,
+                    ot.tariff_id,
+                    t.price,
+                    -- Рахуємо кількість днів в місяці для кожного тарифу
+                    EXTRACT(days FROM 
+                        LEAST(
+                            ap.period_date + interval '1 month',
+                            COALESCE(ot.effective_to, '9999-12-31'::date)
+                        ) - GREATEST(
+                            ap.period_date,
+                            ot.effective_from::date
+                        )
+                    ) as days_count
+                FROM all_periods ap
+                JOIN billing.object_tariffs ot ON ap.object_id = ot.object_id
+                JOIN billing.tariffs t ON ot.tariff_id = t.id
+                WHERE 
+                    -- Тариф діяв в цьому періоді
+                    ot.effective_from::date < ap.period_date + interval '1 month'
+                    AND COALESCE(ot.effective_to, '9999-12-31'::date) > ap.period_date
+            ),
+            majority_tariffs AS (
+                -- Вибираємо тариф з найбільшою кількістю днів для кожного періоду
+                SELECT 
+                    object_id,
+                    period_date,
+                    price,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY object_id, period_date 
+                        ORDER BY days_count DESC, tariff_id DESC
+                    ) as rn
+                FROM period_tariffs
+                WHERE days_count > 0
+            ),
+            valid_periods AS (
+                -- Періоди з тарифами більшості
+                SELECT 
+                    object_id,
+                    period_date,
+                    price
+                FROM majority_tariffs
+                WHERE rn = 1
             ),
             paid_periods AS (
                 -- Всі оплачені періоди
@@ -1190,7 +1233,6 @@ static async getOverdueMetrics() {
         // Кількість клієнтів з об'єктами, що мають прострочені платежі
         const objectClientsCountQuery = `
             WITH object_start_dates AS (
-                -- Отримуємо для кожного об'єкта дату призначення клієнту або встановлення тарифу (що пізніше)
                 SELECT 
                     o.id as object_id,
                     GREATEST(
@@ -1200,15 +1242,13 @@ static async getOverdueMetrics() {
                 FROM wialon.objects o
                 WHERE o.status = 'active'
             ),
-            valid_periods AS (
-                -- Генеруємо тільки валідні періоди
+            all_periods AS (
                 SELECT 
                     o.id as object_id,
                     o.client_id,
                     period_date
                 FROM wialon.objects o
-                JOIN object_start_dates osd ON o.id = osd.object_id
-                JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL,
+                JOIN object_start_dates osd ON o.id = osd.object_id,
                 LATERAL (
                     SELECT generate_series(
                         GREATEST(
@@ -1220,11 +1260,54 @@ static async getOverdueMetrics() {
                     ) as period_date
                 ) dates
                 WHERE o.status = 'active'
-                  AND period_date >= date_trunc('month', osd.start_date)
-                  AND period_date <= date_trunc('month', COALESCE(ot.effective_to, '9999-12-31'::date))
+                AND period_date >= date_trunc('month', osd.start_date)
+            ),
+            period_tariffs AS (
+                SELECT 
+                    ap.object_id,
+                    ap.client_id,
+                    ap.period_date,
+                    ot.tariff_id,
+                    t.price,
+                    EXTRACT(days FROM 
+                        LEAST(
+                            ap.period_date + interval '1 month',
+                            COALESCE(ot.effective_to, '9999-12-31'::date)
+                        ) - GREATEST(
+                            ap.period_date,
+                            ot.effective_from::date
+                        )
+                    ) as days_count
+                FROM all_periods ap
+                JOIN billing.object_tariffs ot ON ap.object_id = ot.object_id
+                JOIN billing.tariffs t ON ot.tariff_id = t.id
+                WHERE 
+                    ot.effective_from::date < ap.period_date + interval '1 month'
+                    AND COALESCE(ot.effective_to, '9999-12-31'::date) > ap.period_date
+            ),
+            majority_tariffs AS (
+                SELECT 
+                    object_id,
+                    client_id,
+                    period_date,
+                    price,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY object_id, period_date 
+                        ORDER BY days_count DESC, tariff_id DESC
+                    ) as rn
+                FROM period_tariffs
+                WHERE days_count > 0
+            ),
+            valid_periods AS (
+                SELECT 
+                    object_id,
+                    client_id,
+                    period_date,
+                    price
+                FROM majority_tariffs
+                WHERE rn = 1
             ),
             paid_periods AS (
-                -- Всі оплачені періоди
                 SELECT 
                     opr.object_id,
                     make_date(opr.billing_year, opr.billing_month, 1) as period_date
@@ -1235,7 +1318,6 @@ static async getOverdueMetrics() {
                 SELECT DISTINCT vp.client_id
                 FROM valid_periods vp
                 WHERE NOT EXISTS (
-                    -- Перевіряємо, чи період оплачений
                     SELECT 1 FROM paid_periods pp
                     WHERE pp.object_id = vp.object_id AND pp.period_date = vp.period_date
                 )
@@ -1263,7 +1345,7 @@ static async getOverdueMetrics() {
         // Загальна кількість клієнтів з простроченими оплатами (об'єкти або фіксовані послуги)
         const totalClientsCountQuery = `
             WITH objects_overdue_clients AS (
-                -- Клієнти з простроченими платежами за об'єкти
+                -- Клієнти з простроченими платежами за об'єкти (з логікою більшості днів)
                 WITH object_start_dates AS (
                     SELECT 
                         o.id as object_id,
@@ -1274,14 +1356,13 @@ static async getOverdueMetrics() {
                     FROM wialon.objects o
                     WHERE o.status = 'active'
                 ),
-                valid_periods AS (
+                all_periods AS (
                     SELECT 
                         o.id as object_id,
                         o.client_id,
                         period_date
                     FROM wialon.objects o
-                    JOIN object_start_dates osd ON o.id = osd.object_id
-                    JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL,
+                    JOIN object_start_dates osd ON o.id = osd.object_id,
                     LATERAL (
                         SELECT generate_series(
                             GREATEST(
@@ -1294,7 +1375,51 @@ static async getOverdueMetrics() {
                     ) dates
                     WHERE o.status = 'active'
                     AND period_date >= date_trunc('month', osd.start_date)
-                    AND period_date <= date_trunc('month', COALESCE(ot.effective_to, '9999-12-31'::date))
+                ),
+                period_tariffs AS (
+                    SELECT 
+                        ap.object_id,
+                        ap.client_id,
+                        ap.period_date,
+                        ot.tariff_id,
+                        t.price,
+                        EXTRACT(days FROM 
+                            LEAST(
+                                ap.period_date + interval '1 month',
+                                COALESCE(ot.effective_to, '9999-12-31'::date)
+                            ) - GREATEST(
+                                ap.period_date,
+                                ot.effective_from::date
+                            )
+                        ) as days_count
+                    FROM all_periods ap
+                    JOIN billing.object_tariffs ot ON ap.object_id = ot.object_id
+                    JOIN billing.tariffs t ON ot.tariff_id = t.id
+                    WHERE 
+                        ot.effective_from::date < ap.period_date + interval '1 month'
+                        AND COALESCE(ot.effective_to, '9999-12-31'::date) > ap.period_date
+                ),
+                majority_tariffs AS (
+                    SELECT 
+                        object_id,
+                        client_id,
+                        period_date,
+                        price,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY object_id, period_date 
+                            ORDER BY days_count DESC, tariff_id DESC
+                        ) as rn
+                    FROM period_tariffs
+                    WHERE days_count > 0
+                ),
+                valid_periods AS (
+                    SELECT 
+                        object_id,
+                        client_id,
+                        period_date,
+                        price
+                    FROM majority_tariffs
+                    WHERE rn = 1
                 ),
                 paid_periods AS (
                     SELECT 
@@ -1332,7 +1457,6 @@ static async getOverdueMetrics() {
         // Кількість об'єктів з простроченими платежами
         const objectsCountQuery = `
             WITH object_start_dates AS (
-                -- Отримуємо для кожного об'єкта дату призначення клієнту або встановлення тарифу (що пізніше)
                 SELECT 
                     o.id as object_id,
                     GREATEST(
@@ -1342,14 +1466,12 @@ static async getOverdueMetrics() {
                 FROM wialon.objects o
                 WHERE o.status = 'active'
             ),
-            valid_periods AS (
-                -- Генеруємо тільки валідні періоди
+            all_periods AS (
                 SELECT 
                     o.id as object_id,
                     period_date
                 FROM wialon.objects o
-                JOIN object_start_dates osd ON o.id = osd.object_id
-                JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL,
+                JOIN object_start_dates osd ON o.id = osd.object_id,
                 LATERAL (
                     SELECT generate_series(
                         GREATEST(
@@ -1361,11 +1483,51 @@ static async getOverdueMetrics() {
                     ) as period_date
                 ) dates
                 WHERE o.status = 'active'
-                  AND period_date >= date_trunc('month', osd.start_date)
-                  AND period_date <= date_trunc('month', COALESCE(ot.effective_to, '9999-12-31'::date))
+                AND period_date >= date_trunc('month', osd.start_date)
+            ),
+            period_tariffs AS (
+                SELECT 
+                    ap.object_id,
+                    ap.period_date,
+                    ot.tariff_id,
+                    t.price,
+                    EXTRACT(days FROM 
+                        LEAST(
+                            ap.period_date + interval '1 month',
+                            COALESCE(ot.effective_to, '9999-12-31'::date)
+                        ) - GREATEST(
+                            ap.period_date,
+                            ot.effective_from::date
+                        )
+                    ) as days_count
+                FROM all_periods ap
+                JOIN billing.object_tariffs ot ON ap.object_id = ot.object_id
+                JOIN billing.tariffs t ON ot.tariff_id = t.id
+                WHERE 
+                    ot.effective_from::date < ap.period_date + interval '1 month'
+                    AND COALESCE(ot.effective_to, '9999-12-31'::date) > ap.period_date
+            ),
+            majority_tariffs AS (
+                SELECT 
+                    object_id,
+                    period_date,
+                    price,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY object_id, period_date 
+                        ORDER BY days_count DESC, tariff_id DESC
+                    ) as rn
+                FROM period_tariffs
+                WHERE days_count > 0
+            ),
+            valid_periods AS (
+                SELECT 
+                    object_id,
+                    period_date,
+                    price
+                FROM majority_tariffs
+                WHERE rn = 1
             ),
             paid_periods AS (
-                -- Всі оплачені періоди
                 SELECT 
                     opr.object_id,
                     make_date(opr.billing_year, opr.billing_month, 1) as period_date
@@ -1376,7 +1538,6 @@ static async getOverdueMetrics() {
                 SELECT DISTINCT vp.object_id
                 FROM valid_periods vp
                 WHERE NOT EXISTS (
-                    -- Перевіряємо, чи період оплачений
                     SELECT 1 FROM paid_periods pp
                     WHERE pp.object_id = vp.object_id AND pp.period_date = vp.period_date
                 )
@@ -1390,10 +1551,8 @@ static async getOverdueMetrics() {
         const paymentRateQuery = `
             WITH all_periods AS (
                 -- Всі періоди, які мають бути оплачені (об'єкти та фіксовані послуги)
-                -- Періоди для об'єктів
-                SELECT 'object' as type, o.id as entity_id, period_date
-                FROM wialon.objects o
-                JOIN (
+                -- Періоди для об'єктів з логікою більшості днів
+                WITH object_start_dates AS (
                     SELECT 
                         o.id as object_id,
                         GREATEST(
@@ -1402,21 +1561,63 @@ static async getOverdueMetrics() {
                         ) as start_date
                     FROM wialon.objects o
                     WHERE o.status = 'active'
-                ) osd ON o.id = osd.object_id
-                JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL,
-                LATERAL (
-                    SELECT generate_series(
-                        GREATEST(
-                            date_trunc('month', osd.start_date), 
-                            date_trunc('year', current_date)
-                        ), 
-                        date_trunc('month', current_date),
-                        interval '1 month'
-                    ) as period_date
-                ) dates
-                WHERE o.status = 'active'
-                AND period_date >= date_trunc('month', osd.start_date)
-                AND period_date <= date_trunc('month', COALESCE(ot.effective_to, '9999-12-31'::date))
+                ),
+                object_periods AS (
+                    SELECT 
+                        o.id as object_id,
+                        period_date
+                    FROM wialon.objects o
+                    JOIN object_start_dates osd ON o.id = osd.object_id,
+                    LATERAL (
+                        SELECT generate_series(
+                            GREATEST(
+                                date_trunc('month', osd.start_date), 
+                                date_trunc('year', current_date)
+                            ), 
+                            date_trunc('month', current_date),
+                            interval '1 month'
+                        ) as period_date
+                    ) dates
+                    WHERE o.status = 'active'
+                    AND period_date >= date_trunc('month', osd.start_date)
+                ),
+                object_period_tariffs AS (
+                    SELECT 
+                        op.object_id,
+                        op.period_date,
+                        ot.tariff_id,
+                        t.price,
+                        EXTRACT(days FROM 
+                            LEAST(
+                                op.period_date + interval '1 month',
+                                COALESCE(ot.effective_to, '9999-12-31'::date)
+                            ) - GREATEST(
+                                op.period_date,
+                                ot.effective_from::date
+                            )
+                        ) as days_count
+                    FROM object_periods op
+                    JOIN billing.object_tariffs ot ON op.object_id = ot.object_id
+                    JOIN billing.tariffs t ON ot.tariff_id = t.id
+                    WHERE 
+                        ot.effective_from::date < op.period_date + interval '1 month'
+                        AND COALESCE(ot.effective_to, '9999-12-31'::date) > op.period_date
+                ),
+                object_majority_tariffs AS (
+                    SELECT 
+                        object_id,
+                        period_date,
+                        price,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY object_id, period_date 
+                            ORDER BY days_count DESC, tariff_id DESC
+                        ) as rn
+                    FROM object_period_tariffs
+                    WHERE days_count > 0
+                )
+                SELECT 'object' as type, object_id as entity_id, period_date
+                FROM object_majority_tariffs
+                WHERE rn = 1
                 
                 UNION ALL
                 
@@ -1512,7 +1713,7 @@ static async getOverdueClients() {
     try {
         const query = `
             WITH objects_overdue_clients AS (
-                -- Клієнти з простроченими платежами за об'єкти
+                -- Клієнти з простроченими платежами за об'єкти з логікою більшості днів
                 WITH object_start_dates AS (
                     SELECT 
                         o.id as object_id,
@@ -1523,17 +1724,14 @@ static async getOverdueClients() {
                     FROM wialon.objects o
                     WHERE o.status = 'active'
                 ),
-                valid_periods AS (
+                all_periods AS (
                     SELECT 
                         o.id as object_id,
                         o.client_id,
                         c.name as client_name,
-                        period_date,
-                        t.price
+                        period_date
                     FROM wialon.objects o
                     JOIN clients.clients c ON o.client_id = c.id
-                    JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
-                    JOIN billing.tariffs t ON ot.tariff_id = t.id
                     JOIN object_start_dates osd ON o.id = osd.object_id,
                     LATERAL (
                         SELECT generate_series(
@@ -1547,7 +1745,54 @@ static async getOverdueClients() {
                     ) dates
                     WHERE o.status = 'active'
                     AND period_date >= date_trunc('month', osd.start_date)
-                    AND period_date <= date_trunc('month', COALESCE(ot.effective_to, '9999-12-31'::date))
+                ),
+                period_tariffs AS (
+                    SELECT 
+                        ap.object_id,
+                        ap.client_id,
+                        ap.client_name,
+                        ap.period_date,
+                        ot.tariff_id,
+                        t.price,
+                        EXTRACT(days FROM 
+                            LEAST(
+                                ap.period_date + interval '1 month',
+                                COALESCE(ot.effective_to, '9999-12-31'::date)
+                            ) - GREATEST(
+                                ap.period_date,
+                                ot.effective_from::date
+                            )
+                        ) as days_count
+                    FROM all_periods ap
+                    JOIN billing.object_tariffs ot ON ap.object_id = ot.object_id
+                    JOIN billing.tariffs t ON ot.tariff_id = t.id
+                    WHERE 
+                        ot.effective_from::date < ap.period_date + interval '1 month'
+                        AND COALESCE(ot.effective_to, '9999-12-31'::date) > ap.period_date
+                ),
+                majority_tariffs AS (
+                    SELECT 
+                        object_id,
+                        client_id,
+                        client_name,
+                        period_date,
+                        price,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY object_id, period_date 
+                            ORDER BY days_count DESC, tariff_id DESC
+                        ) as rn
+                    FROM period_tariffs
+                    WHERE days_count > 0
+                ),
+                valid_periods AS (
+                    SELECT 
+                        object_id,
+                        client_id,
+                        client_name,
+                        period_date,
+                        price
+                    FROM majority_tariffs
+                    WHERE rn = 1
                 ),
                 paid_periods AS (
                     SELECT 
@@ -1630,7 +1875,7 @@ static async getOverdueObjects() {
     try {
         const query = `
             WITH objects_overdue AS (
-                -- Об'єкти з простроченими платежами
+                -- Об'єкти з простроченими платежами з логікою більшості днів
                 WITH object_start_dates AS (
                     SELECT 
                         o.id as object_id,
@@ -1641,23 +1886,15 @@ static async getOverdueObjects() {
                     FROM wialon.objects o
                     WHERE o.status = 'active'
                 ),
-                valid_periods AS (
+                all_periods AS (
                     SELECT 
                         o.id as object_id,
                         o.name as object_name,
                         o.client_id,
                         c.name as client_name,
-                        extract(month from period_date) as billing_month,
-                        extract(year from period_date) as billing_year,
-                        t.id as tariff_id,
-                        t.name as tariff_name,
-                        t.price as amount,
-                        period_date,
-                        'object' as item_type
+                        period_date
                     FROM wialon.objects o
                     JOIN clients.clients c ON o.client_id = c.id
-                    JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
-                    JOIN billing.tariffs t ON ot.tariff_id = t.id
                     JOIN object_start_dates osd ON o.id = osd.object_id,
                     LATERAL (
                         SELECT generate_series(
@@ -1671,7 +1908,61 @@ static async getOverdueObjects() {
                     ) dates
                     WHERE o.status = 'active'
                     AND period_date >= date_trunc('month', osd.start_date)
-                    AND period_date <= date_trunc('month', COALESCE(ot.effective_to, '9999-12-31'::date))
+                ),
+                period_tariffs AS (
+                    SELECT 
+                        ap.object_id,
+                        ap.object_name,
+                        ap.client_id,
+                        ap.client_name,
+                        ap.period_date,
+                        ot.tariff_id,
+                        t.price as amount,
+                        EXTRACT(days FROM 
+                            LEAST(
+                                ap.period_date + interval '1 month',
+                                COALESCE(ot.effective_to, '9999-12-31'::date)
+                            ) - GREATEST(
+                                ap.period_date,
+                                ot.effective_from::date
+                            )
+                        ) as days_count
+                    FROM all_periods ap
+                    JOIN billing.object_tariffs ot ON ap.object_id = ot.object_id
+                    JOIN billing.tariffs t ON ot.tariff_id = t.id
+                    WHERE 
+                        -- Тариф діяв в цьому періоді
+                        ot.effective_from::date < ap.period_date + interval '1 month'
+                        AND COALESCE(ot.effective_to, '9999-12-31'::date) > ap.period_date
+                ),
+                majority_tariffs AS (
+                    SELECT 
+                        object_id,
+                        object_name,
+                        client_id,
+                        client_name,
+                        period_date,
+                        amount,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY object_id, period_date 
+                            ORDER BY days_count DESC, tariff_id DESC
+                        ) as rn
+                    FROM period_tariffs
+                    WHERE days_count > 0
+                ),
+                valid_periods AS (
+                    SELECT 
+                        object_id,
+                        object_name,
+                        client_id,
+                        client_name,
+                        period_date,
+                        amount,
+                        EXTRACT(month FROM period_date) as billing_month,
+                        EXTRACT(year FROM period_date) as billing_year,
+                        'object' as item_type
+                    FROM majority_tariffs
+                    WHERE rn = 1
                 ),
                 paid_periods AS (
                     SELECT 
@@ -1760,31 +2051,83 @@ static async getOverdueByMonth() {
                 FROM wialon.objects o
                 WHERE o.status = 'active'
             ),
-            monthly_data AS (
+            monthly_object_data AS (
                 SELECT 
+                    m.month_start,
                     EXTRACT(MONTH FROM m.month_start) as month,
                     EXTRACT(YEAR FROM m.month_start) as year,
+                    -- Сума заборгованості за об'єкти з логікою більшості днів
                     (
-                        -- Сума заборгованості за об'єкти
-                        SELECT COALESCE(SUM(t.price), 0)
-                        FROM wialon.objects o
-                        JOIN billing.object_tariffs ot ON o.id = ot.object_id 
-                        JOIN billing.tariffs t ON ot.tariff_id = t.id
-                        JOIN object_start_dates osd ON o.id = osd.object_id
-                        WHERE o.status = 'active'
-                        AND ot.effective_from <= m.month_start + interval '1 month' - interval '1 day'
-                        AND (ot.effective_to IS NULL OR ot.effective_to >= m.month_start)
-                        AND m.month_start >= date_trunc('month', osd.start_date)
+                        WITH period_objects AS (
+                            SELECT 
+                                o.id as object_id
+                            FROM wialon.objects o
+                            JOIN object_start_dates osd ON o.id = osd.object_id
+                            WHERE o.status = 'active'
+                            AND m.month_start >= date_trunc('month', osd.start_date)
+                        ),
+                        object_period_tariffs AS (
+                            SELECT 
+                                po.object_id,
+                                ot.tariff_id,
+                                t.price,
+                                EXTRACT(days FROM 
+                                    LEAST(
+                                        m.month_start + interval '1 month',
+                                        COALESCE(ot.effective_to, '9999-12-31'::date)
+                                    ) - GREATEST(
+                                        m.month_start,
+                                        ot.effective_from::date
+                                    )
+                                ) as days_count
+                            FROM period_objects po
+                            JOIN billing.object_tariffs ot ON po.object_id = ot.object_id
+                            JOIN billing.tariffs t ON ot.tariff_id = t.id
+                            WHERE 
+                                ot.effective_from::date < m.month_start + interval '1 month'
+                                AND COALESCE(ot.effective_to, '9999-12-31'::date) > m.month_start
+                        ),
+                        object_majority_tariffs AS (
+                            SELECT 
+                                object_id,
+                                price,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY object_id 
+                                    ORDER BY days_count DESC, tariff_id DESC
+                                ) as rn
+                            FROM object_period_tariffs
+                            WHERE days_count > 0
+                        )
+                        SELECT COALESCE(SUM(omt.price), 0)
+                        FROM object_majority_tariffs omt
+                        WHERE omt.rn = 1
                         AND NOT EXISTS (
                             SELECT 1 FROM billing.object_payment_records opr
-                            WHERE opr.object_id = o.id
+                            WHERE opr.object_id = omt.object_id
                             AND opr.billing_year = EXTRACT(YEAR FROM m.month_start)
                             AND opr.billing_month = EXTRACT(MONTH FROM m.month_start)
                             AND opr.status IN ('paid', 'partial')
                         )
                     ) as object_amount,
+                    -- Сума оплачених рахунків для об'єктів
                     (
-                        -- Сума заборгованості за фіксовані послуги
+                        SELECT COALESCE(SUM(opr.amount), 0)
+                        FROM billing.object_payment_records opr
+                        JOIN wialon.objects o ON opr.object_id = o.id
+                        WHERE opr.billing_year = EXTRACT(YEAR FROM m.month_start)
+                        AND opr.billing_month = EXTRACT(MONTH FROM m.month_start)
+                        AND opr.status IN ('paid', 'partial')
+                        AND o.status = 'active'
+                    ) as object_paid_amount
+                FROM months m
+            ),
+            monthly_fixed_data AS (
+                SELECT 
+                    m.month_start,
+                    EXTRACT(MONTH FROM m.month_start) as month,
+                    EXTRACT(YEAR FROM m.month_start) as year,
+                    -- Сума заборгованості за фіксовані послуги
+                    (
                         SELECT COALESCE(SUM(i.total_amount), 0)
                         FROM services.invoices i
                         JOIN services.invoice_items ii ON i.id = ii.invoice_id
@@ -1794,18 +2137,8 @@ static async getOverdueByMonth() {
                         AND i.billing_year = EXTRACT(YEAR FROM m.month_start)
                         AND i.billing_month = EXTRACT(MONTH FROM m.month_start)
                     ) as fixed_amount,
+                    -- Сума оплачених рахунків для фіксованих послуг
                     (
-                        -- Сума оплачених рахунків для об'єктів
-                        SELECT COALESCE(SUM(opr.amount), 0)
-                        FROM billing.object_payment_records opr
-                        JOIN wialon.objects o ON opr.object_id = o.id
-                        WHERE opr.billing_year = EXTRACT(YEAR FROM m.month_start)
-                        AND opr.billing_month = EXTRACT(MONTH FROM m.month_start)
-                        AND opr.status IN ('paid', 'partial')
-                        AND o.status = 'active'
-                    ) as object_paid_amount,
-                    (
-                        -- Сума оплачених рахунків для фіксованих послуг
                         SELECT COALESCE(SUM(i.total_amount), 0)
                         FROM services.invoices i
                         JOIN services.invoice_items ii ON i.id = ii.invoice_id
@@ -1819,15 +2152,16 @@ static async getOverdueByMonth() {
             ),
             combined_data AS (
                 SELECT 
-                    month,
-                    year,
-                    object_amount + fixed_amount as amount,
-                    object_paid_amount + fixed_paid_amount as paidAmount,
-                    object_amount as objectAmount,
-                    fixed_amount as fixedAmount,
-                    object_paid_amount as objectPaidAmount,
-                    fixed_paid_amount as fixedPaidAmount
-                FROM monthly_data
+                    obj.month,
+                    obj.year,
+                    obj.object_amount + fix.fixed_amount as amount,
+                    obj.object_paid_amount + fix.fixed_paid_amount as paidAmount,
+                    obj.object_amount as objectAmount,
+                    fix.fixed_amount as fixedAmount,
+                    obj.object_paid_amount as objectPaidAmount,
+                    fix.fixed_paid_amount as fixedPaidAmount
+                FROM monthly_object_data obj
+                JOIN monthly_fixed_data fix ON obj.month_start = fix.month_start
             )
             SELECT * FROM combined_data
             ORDER BY year, month
@@ -1841,5 +2175,5 @@ static async getOverdueByMonth() {
     }
 }
 }
-
+//test
 module.exports = PaymentService;

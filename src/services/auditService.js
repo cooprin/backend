@@ -22,7 +22,9 @@ function getClientIp(req) {
 }
 class AuditService {
     static async log({ 
-        userId, 
+        userId = null, 
+        clientId = null,
+        userType = null,
         actionType, 
         entityType, 
         entityId, 
@@ -35,7 +37,7 @@ class AuditService {
         tableName = null,
         auditType = AUDIT_TYPES.BUSINESS,
         details = null,
-        req = null  // Додаємо параметр req
+        req = null
     }) {
         try {
             // Формуємо зміни
@@ -65,14 +67,16 @@ class AuditService {
             const cleanedIpAddress = ipAddress || (req ? getClientIp(req) : null);   
             const { rows } = await pool.query(
                 `INSERT INTO audit.audit_logs
-                 (user_id, action_type, entity_type, entity_id, 
-                  old_values, new_values, changes, ip_address,
-                  browser_info, user_agent, table_schema, table_name,
-                  audit_type)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                (user_id, client_id, user_type, action_type, entity_type, entity_id, 
+                old_values, new_values, changes, ip_address,
+                browser_info, user_agent, table_schema, table_name,
+                audit_type)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                 RETURNING id`,
                 [
                     userId,
+                    clientId,
+                    userType || (userId ? 'staff' : clientId ? 'client' : null),
                     actionType,
                     entityType,
                     entityId?.toString(),

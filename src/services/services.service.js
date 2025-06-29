@@ -1771,6 +1771,95 @@ static async generateInvoiceNumberSafely(client, clientId, year) {
 static async generateInvoicePdf(invoice, templateId = null) {
     return PDFService.generateInvoicePdf(invoice, templateId);
 }
+// Редагування рахунку
+static async updateInvoice(client, id, data, userId, req) {
+    try {
+        // Перевірка існування рахунку
+        const currentInvoice = await client.query(
+            'SELECT * FROM services.invoices WHERE id = $1',
+            [id]
+        );
+
+        if (currentInvoice.rows.length === 0) {
+            throw new Error('Рахунок не знайдено');
+        }
+
+        const oldData = currentInvoice.rows[0];
+
+        // Перевірка чи можна редагувати (тільки issued статус)
+        if (oldData.status !== 'issued') {
+            throw new Error('Можна редагувати тільки виставлені рахунки');
+        }
+
+        // Перевірка унікальності номера рахунку (якщо змінюється)
+        if (data.invoice_number && data.invoice_number !== oldData.invoice_number) {
+            const numberCheck = await client.query(
+                'SELECT id FROM services.invoices WHERE invoice_number = $1 AND id != $2',
+                [data.invoice_number, id]
+            );
+
+            if (numberCheck.rows.length > 0) {
+                throw new Error(`Рахунок з номером "${data.invoice_number}" вже існує`);
+            }
+        }
+
+        // Підготовка полів для оновлення
+        const fields = [];
+        const values = [];
+        let paramIndex = 1;
+
+        const updateableFields = [
+            'invoice_number', 'invoice_date', 'notes'
+        ];
+
+        updateableFields.forEach(field => {
+            if (data[field] !== undefined) {
+                fields.push(`${field} = $${paramIndex++}`);
+                values.push(data[field]);
+            }
+        });
+
+        if (fields.length === 0) {
+            throw new Error('Не вказано полів для оновлення');
+        }
+
+        // Додаємо updated_at
+        fields.push(`updated_at = $${paramIndex++}`);
+        values.push(new Date());
+        
+        // Додаємо id для WHERE
+        values.push(id);
+
+        const query = `
+            UPDATE services.invoices 
+            SET ${fields.join(', ')} 
+            WHERE id = $${paramIndex}
+            RETURNING *
+        `;
+
+        const result = await client.query(query, values);
+
+        // Аудит
+        await AuditService.log({
+            userId,
+            actionType: 'INVOICE_UPDATE',
+            entityType: 'INVOICE',
+            entityId: id,
+            oldValues: oldData,
+            newValues: data,
+            ipAddress: req.ip,
+            tableSchema: 'services',
+            tableName: 'invoices',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+
+        return result.rows[0];
+    } catch (error) {
+        throw error;
+    }
+}
+
 }
 
 
