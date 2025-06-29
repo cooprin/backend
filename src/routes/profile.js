@@ -3,7 +3,7 @@ const multer = require('multer');
 const { pool } = require('../database');
 const path = require('path');
 const fs = require('fs').promises;
-const bcrypt = require('bcryptjs');
+const bcryptjs = require('bcryptjs');
 const AuditService = require('../services/auditService');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
@@ -127,7 +127,7 @@ const storage = multer.diskStorage({
        }
    
        // Verify current password
-       const isValidPassword = await bcrypt.compare(current_password, rows[0].password);
+       const isValidPassword = await bcryptjs.compare(current_password, rows[0].password);
        if (!isValidPassword) {
          // Логуємо невдалу спробу зміни пароля
          await AuditService.log({
@@ -147,7 +147,7 @@ const storage = multer.diskStorage({
    
        // Hash new password
        const saltRounds = 10;
-       const hashedPassword = await bcrypt.hash(new_password, saltRounds);
+       const hashedPassword = await bcryptjs.hash(new_password, saltRounds);
    
        // Update password
        await pool.query(
