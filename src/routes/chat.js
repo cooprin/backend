@@ -980,6 +980,7 @@ router.post('/staff/bulk-assign', authenticate, async (req, res) => {
 });
 
 // Bulk close chats
+// Bulk close chats - ВИПРАВЛЕНА ВЕРСІЯ
 router.post('/staff/bulk-close', authenticate, async (req, res) => {
   if (req.user.userType !== 'staff') {
     return res.status(403).json({ success: false, message: 'Access denied' });
@@ -999,21 +1000,35 @@ router.post('/staff/bulk-close', authenticate, async (req, res) => {
       });
     }
 
-    // Update rooms
-    const placeholders = room_ids.map((_, index) => `$${index + 3}`).join(',');
+    // Перевіряємо чи існують кімнати та чи вони активні
+    const checkRooms = await client.query(
+      `SELECT id FROM chat.chat_rooms 
+       WHERE id = ANY($1::uuid[]) AND room_status = 'active'`,
+      [room_ids]
+    );
+
+    if (checkRooms.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        message: 'No active rooms found with provided IDs' 
+      });
+    }
+
+    // ВИПРАВЛЕНО: Правильний SQL запит з типізацією
     const result = await client.query(
       `UPDATE chat.chat_rooms 
        SET room_status = 'closed', 
            closed_at = CURRENT_TIMESTAMP, 
            closed_by = $1,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id IN (${placeholders})
+       WHERE id = ANY($2::uuid[])
        AND room_status = 'active'
        RETURNING *`,
-      [req.user.userId, close_reason || 'Bulk close', ...room_ids]
+      [req.user.userId, room_ids]
     );
 
-    // Add system messages to closed rooms
+    // Додаємо системні повідомлення з причиною закриття
     for (const room of result.rows) {
       await client.query(
         `INSERT INTO chat.chat_messages (room_id, message_text, sender_id, sender_type)
@@ -1028,15 +1043,31 @@ router.post('/staff/bulk-close', authenticate, async (req, res) => {
 
     await client.query('COMMIT');
 
+    // Real-time сповіщення про закриття чатів
+    if (global.socketIO) {
+      result.rows.forEach(room => {
+        global.socketIO.emitToChatRoom(room.id, 'chat_closed', {
+          room_id: room.id,
+          message: 'Chat has been closed by staff',
+          reason: close_reason
+        });
+      });
+    }
+
     res.json({
       success: true,
       closed_count: result.rows.length,
-      rooms: result.rows
+      rooms: result.rows,
+      message: `Successfully closed ${result.rows.length} chat(s)`
     });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Error bulk closing chats:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   } finally {
     client.release();
   }
