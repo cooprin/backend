@@ -152,14 +152,26 @@ router.get('/rooms/:roomId/messages', authenticate, staffOrClient, async (req, r
           WHEN cm.sender_type = 'client' THEN c.name
           WHEN cm.sender_type = 'staff' THEN u.first_name || ' ' || u.last_name
         END as sender_name,
-        COUNT(cf.id) as files_count
+        COUNT(cf.id) as files_count,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id', cf.id,
+              'original_name', cf.original_name,
+              'file_name', cf.file_name,
+              'file_size', cf.file_size,
+              'mime_type', cf.mime_type
+            )
+          ) FILTER (WHERE cf.id IS NOT NULL), 
+          '[]'
+        ) as files
       FROM chat.chat_messages cm
       LEFT JOIN clients.clients c ON (cm.sender_type = 'client' AND cm.sender_id = c.id)
       LEFT JOIN auth.users u ON (cm.sender_type = 'staff' AND cm.sender_id = u.id)
       LEFT JOIN chat.chat_files cf ON cm.id = cf.message_id
       WHERE cm.room_id = $1
       GROUP BY cm.id, c.name, u.first_name, u.last_name
-      ORDER BY cm.created_at DESC
+      ORDER BY cm.created_at ASC
       LIMIT $2 OFFSET $3
     `;
 
@@ -173,7 +185,7 @@ router.get('/rooms/:roomId/messages', authenticate, staffOrClient, async (req, r
 
     res.json({
       success: true,
-      messages: result.rows.reverse(), // Reverse to show oldest first
+      messages: result.rows, // Прибрали .reverse() - тепер повідомлення в правильному порядку
       pagination: {
         page,
         limit,
@@ -275,25 +287,44 @@ router.post('/rooms/:roomId/messages', authenticate, staffOrClient, upload.array
     // Get sender name for response
     let senderName;
     if (senderType === 'client') {
-      const clientResult = await pool.query('SELECT name FROM clients.clients WHERE id = $1', [senderId]);
+      const clientResult = await client.query('SELECT name FROM clients.clients WHERE id = $1', [senderId]);
       senderName = clientResult.rows[0]?.name;
     } else {
-      const userResult = await pool.query('SELECT first_name, last_name FROM auth.users WHERE id = $1', [senderId]);
+      const userResult = await client.query('SELECT first_name, last_name FROM auth.users WHERE id = $1', [senderId]);
       const user = userResult.rows[0];
       senderName = user ? `${user.first_name} ${user.last_name}` : null;
     }
 
     // Real-time відправка повідомлення через Socket.io
     if (global.socketIO) {
+      const messageData = {
+        ...message,
+        sender_name: senderName,
+        files,
+        files_count: files.length
+      };
+
+      // Відправляємо в кімнату чату
       global.socketIO.emitToChatRoom(roomId, 'new_message', {
-        message: {
-          ...message,
-          sender_name: senderName,
-          files,
-          files_count: files.length
-        },
+        message: messageData,
         room_id: roomId
       });
+
+      // Якщо повідомлення від клієнта, сповіщаємо призначеного співробітника
+      if (senderType === 'client') {
+        const roomInfo = await client.query(
+          'SELECT assigned_staff_id FROM chat.chat_rooms WHERE id = $1',
+          [roomId]
+        );
+        
+        if (roomInfo.rows[0]?.assigned_staff_id) {
+          global.socketIO.emitToUser(roomInfo.rows[0].assigned_staff_id, 'new_chat_notification', {
+            room_id: roomId,
+            message: messageData,
+            type: 'new_message'
+          });
+        }
+      }
     }
 
     res.status(201).json({

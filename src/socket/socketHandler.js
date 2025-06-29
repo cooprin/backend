@@ -16,23 +16,37 @@ const authenticateSocket = async (socket, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
-    // Отримуємо користувача з бази
-    const result = await pool.query(
-      'SELECT id, email, first_name, last_name FROM auth.users WHERE id = $1 AND is_active = true',
+    // Спочатку перевіряємо чи це співробітник
+    let result = await pool.query(
+      'SELECT id, email, first_name, last_name, \'staff\' as user_type FROM auth.users WHERE id = $1 AND is_active = true',
       [decoded.userId]
     );
 
-    if (result.rows.length === 0) {
-      return next(new Error('User not found'));
+    if (result.rows.length > 0) {
+      socket.user = {
+        id: decoded.userId,
+        userType: 'staff',
+        ...result.rows[0]
+      };
+      return next();
     }
 
-    socket.user = {
-      id: decoded.userId,
-      userType: 'staff',
-      ...result.rows[0]
-    };
+    // Якщо не співробітник, перевіряємо чи це клієнт
+    result = await pool.query(
+      'SELECT id, name, email, \'client\' as user_type FROM clients.clients WHERE id = $1 AND is_active = true',
+      [decoded.clientId]
+    );
 
-    next();
+    if (result.rows.length > 0) {
+      socket.user = {
+        id: decoded.clientId,
+        userType: 'client',
+        ...result.rows[0]
+      };
+      return next();
+    }
+
+    next(new Error('User not found'));
   } catch (error) {
     console.error('Socket authentication error:', error);
     next(new Error('Authentication failed'));
@@ -93,27 +107,40 @@ function setupChatHandlers(io, socket) {
   // Приєднання до кімнати чату
   socket.on('join_chat_room', async (roomId) => {
     try {
-      // Перевіряємо доступ до кімнати
-      const roomCheck = await pool.query(
-        'SELECT id FROM chat.chat_rooms WHERE id = $1',
-        [roomId]
-      );
+      // Перевіряємо доступ до кімнати залежно від типу користувача
+      let roomCheck;
+      if (socket.user.userType === 'client') {
+        roomCheck = await pool.query(
+          'SELECT id FROM chat.chat_rooms WHERE id = $1 AND client_id = $2',
+          [roomId, socket.user.id]
+        );
+      } else {
+        roomCheck = await pool.query(
+          'SELECT id FROM chat.chat_rooms WHERE id = $1',
+          [roomId]
+        );
+      }
 
       if (roomCheck.rows.length > 0) {
         socket.join(`chat_${roomId}`);
         
-        // Зберігаємо для staff
+        // Зберігаємо кімнати
         if (!staffRooms.has(socket.id)) {
           staffRooms.set(socket.id, new Set());
         }
         staffRooms.get(socket.id).add(roomId);
 
-        console.log(`User ${socket.user.email} joined chat room ${roomId}`);
+        const userName = socket.user.userType === 'client' ? 
+          socket.user.name : 
+          `${socket.user.first_name} ${socket.user.last_name}`;
+
+        console.log(`User ${userName} (${socket.user.userType}) joined chat room ${roomId}`);
         
         // Сповіщаємо про приєднання
         socket.to(`chat_${roomId}`).emit('user_joined_room', {
           userId: socket.user.id,
-          userName: `${socket.user.first_name} ${socket.user.last_name}`
+          userType: socket.user.userType,
+          userName: userName
         });
       }
     } catch (error) {
@@ -130,23 +157,34 @@ function setupChatHandlers(io, socket) {
       staffRooms.get(socket.id).delete(roomId);
     }
 
+    const userName = socket.user.userType === 'client' ? 
+      socket.user.name : 
+      `${socket.user.first_name} ${socket.user.last_name}`;
+
     socket.to(`chat_${roomId}`).emit('user_left_room', {
       userId: socket.user.id,
-      userName: `${socket.user.first_name} ${socket.user.last_name}`
+      userType: socket.user.userType,
+      userName: userName
     });
   });
 
   // Typing індикатор
   socket.on('typing_start', (roomId) => {
+    const userName = socket.user.userType === 'client' ? 
+      socket.user.name : 
+      `${socket.user.first_name} ${socket.user.last_name}`;
+
     socket.to(`chat_${roomId}`).emit('user_typing', {
       userId: socket.user.id,
-      userName: `${socket.user.first_name} ${socket.user.last_name}`
+      userType: socket.user.userType,
+      userName: userName
     });
   });
 
   socket.on('typing_stop', (roomId) => {
     socket.to(`chat_${roomId}`).emit('user_stopped_typing', {
-      userId: socket.user.id
+      userId: socket.user.id,
+      userType: socket.user.userType
     });
   });
 }
@@ -156,15 +194,18 @@ function setupNotificationHandlers(io, socket) {
   // Отримання непрочитаних сповіщень при підключенні
   socket.on('get_unread_notifications', async () => {
     try {
+      const userType = socket.user.userType === 'client' ? 'client' : 'staff';
       const result = await pool.query(
         `SELECT COUNT(*) as count FROM notifications.notifications 
-         WHERE recipient_id = $1 AND recipient_type = 'staff' AND is_read = false`,
-        [socket.user.id]
+         WHERE recipient_id = $1 AND recipient_type = $2 AND is_read = false`,
+        [socket.user.id, userType]
       );
 
       socket.emit('unread_notifications_count', {
         count: parseInt(result.rows[0].count)
       });
+      
+      console.log(`Sent unread count ${result.rows[0].count} to user ${socket.user.id}`);
     } catch (error) {
       console.error('Error getting unread notifications:', error);
     }
@@ -173,15 +214,17 @@ function setupNotificationHandlers(io, socket) {
   // Позначити сповіщення як прочитане
   socket.on('mark_notification_read', async (notificationId) => {
     try {
+      const userType = socket.user.userType === 'client' ? 'client' : 'staff';
       await pool.query(
         `UPDATE notifications.notifications 
          SET is_read = true, read_at = CURRENT_TIMESTAMP
-         WHERE id = $1 AND recipient_id = $2`,
-        [notificationId, socket.user.id]
+         WHERE id = $1 AND recipient_id = $2 AND recipient_type = $3`,
+        [notificationId, socket.user.id, userType]
       );
 
       // Відправити оновлений лічильник
       socket.emit('notification_marked_read', { notificationId });
+      console.log(`Marked notification ${notificationId} as read for user ${socket.user.id}`);
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
