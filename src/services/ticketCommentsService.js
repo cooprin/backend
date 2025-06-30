@@ -181,8 +181,6 @@ class TicketCommentsService {
         if (userType === 'client') {
             searchQuery += ' AND t.client_id = $2 AND tc.is_internal = false';
             queryParams.push(clientId);
-        } else {
-            // Для співробітників можна додати додаткові фільтри
         }
 
         searchQuery += ' ORDER BY tc.created_at DESC LIMIT $' + (queryParams.length + 1);
@@ -244,6 +242,11 @@ class TicketCommentsService {
                     WHEN tc.created_by_type = $2 AND tc.created_by = $3 THEN true
                     WHEN $2 = 'staff' THEN true
                     ELSE false
+                END as can_edit,
+                CASE 
+                    WHEN tc.created_by_type = $2 AND tc.created_by = $3 THEN true
+                    WHEN $2 = 'staff' THEN true
+                    ELSE false
                 END as can_delete
             FROM tickets.ticket_comments tc
             LEFT JOIN clients.clients c ON (tc.created_by_type = 'client' AND tc.created_by = c.id)
@@ -264,9 +267,4 @@ class TicketCommentsService {
     }
 }
 
-module.exports = TicketCommentsService;2 AND tc.created_by = $3 THEN true
-                    WHEN $2 = 'staff' THEN true
-                    ELSE false
-                END as can_edit,
-                CASE 
-                    WHEN tc.created_by_type = $
+module.exports = TicketCommentsService;

@@ -4,7 +4,7 @@ const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { staffOrClient } = require('../middleware/clientAccess');
 const AuditService = require('../services/auditService');
-const TicketCommentsService = require('../services/ticketCommentsService');
+const TicketCommentsService = require('../services/ticketCommentsService.js');
 const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
 
 // Get comments for a ticket
