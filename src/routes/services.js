@@ -29,76 +29,6 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-// Видалення документа з рахунку
-router.delete('/invoices/:id/documents/:documentId', authenticate, checkPermission('invoices.update'), async (req, res) => {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        
-        // Отримуємо інформацію про документ
-        const documentResult = await client.query(
-            'SELECT * FROM services.invoice_documents WHERE id = $1 AND invoice_id = $2',
-            [req.params.documentId, req.params.id]
-        );
-
-        if (documentResult.rows.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: 'Документ не знайдено'
-            });
-        }
-
-        const document = documentResult.rows[0];
-        
-        // Видаляємо запис з бази даних
-        await client.query(
-            'DELETE FROM services.invoice_documents WHERE id = $1',
-            [req.params.documentId]
-        );
-        
-        // Видаляємо файл з файлової системи
-        const fullFilePath = path.join(process.env.UPLOAD_DIR, document.file_path);
-        if (fs.existsSync(fullFilePath)) {
-            try {
-                fs.unlinkSync(fullFilePath);
-            } catch (fileError) {
-                console.warn('Warning: Could not delete file from filesystem:', fileError);
-                // Не кидаємо помилку, оскільки запис з БД вже видалено
-            }
-        }
-
-        // Аудит (якщо потрібно)
-        await AuditService.log({
-            userId: req.user.userId,
-            actionType: 'INVOICE_DOCUMENT_DELETE',
-            entityType: 'INVOICE_DOCUMENT',
-            entityId: req.params.documentId,
-            oldValues: document,
-            ipAddress: req.ip,
-            tableSchema: 'services',
-            tableName: 'invoice_documents',
-            auditType: AUDIT_TYPES.BUSINESS,
-            req
-        });
-        
-        await client.query('COMMIT');
-        
-        res.json({
-            success: true,
-            message: 'Документ успішно видалено'
-        });
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error('Error deleting document:', error);
-        res.status(400).json({
-            success: false,
-            message: error.message || 'Помилка при видаленні документа'
-        });
-    } finally {
-        client.release();
-    }
-});
-
 // Отримання списку документів рахунку (додатковий корисний ендпойнт)
 router.get('/invoices/:id/documents', authenticate, checkPermission('invoices.read'), async (req, res) => {
     try {
@@ -813,5 +743,77 @@ router.put('/invoices/:id', authenticate, checkPermission('invoices.update'), as
         client.release();
     }
 });
+
+// Видалення документа з рахунку
+router.delete('/invoices/:id/documents/:documentId', authenticate, checkPermission('invoices.update'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        // Отримуємо інформацію про документ
+        const documentResult = await client.query(
+            'SELECT * FROM services.invoice_documents WHERE id = $1 AND invoice_id = $2',
+            [req.params.documentId, req.params.id]
+        );
+
+        if (documentResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Документ не знайдено'
+            });
+        }
+
+        const document = documentResult.rows[0];
+        
+        // Видаляємо запис з бази даних
+        await client.query(
+            'DELETE FROM services.invoice_documents WHERE id = $1',
+            [req.params.documentId]
+        );
+        
+        // Видаляємо файл з файлової системи
+        const fullFilePath = path.join(process.env.UPLOAD_DIR, document.file_path);
+        if (fs.existsSync(fullFilePath)) {
+            try {
+                fs.unlinkSync(fullFilePath);
+            } catch (fileError) {
+                console.warn('Warning: Could not delete file from filesystem:', fileError);
+                // Не кидаємо помилку, оскільки запис з БД вже видалено
+            }
+        }
+
+        // Аудит (якщо потрібно)
+        await AuditService.log({
+            userId: req.user.userId,
+            actionType: 'INVOICE_DOCUMENT_DELETE',
+            entityType: 'INVOICE_DOCUMENT',
+            entityId: req.params.documentId,
+            oldValues: document,
+            ipAddress: req.ip,
+            tableSchema: 'services',
+            tableName: 'invoice_documents',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+        
+        await client.query('COMMIT');
+        
+        res.json({
+            success: true,
+            message: 'Документ успішно видалено'
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error deleting document:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при видаленні документа'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+
 
 module.exports = router;
