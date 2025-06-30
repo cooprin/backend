@@ -4,7 +4,6 @@ const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { restrictToOwnData, staffOrClient } = require('../middleware/clientAccess');
 
-router.use(express.urlencoded({ extended: true }));
 
 // NEW: Get active chat for client
 router.get('/active', authenticate, restrictToOwnData, async (req, res) => {
