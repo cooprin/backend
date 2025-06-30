@@ -107,8 +107,7 @@ router.get('/invoices/:id/documents/:documentId/download', authenticate, checkPe
 // Отримання списку послуг
 router.get('/', authenticate, checkPermission('services.read'), async (req, res) => {
     try {
-        const result = await ServiceService.ge
-        tServices(req.query);
+        const result = await ServiceService.getServices(req.query);
         res.json({
             success: true,
             services: result.services,
