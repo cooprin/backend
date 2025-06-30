@@ -4,6 +4,7 @@ const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { restrictToOwnData, staffOrClient } = require('../middleware/clientAccess');
 
+router.use(express.urlencoded({ extended: true }));
 
 // NEW: Get active chat for client
 router.get('/active', authenticate, restrictToOwnData, async (req, res) => {
@@ -214,6 +215,9 @@ router.post('/rooms/:roomId/messages', authenticate, staffOrClient, async (req, 
   try {
     const { roomId } = req.params;
     const { message_text } = req.body;
+    console.log('Raw body:', req.body);
+console.log('Message text:', message_text);
+console.log('Content-Type:', req.headers['content-type']);
 
     if (!message_text || message_text.trim().length === 0) {
       return res.status(400).json({ 
