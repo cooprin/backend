@@ -6,7 +6,14 @@ const NotificationService = require('../services/notificationService');
 // Отримання сповіщень для поточного користувача
 router.get('/', authenticate, async (req, res) => {
     try {
-        const page = parseInt(req.query.page) || 1;
+        // Обробка параметрів з валідацією
+        let page = parseInt(req.query.page);
+        
+        // Якщо page не число або некоректне, встановлюємо за замовчуванням
+        if (isNaN(page) || page < 1) {
+            page = 1;
+        }
+
         const limit = parseInt(req.query.limit) || 20;
         
         let recipientId, recipientType;
@@ -18,11 +25,21 @@ router.get('/', authenticate, async (req, res) => {
             recipientType = 'staff';
         }
 
+        // Збираємо всі можливі фільтри
+        const filters = {
+            page,
+            limit,
+            type: req.query.type,
+            status: req.query.status,
+            priority: req.query.priority,
+            search: req.query.search,
+            read_status: req.query.read_status
+        };
+
         const result = await NotificationService.getUserNotifications(
             recipientId, 
             recipientType, 
-            page, 
-            limit
+            filters
         );
 
         res.json({
@@ -230,6 +247,84 @@ router.patch('/bulk-read', authenticate, async (req, res) => {
         });
     } catch (error) {
         console.error('Error bulk marking notifications as read:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// Отримання тільки непрочитаних сповіщень
+router.get('/unread', authenticate, async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 20;
+        
+        let recipientId, recipientType;
+        if (req.user.userType === 'client') {
+            recipientId = req.user.clientId;
+            recipientType = 'client';
+        } else {
+            recipientId = req.user.userId;
+            recipientType = 'staff';
+        }
+
+        const filters = {
+            page: 1,
+            limit,
+            status: 'unread',
+            type: req.query.type,
+            search: req.query.search
+        };
+
+        const result = await NotificationService.getUserNotifications(
+            recipientId, 
+            recipientType, 
+            filters
+        );
+
+        res.json({
+            success: true,
+            ...result
+        });
+    } catch (error) {
+        console.error('Error fetching unread notifications:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// Фільтрація по типу сповіщень
+router.get('/type/:type', authenticate, async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const { type } = req.params;
+        
+        let recipientId, recipientType;
+        if (req.user.userType === 'client') {
+            recipientId = req.user.clientId;
+            recipientType = 'client';
+        } else {
+            recipientId = req.user.userId;
+            recipientType = 'staff';
+        }
+
+        const filters = {
+            page,
+            limit,
+            type,
+            status: req.query.status,
+            search: req.query.search
+        };
+
+        const result = await NotificationService.getUserNotifications(
+            recipientId, 
+            recipientType, 
+            filters
+        );
+
+        res.json({
+            success: true,
+            ...result
+        });
+    } catch (error) {
+        console.error('Error fetching notifications by type:', error);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 });
