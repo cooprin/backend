@@ -3,44 +3,7 @@ const router = express.Router();
 const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { restrictToOwnData, staffOrClient } = require('../middleware/clientAccess');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 
-// Setup file upload
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(process.env.UPLOAD_DIR, 'chat');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    cb(null, 'chat-' + uniqueSuffix + ext);
-  }
-});
-
-const upload = multer({ 
-  storage,
-  limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB
-    files: 5
-  },
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif|pdf|doc|docx|txt/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    
-    if (mimetype && extname) {
-      return cb(null, true);
-    } else {
-      cb(new Error('Invalid file type'));
-    }
-  }
-});
 
 // NEW: Get active chat for client
 router.get('/active', authenticate, restrictToOwnData, async (req, res) => {
@@ -212,23 +175,9 @@ router.get('/rooms/:roomId/messages', authenticate, staffOrClient, async (req, r
           WHEN cm.sender_type = 'client' THEN c.name
           WHEN cm.sender_type = 'staff' THEN u.first_name || ' ' || u.last_name
         END as sender_name,
-        COUNT(cf.id) as files_count,
-        COALESCE(
-          json_agg(
-            json_build_object(
-              'id', cf.id,
-              'original_name', cf.original_name,
-              'file_name', cf.file_name,
-              'file_size', cf.file_size,
-              'mime_type', cf.mime_type
-            )
-          ) FILTER (WHERE cf.id IS NOT NULL), 
-          '[]'
-        ) as files
       FROM chat.chat_messages cm
       LEFT JOIN clients.clients c ON (cm.sender_type = 'client' AND cm.sender_id = c.id)
       LEFT JOIN auth.users u ON (cm.sender_type = 'staff' AND cm.sender_id = u.id)
-      LEFT JOIN chat.chat_files cf ON cm.id = cf.message_id
       WHERE cm.room_id = $1
       GROUP BY cm.id, c.name, u.first_name, u.last_name
       ORDER BY cm.created_at ASC
@@ -260,7 +209,7 @@ router.get('/rooms/:roomId/messages', authenticate, staffOrClient, async (req, r
 });
 
 // Send message to chat room
-router.post('/rooms/:roomId/messages', authenticate, staffOrClient, upload.array('files', 5), async (req, res) => {
+router.post('/rooms/:roomId/messages', authenticate, staffOrClient, async (req, res) => {
   const client = await pool.connect();
   try {
     const { roomId } = req.params;
@@ -314,27 +263,6 @@ router.post('/rooms/:roomId/messages', authenticate, staffOrClient, upload.array
 
     const message = messageResult.rows[0];
 
-    // Handle file uploads
-    const files = [];
-    if (req.files && req.files.length > 0) {
-      for (const file of req.files) {
-        const fileResult = await client.query(
-          `INSERT INTO chat.chat_files 
-           (message_id, file_name, original_name, file_path, file_size, mime_type)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           RETURNING *`,
-          [
-            message.id,
-            file.filename,
-            file.originalname,
-            file.path.replace(process.env.UPLOAD_DIR, ''),
-            file.size,
-            file.mimetype
-          ]
-        );
-        files.push(fileResult.rows[0]);
-      }
-    }
 
     // Update room last message time
     await client.query(
@@ -357,12 +285,10 @@ router.post('/rooms/:roomId/messages', authenticate, staffOrClient, upload.array
 
     // Real-time відправка повідомлення через Socket.io
     if (global.socketIO) {
-      const messageData = {
-        ...message,
-        sender_name: senderName,
-        files,
-        files_count: files.length
-      };
+        const messageData = {
+          ...message,
+          sender_name: senderName
+        };
 
       // Відправляємо в кімнату чату
       global.socketIO.emitToChatRoom(roomId, 'new_message', {
@@ -387,26 +313,16 @@ router.post('/rooms/:roomId/messages', authenticate, staffOrClient, upload.array
       }
     }
 
-    res.status(201).json({
-      success: true,
-      message: {
-        ...message,
-        sender_name: senderName,
-        files,
-        files_count: files.length
-      }
-    });
+      res.status(201).json({
+        success: true,
+        message: {
+          ...message,
+          sender_name: senderName
+        }
+      });
   } catch (error) {
     await client.query('ROLLBACK');
     
-    // Clean up uploaded files on error
-    if (req.files) {
-      req.files.forEach(file => {
-        if (fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path);
-        }
-      });
-    }
     
     console.error('Error sending message:', error);
     res.status(500).json({ success: false, message: 'Server error' });
@@ -472,54 +388,6 @@ router.patch('/rooms/:roomId/read', authenticate, staffOrClient, async (req, res
   }
 });
 
-// Download chat file
-router.get('/files/:fileId/download', authenticate, staffOrClient, async (req, res) => {
-  try {
-    const { fileId } = req.params;
-
-    // Get file info
-    const fileResult = await pool.query(
-      `SELECT cf.*, cm.room_id 
-       FROM chat.chat_files cf
-       JOIN chat.chat_messages cm ON cf.message_id = cm.id
-       WHERE cf.id = $1`,
-      [fileId]
-    );
-
-    if (fileResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'File not found' });
-    }
-
-    const file = fileResult.rows[0];
-
-    // Check access to room
-    if (req.user.userType === 'client') {
-      const roomCheck = await pool.query(
-        'SELECT id FROM chat.chat_rooms WHERE id = $1 AND client_id = $2',
-        [file.room_id, req.user.clientId]
-      );
-      
-      if (roomCheck.rows.length === 0) {
-        return res.status(403).json({ success: false, message: 'Access denied' });
-      }
-    }
-
-    const filePath = path.join(process.env.UPLOAD_DIR, file.file_path);
-
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ success: false, message: 'File not found on server' });
-    }
-
-    res.setHeader('Content-Disposition', `attachment; filename="${file.original_name}"`);
-    res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-    
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.pipe(res);
-  } catch (error) {
-    console.error('Error downloading file:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
-});
 
 // Отримати статус онлайн для співробітників (для клієнтів)
 router.get('/staff-status', authenticate, async (req, res) => {
@@ -641,28 +509,7 @@ router.delete('/rooms/:roomId', authenticate, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Chat room not found' });
     }
 
-    // Delete files first (cascade will handle DB, but we need to clean filesystem)
-    const filesResult = await client.query(
-      `SELECT cf.file_path 
-       FROM chat.chat_files cf
-       JOIN chat.chat_messages cm ON cf.message_id = cm.id
-       WHERE cm.room_id = $1`,
-      [roomId]
-    );
-
-    // Delete physical files
-    for (const file of filesResult.rows) {
-      const filePath = path.join(process.env.UPLOAD_DIR, file.file_path);
-      if (fs.existsSync(filePath)) {
-        try {
-          fs.unlinkSync(filePath);
-        } catch (err) {
-          console.error('Error deleting file:', filePath, err);
-        }
-      }
-    }
-
-    // Delete chat room (cascade will handle messages and files)
+     // Delete chat room (cascade will handle messages and files)
     await client.query('DELETE FROM chat.chat_rooms WHERE id = $1', [roomId]);
 
     await client.query('COMMIT');
