@@ -7,6 +7,7 @@ const ClientService = require('../services/clients.service');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { staffOnly } = require('../middleware/clientAccess');
 
 // Налаштування для завантаження файлів
 const storage = multer.diskStorage({
@@ -346,6 +347,38 @@ router.delete('/:clientId/documents/:documentId', authenticate, checkPermission(
     } finally {
         client.release();
     }
+});
+
+// Search clients (for autocomplete)
+router.get('/search', authenticate, staffOnly, async (req, res) => {
+  try {
+    const { query, limit = 10 } = req.query;
+
+    if (!query || query.length < 2) {
+      return res.json({
+        success: true,
+        clients: []
+      });
+    }
+
+    const result = await pool.query(
+      `SELECT id, name, email 
+       FROM clients.clients 
+       WHERE (name ILIKE $1 OR email ILIKE $1) 
+         AND is_active = true
+       ORDER BY name 
+       LIMIT $2`,
+      [`%${query}%`, parseInt(limit)]
+    );
+
+    res.json({
+      success: true,
+      clients: result.rows
+    });
+  } catch (error) {
+    console.error('Error searching clients:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
 });
 
 module.exports = router;
