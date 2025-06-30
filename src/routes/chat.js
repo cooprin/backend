@@ -168,22 +168,21 @@ router.get('/rooms/:roomId/messages', authenticate, staffOrClient, async (req, r
     }
 
     // Get messages
-    const messagesQuery = `
-      SELECT 
-        cm.id, cm.room_id, cm.message_text, cm.sender_id, cm.sender_type,
-        cm.is_read, cm.read_at, cm.external_platform, cm.created_at,
-        CASE 
-          WHEN cm.sender_type = 'client' THEN c.name
-          WHEN cm.sender_type = 'staff' THEN u.first_name || ' ' || u.last_name
-        END as sender_name,
-      FROM chat.chat_messages cm
-      LEFT JOIN clients.clients c ON (cm.sender_type = 'client' AND cm.sender_id = c.id)
-      LEFT JOIN auth.users u ON (cm.sender_type = 'staff' AND cm.sender_id = u.id)
-      WHERE cm.room_id = $1
-      GROUP BY cm.id, c.name, u.first_name, u.last_name
-      ORDER BY cm.created_at ASC
-      LIMIT $2 OFFSET $3
-    `;
+const messagesQuery = `
+  SELECT 
+    cm.id, cm.room_id, cm.message_text, cm.sender_id, cm.sender_type,
+    cm.is_read, cm.read_at, cm.external_platform, cm.created_at,
+    CASE 
+      WHEN cm.sender_type = 'client' THEN c.name
+      WHEN cm.sender_type = 'staff' THEN u.first_name || ' ' || u.last_name
+    END as sender_name
+  FROM chat.chat_messages cm
+  LEFT JOIN clients.clients c ON (cm.sender_type = 'client' AND cm.sender_id = c.id)
+  LEFT JOIN auth.users u ON (cm.sender_type = 'staff' AND cm.sender_id = u.id)
+  WHERE cm.room_id = $1
+  ORDER BY cm.created_at ASC
+  LIMIT $2 OFFSET $3
+`;
 
     const result = await pool.query(messagesQuery, [roomId, limit, offset]);
 
