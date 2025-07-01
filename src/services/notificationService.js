@@ -1,93 +1,93 @@
 const { pool } = require('../database');
 
 class NotificationService {
-    // Отримання сповіщень для користувача з фільтрами та пагінацією
-    static async getUserNotifications(recipientId, recipientType, filters = {}) {
-        const { 
-            page = 1, 
-            limit = 20, 
-            type, 
-            status, 
-            priority, 
-            search,
-            read_status 
-        } = filters;
+// Отримання сповіщень для користувача з фільтрами та пагінацією
+static async getUserNotifications(recipientId, recipientType, filters = {}) {
+    const { 
+        page = 1, 
+        limit = 20, 
+        type, 
+        status, 
+        priority, 
+        search,
+        read_status 
+    } = filters;
 
-        const offset = (page - 1) * limit;
+    const offset = (page - 1) * limit;
 
-        // Побудова WHERE умов
-        let whereConditions = ['recipient_id = $1', 'recipient_type = $2'];
-        let params = [recipientId, recipientType];
-        let paramIndex = 3;
+    // Побудова WHERE умов
+    let whereConditions = ['recipient_id = $1', 'recipient_type = $2'];
+    let params = [recipientId, recipientType];
+    let paramIndex = 3;
 
-        // Фільтр по типу сповіщення
-        if (type) {
-            whereConditions.push(`type = ${paramIndex}`);
-            params.push(type);
-            paramIndex++;
-        }
-
-        // Фільтр по статусу прочитання
-        if (status === 'unread' || read_status === 'unread') {
-            whereConditions.push(`is_read = false`);
-        } else if (status === 'read' || read_status === 'read') {
-            whereConditions.push(`is_read = true`);
-        }
-
-        // Фільтр по пріоритету
-        if (priority) {
-            whereConditions.push(`priority = ${paramIndex}`);
-            params.push(priority);
-            paramIndex++;
-        }
-
-        // Фільтр по пошуку в заголовку та повідомленні
-        if (search && search.trim()) {
-            whereConditions.push(`(title ILIKE ${paramIndex} OR message ILIKE ${paramIndex})`);
-            params.push(`%${search.trim()}%`);
-            paramIndex++;
-        }
-
-        const whereClause = whereConditions.join(' AND ');
-
-        // Запити з урахуванням фільтрів
-        const notificationsQuery = `
-            SELECT * FROM notifications.view_notifications_with_details
-            WHERE ${whereClause}
-            ORDER BY created_at DESC
-            LIMIT ${paramIndex} OFFSET ${paramIndex + 1}
-        `;
-
-        const countQuery = `
-            SELECT COUNT(*) FROM notifications.notifications
-            WHERE ${whereClause}
-        `;
-
-        // Додаємо limit та offset до параметрів
-        const queryParams = [...params, limit, offset];
-        const countParams = params; // Без limit та offset
-
-        const [notificationsResult, countResult] = await Promise.all([
-            pool.query(notificationsQuery, queryParams),
-            pool.query(countQuery, countParams)
-        ]);
-
-        return {
-            notifications: notificationsResult.rows,
-            pagination: {
-                page: parseInt(page),
-                limit: parseInt(limit),
-                total: parseInt(countResult.rows[0].count),
-                totalPages: Math.ceil(countResult.rows[0].count / limit)
-            },
-            filters: {
-                type,
-                status: status || read_status,
-                priority,
-                search
-            }
-        };
+    // Фільтр по типу сповіщення
+    if (type) {
+        whereConditions.push(`type = $${paramIndex}`);
+        params.push(type);
+        paramIndex++;
     }
+
+    // Фільтр по статусу прочитання
+    if (status === 'unread' || read_status === 'unread') {
+        whereConditions.push(`is_read = false`);
+    } else if (status === 'read' || read_status === 'read') {
+        whereConditions.push(`is_read = true`);
+    }
+
+    // Фільтр по пріоритету
+    if (priority) {
+        whereConditions.push(`priority = $${paramIndex}`);
+        params.push(priority);
+        paramIndex++;
+    }
+
+    // Фільтр по пошуку в заголовку та повідомленні
+    if (search && search.trim()) {
+        whereConditions.push(`(title ILIKE $${paramIndex} OR message ILIKE $${paramIndex})`);
+        params.push(`%${search.trim()}%`);
+        paramIndex++;
+    }
+
+    const whereClause = whereConditions.join(' AND ');
+
+    // Запити з урахуванням фільтрів
+    const notificationsQuery = `
+        SELECT * FROM notifications.view_notifications_with_details
+        WHERE ${whereClause}
+        ORDER BY created_at DESC
+        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+    `;
+
+    const countQuery = `
+        SELECT COUNT(*) FROM notifications.notifications
+        WHERE ${whereClause}
+    `;
+
+    // Додаємо limit та offset до параметрів
+    const queryParams = [...params, limit, offset];
+    const countParams = params; // Без limit та offset
+
+    const [notificationsResult, countResult] = await Promise.all([
+        pool.query(notificationsQuery, queryParams),
+        pool.query(countQuery, countParams)
+    ]);
+
+    return {
+        notifications: notificationsResult.rows,
+        pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total: parseInt(countResult.rows[0].count),
+            totalPages: Math.ceil(countResult.rows[0].count / limit)
+        },
+        filters: {
+            type,
+            status: status || read_status,
+            priority,
+            search
+        }
+    };
+}
 
     // Отримання кількості непрочитаних сповіщень
     static async getUnreadCount(recipientId, recipientType) {
