@@ -2,695 +2,595 @@ const express = require('express');
 const router = express.Router();
 const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
-const { restrictToOwnData, staffOrClient } = require('../middleware/clientAccess');
+const { restrictToOwnData } = require('../middleware/clientAccess');
 const AuditService = require('../services/auditService');
+const PortalService = require('../services/portalService');
 const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
-const PDFService = require('../services/pdfService');
 const path = require('path');
 const fs = require('fs');
 
 // Get client profile
 router.get('/profile', authenticate, restrictToOwnData, async (req, res) => {
-  try {
-    if (req.user.userType !== 'client') {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
-
-    const result = await pool.query(
-      `SELECT 
-        c.id, c.name, c.full_name, c.email, c.phone, c.address,
-        c.contact_person, c.wialon_username, c.created_at,
-        COUNT(DISTINCT o.id) as objects_count,
-        COUNT(DISTINCT cd.id) as documents_count
-       FROM clients.clients c
-       LEFT JOIN wialon.objects o ON c.id = o.client_id
-       LEFT JOIN clients.client_documents cd ON c.id = cd.client_id
-       WHERE c.id = $1
-       GROUP BY c.id`,
-      [req.user.clientId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Client not found' });
-    }
-
-    // Log client profile view
     try {
-      await AuditService.log({
-        clientId: req.user.clientId,
-        userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_PROFILE,
-        entityType: ENTITY_TYPES.CLIENT,
-        entityId: req.user.clientId,
-        newValues: {
-          action: 'view_profile',
-          client_id: req.user.clientId,
-          client_name: result.rows[0].name
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } catch (auditError) {
-      console.error('Audit log failed:', auditError);
-    }
+        if (req.user.userType !== 'client') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
 
-    res.json({
-      success: true,
-      client: result.rows[0]
-    });
-  } catch (error) {
-    console.error('Error fetching client profile:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
+        const client = await PortalService.getClientProfile(req.user.clientId);
+
+        if (!client) {
+            return res.status(404).json({ success: false, message: 'Client not found' });
+        }
+
+        // Audit log
+        try {
+            await AuditService.log({
+                clientId: req.user.clientId,
+                userType: 'client',
+                actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_PROFILE,
+                entityType: ENTITY_TYPES.CLIENT,
+                entityId: req.user.clientId,
+                newValues: {
+                    action: 'view_profile',
+                    client_id: req.user.clientId,
+                    client_name: client.name
+                },
+                ipAddress: req.ip,
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+        } catch (auditError) {
+            console.error('Audit log failed:', auditError);
+        }
+
+        res.json({
+            success: true,
+            client
+        });
+    } catch (error) {
+        console.error('Error fetching client profile:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
 });
 
 // Get client objects
 router.get('/objects', authenticate, restrictToOwnData, async (req, res) => {
-  try {
-    if (req.user.userType !== 'client') {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
-
-    const result = await pool.query(
-      `SELECT 
-        o.id, o.wialon_id, o.name, o.description, o.status,
-        t.name as tariff_name, t.price as tariff_price,
-        ot.effective_from as tariff_from
-       FROM wialon.objects o
-       LEFT JOIN billing.object_tariffs ot ON o.id = ot.object_id AND ot.effective_to IS NULL
-       LEFT JOIN billing.tariffs t ON ot.tariff_id = t.id
-       WHERE o.client_id = $1
-       ORDER BY o.name`,
-      [req.user.clientId]
-    );
-
-    // Log client objects view
     try {
-      await AuditService.log({
-        clientId: req.user.clientId,
-        userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_OBJECTS,
-        entityType: ENTITY_TYPES.WIALON_OBJECT,
-        entityId: null,
-        newValues: {
-          action: 'view_objects',
-          client_id: req.user.clientId,
-          objects_count: result.rows.length
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } catch (auditError) {
-      console.error('Audit log failed:', auditError);
-    }
+        if (req.user.userType !== 'client') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
 
-    res.json({
-      success: true,
-      objects: result.rows
-    });
-  } catch (error) {
-    console.error('Error fetching client objects:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
+        const objects = await PortalService.getClientObjects(req.user.clientId);
+
+        // Audit log
+        try {
+            await AuditService.log({
+                clientId: req.user.clientId,
+                userType: 'client',
+                actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_OBJECTS,
+                entityType: ENTITY_TYPES.WIALON_OBJECT,
+                entityId: null,
+                newValues: {
+                    action: 'view_objects',
+                    client_id: req.user.clientId,
+                    objects_count: objects.length
+                },
+                ipAddress: req.ip,
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+        } catch (auditError) {
+            console.error('Audit log failed:', auditError);
+        }
+
+        res.json({
+            success: true,
+            objects
+        });
+    } catch (error) {
+        console.error('Error fetching client objects:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
 });
 
 // Get client invoices
 router.get('/invoices', authenticate, restrictToOwnData, async (req, res) => {
-  try {
-    if (req.user.userType !== 'client') {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
-
-    console.log('req.user:', req.user);
-    console.log('Query params:', req.query);
-
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
-
-    // Build WHERE conditions
-    let whereConditions = ['i.client_id = $1'];
-    let queryParams = [req.user.clientId];
-    let paramIndex = 2;
-
-    if (req.query.status) {
-      whereConditions.push(`i.status = $${paramIndex}`);
-      queryParams.push(req.query.status);
-      paramIndex++;
-    }
-
-    if (req.query.year) {
-      whereConditions.push(`i.billing_year = $${paramIndex}`);
-      queryParams.push(parseInt(req.query.year));
-      paramIndex++;
-    }
-
-    if (req.query.month) {
-      whereConditions.push(`i.billing_month = $${paramIndex}`);
-      queryParams.push(parseInt(req.query.month));
-      paramIndex++;
-    }
-
-    const whereClause = whereConditions.join(' AND ');
-
-    // Get invoices with pagination
-    const invoicesQuery = `
-      SELECT 
-        i.id, i.invoice_number, i.invoice_date, i.billing_month, 
-        i.billing_year, i.total_amount, i.status, i.created_at,
-        p.payment_date, p.amount as paid_amount
-      FROM services.invoices i
-      LEFT JOIN billing.payments p ON i.payment_id = p.id
-      WHERE ${whereClause}
-      ORDER BY i.billing_year DESC, i.billing_month DESC, i.created_at DESC
-      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
-    `;
-
-    queryParams.push(limit, offset);
-
-    console.log('SQL Query:', invoicesQuery);
-    console.log('Query Params:', queryParams);
-
-    const result = await pool.query(invoicesQuery, queryParams);
-
-    // Get total count - ВИПРАВЛЕННЯ ТУТ
-    const countQuery = `SELECT COUNT(*) FROM services.invoices i WHERE ${whereClause}`;
-    // Беремо параметри БЕЗ limit та offset (останні 2 елементи)
-    const countParams = queryParams.slice(0, -2);
-    
-    console.log('Count Query:', countQuery);
-    console.log('Count Params:', countParams);
-    
-    const countResult = await pool.query(countQuery, countParams);
-
-    const total = parseInt(countResult.rows[0].count);
-    const totalPages = Math.ceil(total / limit);
-
-    // Log client invoices view
     try {
-      await AuditService.log({
-        clientId: req.user.clientId,
-        userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_INVOICES,
-        entityType: ENTITY_TYPES.INVOICE,
-        entityId: null,
-        newValues: {
-          action: 'view_invoices',
-          client_id: req.user.clientId,
-          filters: req.query,
-          page,
-          limit,
-          total_found: total
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } catch (auditError) {
-      console.error('Audit log failed:', auditError);
-    }
+        if (req.user.userType !== 'client') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
 
-    res.json({
-      success: true,
-      invoices: result.rows,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching client invoices:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+
+        const filters = {
+            status: req.query.status,
+            year: req.query.year,
+            month: req.query.month
+        };
+
+        const result = await PortalService.getClientInvoices(
+            req.user.clientId, 
+            filters, 
+            page, 
+            limit
+        );
+
+        // Audit log
+        try {
+            await AuditService.log({
+                clientId: req.user.clientId,
+                userType: 'client',
+                actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_INVOICES,
+                entityType: ENTITY_TYPES.INVOICE,
+                entityId: null,
+                newValues: {
+                    action: 'view_invoices',
+                    client_id: req.user.clientId,
+                    filters,
+                    page,
+                    limit,
+                    total_found: result.pagination.total
+                },
+                ipAddress: req.ip,
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+        } catch (auditError) {
+            console.error('Audit log failed:', auditError);
+        }
+
+        res.json({
+            success: true,
+            ...result
+        });
+    } catch (error) {
+        console.error('Error fetching client invoices:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
 });
 
 // Get single invoice details
 router.get('/invoices/:id', authenticate, restrictToOwnData, async (req, res) => {
-  try {
-    if (req.user.userType !== 'client') {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
-
-    const invoiceId = req.params.id;
-
-    // Get invoice details
-    const invoiceQuery = `
-      SELECT 
-        i.id, i.invoice_number, i.invoice_date, i.billing_month, 
-        i.billing_year, i.total_amount, i.status, i.created_at,
-        p.payment_date, p.amount as paid_amount
-      FROM services.invoices i
-      LEFT JOIN billing.payments p ON i.payment_id = p.id
-      WHERE i.id = $1 AND i.client_id = $2
-    `;
-
-    const invoiceResult = await pool.query(invoiceQuery, [invoiceId, req.user.clientId]);
-
-    if (invoiceResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Invoice not found' });
-    }
-
-    const invoice = invoiceResult.rows[0];
-
-    // Get invoice items
-    const itemsQuery = `
-      SELECT 
-        ii.id, ii.service_id, ii.quantity, ii.unit_price, ii.total_price,
-        ii.description, s.name as service_name
-      FROM services.invoice_items ii
-      LEFT JOIN services.services s ON ii.service_id = s.id
-      WHERE ii.invoice_id = $1
-      ORDER BY ii.id
-    `;
-
-    const itemsResult = await pool.query(itemsQuery, [invoiceId]);
-    invoice.items = itemsResult.rows;
-
-    // Log client invoice view
     try {
-      await AuditService.log({
-        clientId: req.user.clientId,
-        userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_INVOICES,
-        entityType: ENTITY_TYPES.INVOICE,
-        entityId: invoiceId,
-        newValues: {
-          action: 'view_invoice_details',
-          client_id: req.user.clientId,
-          invoice_id: invoiceId,
-          invoice_number: invoice.invoice_number
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } catch (auditError) {
-      console.error('Audit log failed:', auditError);
-    }
+        if (req.user.userType !== 'client') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
 
-    res.json({
-      success: true,
-      invoice
-    });
-  } catch (error) {
-    console.error('Error fetching invoice details:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
+        const invoiceId = req.params.id;
+        const invoice = await PortalService.getInvoiceDetails(invoiceId, req.user.clientId);
+
+        if (!invoice) {
+            return res.status(404).json({ success: false, message: 'Invoice not found' });
+        }
+
+        // Audit log
+        try {
+            await AuditService.log({
+                clientId: req.user.clientId,
+                userType: 'client',
+                actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_INVOICES,
+                entityType: ENTITY_TYPES.INVOICE,
+                entityId: invoiceId,
+                newValues: {
+                    action: 'view_invoice_details',
+                    client_id: req.user.clientId,
+                    invoice_id: invoiceId,
+                    invoice_number: invoice.invoice_number
+                },
+                ipAddress: req.ip,
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+        } catch (auditError) {
+            console.error('Audit log failed:', auditError);
+        }
+
+        res.json({
+            success: true,
+            invoice
+        });
+    } catch (error) {
+        console.error('Error fetching invoice details:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
 });
 
 // Get invoice items
 router.get('/invoices/:id/items', authenticate, restrictToOwnData, async (req, res) => {
-  try {
-    if (req.user.userType !== 'client') {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
-
-    const invoiceId = req.params.id;
-
-    // Verify invoice belongs to client
-    const invoiceCheck = await pool.query(
-      'SELECT id FROM services.invoices WHERE id = $1 AND client_id = $2',
-      [invoiceId, req.user.clientId]
-    );
-
-    if (invoiceCheck.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Invoice not found' });
-    }
-
-    // Get invoice items
-    const itemsQuery = `
-      SELECT 
-        ii.id, ii.service_id, ii.quantity, ii.unit_price, ii.total_price,
-        ii.description, s.name as service_name
-      FROM services.invoice_items ii
-      LEFT JOIN services.services s ON ii.service_id = s.id
-      WHERE ii.invoice_id = $1
-      ORDER BY ii.id
-    `;
-
-    const result = await pool.query(itemsQuery, [invoiceId]);
-
-    // Log invoice items view
     try {
-      await AuditService.log({
-        clientId: req.user.clientId,
-        userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_INVOICES,
-        entityType: ENTITY_TYPES.INVOICE,
-        entityId: invoiceId,
-        newValues: {
-          action: 'view_invoice_details',
-          client_id: req.user.clientId,
-          invoice_id: invoiceId,
-          invoice_number: invoice.invoice_number
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } catch (auditError) {
-      console.error('Audit log failed:', auditError);
-    }
+        if (req.user.userType !== 'client') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
 
-    res.json({
-      success: true,
-      items: result.rows
-    });
-  } catch (error) {
-    console.error('Error fetching invoice items:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
+        const invoiceId = req.params.id;
+        const items = await PortalService.getInvoiceItems(invoiceId, req.user.clientId);
+
+        if (!items) {
+            return res.status(404).json({ success: false, message: 'Invoice not found' });
+        }
+
+        // Audit log
+        try {
+            await AuditService.log({
+                clientId: req.user.clientId,
+                userType: 'client',
+                actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_INVOICES,
+                entityType: ENTITY_TYPES.INVOICE,
+                entityId: invoiceId,
+                newValues: {
+                    action: 'view_invoice_items',
+                    client_id: req.user.clientId,
+                    invoice_id: invoiceId,
+                    items_count: items.length
+                },
+                ipAddress: req.ip,
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+        } catch (auditError) {
+            console.error('Audit log failed:', auditError);
+        }
+
+        res.json({
+            success: true,
+            items
+        });
+    } catch (error) {
+        console.error('Error fetching invoice items:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
 });
 
 // Get client documents
 router.get('/documents', authenticate, restrictToOwnData, async (req, res) => {
-  try {
-    if (req.user.userType !== 'client') {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
-
-    const result = await pool.query(
-      `SELECT 
-        cd.id, cd.document_name, cd.document_type, cd.file_path,
-        cd.file_size, cd.description, cd.created_at
-       FROM clients.client_documents cd
-       WHERE cd.client_id = $1
-       ORDER BY cd.created_at DESC`,
-      [req.user.clientId]
-    );
-
-    // Log client documents view
     try {
-      await AuditService.log({
-        clientId: req.user.clientId,
-        userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_DOCUMENTS,
-        entityType: ENTITY_TYPES.CLIENT_DOCUMENT,
-        entityId: null,
-        newValues: {
-          action: 'view_documents',
-          client_id: req.user.clientId,
-          documents_count: result.rows.length
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } catch (auditError) {
-      console.error('Audit log failed:', auditError);
-    }
+        if (req.user.userType !== 'client') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
 
-    res.json({
-      success: true,
-      documents: result.rows
-    });
-  } catch (error) {
-    console.error('Error fetching client documents:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
+        const documents = await PortalService.getClientDocuments(req.user.clientId);
+
+        // Audit log
+        try {
+            await AuditService.log({
+                clientId: req.user.clientId,
+                userType: 'client',
+                actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_DOCUMENTS,
+                entityType: ENTITY_TYPES.CLIENT_DOCUMENT,
+                entityId: null,
+                newValues: {
+                    action: 'view_documents',
+                    client_id: req.user.clientId,
+                    documents_count: documents.length
+                },
+                ipAddress: req.ip,
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+        } catch (auditError) {
+            console.error('Audit log failed:', auditError);
+        }
+
+        res.json({
+            success: true,
+            documents
+        });
+    } catch (error) {
+        console.error('Error fetching client documents:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
 });
 
 // Get client payment status (Wialon)
 router.get('/payment-status', authenticate, restrictToOwnData, async (req, res) => {
-  try {
-    if (req.user.userType !== 'client') {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
-
-    const ClientService = require('../services/clients.service');
-    const paymentInfo = await ClientService.getClientPaymentInfo(req.user.clientId);
-    
-    // Log payment status view
     try {
-      await AuditService.log({
-        clientId: req.user.clientId,
-        userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_PAYMENT_STATUS,
-        entityType: ENTITY_TYPES.CLIENT,
-        entityId: req.user.clientId,
-        newValues: {
-          action: 'view_payment_status',
-          client_id: req.user.clientId
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } catch (auditError) {
-      console.error('Audit log failed:', auditError);
+        if (req.user.userType !== 'client') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+
+        const ClientService = require('../services/clients.service');
+        const paymentInfo = await ClientService.getClientPaymentInfo(req.user.clientId);
+        
+        // Audit log
+        try {
+            await AuditService.log({
+                clientId: req.user.clientId,
+                userType: 'client',
+                actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_PAYMENT_STATUS,
+                entityType: ENTITY_TYPES.CLIENT,
+                entityId: req.user.clientId,
+                newValues: {
+                    action: 'view_payment_status',
+                    client_id: req.user.clientId
+                },
+                ipAddress: req.ip,
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+        } catch (auditError) {
+            console.error('Audit log failed:', auditError);
+        }
+        
+        res.json({
+            success: true,
+            paymentInfo
+        });
+    } catch (error) {
+        console.error('Error fetching client payment status:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message || 'Помилка при отриманні платіжної інформації'
+        });
     }
-    
-    res.json({
-      success: true,
-      paymentInfo
-    });
-  } catch (error) {
-    console.error('Error fetching client payment status:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Помилка при отриманні платіжної інформації'
-    });
-  }
 });
 
 // Get client tickets
 router.get('/tickets', authenticate, restrictToOwnData, async (req, res) => {
-  try {
-    if (req.user.userType !== 'client') {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
-
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
-
-    // Build WHERE conditions
-    let whereConditions = ['t.client_id = $1'];
-    let queryParams = [req.user.clientId];
-    let paramIndex = 2;
-
-    if (req.query.status) {
-      whereConditions.push(`t.status = $${paramIndex}`);
-      queryParams.push(req.query.status);
-      paramIndex++;
-    }
-
-    if (req.query.priority) {
-      whereConditions.push(`t.priority = $${paramIndex}`);
-      queryParams.push(req.query.priority);
-      paramIndex++;
-    }
-
-    if (req.query.category_id) {
-      whereConditions.push(`t.category_id = $${paramIndex}`);
-      queryParams.push(req.query.category_id);
-      paramIndex++;
-    }
-
-    const whereClause = whereConditions.join(' AND ');
-
-    // Get tickets with pagination
-    const ticketsQuery = `
-      SELECT 
-        t.id, t.ticket_number, t.title, t.description, t.priority, t.status,
-        t.created_at, t.resolved_at, t.closed_at,
-        tc.name as category_name, tc.color as category_color,
-        wo.name as object_name,
-        COUNT(tcm.id) FILTER (WHERE tcm.is_internal = false) as comments_count
-      FROM tickets.tickets t
-      LEFT JOIN tickets.ticket_categories tc ON t.category_id = tc.id
-      LEFT JOIN wialon.objects wo ON t.object_id = wo.id
-      LEFT JOIN tickets.ticket_comments tcm ON t.id = tcm.ticket_id
-      WHERE ${whereClause}
-      GROUP BY t.id, tc.name, tc.color, wo.name
-      ORDER BY t.created_at DESC
-      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
-    `;
-
-    queryParams.push(limit, offset);
-
-    const result = await pool.query(ticketsQuery, queryParams);
-
-    // Get total count
-    const countQuery = `
-      SELECT COUNT(*) FROM tickets.tickets t WHERE ${whereClause}
-    `;
-    const countResult = await pool.query(countQuery, queryParams.slice(0, paramIndex - 2));
-
-    const total = parseInt(countResult.rows[0].count);
-    const totalPages = Math.ceil(total / limit);
-
-    // Log client tickets view
     try {
-      await AuditService.log({
-        clientId: req.user.clientId,
-        userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_TICKETS,
-        entityType: ENTITY_TYPES.TICKET,
-        entityId: null,
-        newValues: {
-          action: 'view_tickets',
-          client_id: req.user.clientId,
-          filters: req.query,
-          page,
-          limit,
-          total_found: total
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } catch (auditError) {
-      console.error('Audit log failed:', auditError);
-    }
+        if (req.user.userType !== 'client') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
 
-    res.json({
-      success: true,
-      tickets: result.rows,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching client tickets:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+
+        const filters = {
+            status: req.query.status,
+            priority: req.query.priority,
+            category_id: req.query.category_id
+        };
+
+        const result = await PortalService.getClientTickets(
+            req.user.clientId,
+            filters,
+            page,
+            limit
+        );
+
+        // Audit log
+        try {
+            await AuditService.log({
+                clientId: req.user.clientId,
+                userType: 'client',
+                actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_TICKETS,
+                entityType: ENTITY_TYPES.TICKET,
+                entityId: null,
+                newValues: {
+                    action: 'view_tickets',
+                    client_id: req.user.clientId,
+                    filters,
+                    page,
+                    limit,
+                    total_found: result.pagination.total
+                },
+                ipAddress: req.ip,
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+        } catch (auditError) {
+            console.error('Audit log failed:', auditError);
+        }
+
+        res.json({
+            success: true,
+            ...result
+        });
+    } catch (error) {
+        console.error('Error fetching client tickets:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
 });
 
 // Get invoice documents
 router.get('/invoices/:id/documents', authenticate, restrictToOwnData, async (req, res) => {
-  try {
-    if (req.user.userType !== 'client') {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
-
-    const invoiceId = req.params.id;
-
-    // Verify invoice belongs to client
-    const invoiceCheck = await pool.query(
-      'SELECT id FROM services.invoices WHERE id = $1 AND client_id = $2',
-      [invoiceId, req.user.clientId]
-    );
-
-    if (invoiceCheck.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Invoice not found' });
-    }
-
-    // Get invoice documents
-    const documentsQuery = `
-      SELECT 
-        id, document_name, document_type, file_size, created_at
-      FROM services.invoice_documents 
-      WHERE invoice_id = $1
-      ORDER BY created_at DESC
-    `;
-
-    const result = await pool.query(documentsQuery, [invoiceId]);
-
-    // Log invoice documents view
     try {
-      await AuditService.log({
-        clientId: req.user.clientId,
-        userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_INVOICES,
-        entityType: ENTITY_TYPES.INVOICE,
-        entityId: invoiceId,
-        newValues: {
-          action: 'view_invoice_documents',
-          client_id: req.user.clientId,
-          invoice_id: invoiceId,
-          documents_count: result.rows.length
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } catch (auditError) {
-      console.error('Audit log failed:', auditError);
-    }
+        if (req.user.userType !== 'client') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
 
-    res.json({
-      success: true,
-      documents: result.rows
-    });
-  } catch (error) {
-    console.error('Error fetching invoice documents:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
+        const invoiceId = req.params.id;
+        const documents = await PortalService.getInvoiceDocuments(invoiceId, req.user.clientId);
+
+        if (!documents) {
+            return res.status(404).json({ success: false, message: 'Invoice not found' });
+        }
+
+        // Audit log
+        try {
+            await AuditService.log({
+                clientId: req.user.clientId,
+                userType: 'client',
+                actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_INVOICES,
+                entityType: ENTITY_TYPES.INVOICE,
+                entityId: invoiceId,
+                newValues: {
+                    action: 'view_invoice_documents',
+                    client_id: req.user.clientId,
+                    invoice_id: invoiceId,
+                    documents_count: documents.length
+                },
+                ipAddress: req.ip,
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+        } catch (auditError) {
+            console.error('Audit log failed:', auditError);
+        }
+
+        res.json({
+            success: true,
+            documents
+        });
+    } catch (error) {
+        console.error('Error fetching invoice documents:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
 });
 
 // Download invoice document
 router.get('/invoice-documents/:id/download', authenticate, restrictToOwnData, async (req, res) => {
-  try {
-    if (req.user.userType !== 'client') {
-      return res.status(403).json({ success: false, message: 'Access denied' });
-    }
-
-    const documentId = req.params.id;
-
-    // Get document with invoice verification
-    const documentQuery = `
-      SELECT 
-        id.document_name, id.file_path, id.document_type
-      FROM services.invoice_documents id
-      JOIN services.invoices i ON id.invoice_id = i.id
-      WHERE id.id = $1 AND i.client_id = $2
-    `;
-
-    const result = await pool.query(documentQuery, [documentId, req.user.clientId]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Document not found' });
-    }
-
-    const document = result.rows[0];
-    const filePath = path.join(process.env.UPLOAD_DIR, document.file_path);
-
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ success: false, message: 'File not found' });
-    }
-
-    // Log document download
     try {
-      await AuditService.log({
-        clientId: req.user.clientId,
-        userType: 'client',
-        actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.DOWNLOAD_DOCUMENT,
-        entityType: ENTITY_TYPES.INVOICE,
-        entityId: documentId,
-        newValues: {
-          action: 'download_invoice_document',
-          client_id: req.user.clientId,
-          document_id: documentId,
-          document_name: document.document_name
-        },
-        ipAddress: req.ip,
-        auditType: AUDIT_TYPES.BUSINESS,
-        req
-      });
-    } catch (auditError) {
-      console.error('Audit log failed:', auditError);
+        if (req.user.userType !== 'client') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+
+        const documentId = req.params.id;
+        const document = await PortalService.getInvoiceDocumentForDownload(documentId, req.user.clientId);
+
+        if (!document) {
+            return res.status(404).json({ success: false, message: 'Document not found' });
+        }
+
+        const filePath = path.join(process.env.UPLOAD_DIR, document.file_path);
+
+        // Check if file exists
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ success: false, message: 'File not found' });
+        }
+
+        // Audit log
+        try {
+            await AuditService.log({
+                clientId: req.user.clientId,
+                userType: 'client',
+                actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.DOWNLOAD_DOCUMENT,
+                entityType: ENTITY_TYPES.INVOICE,
+                entityId: documentId,
+                newValues: {
+                    action: 'download_invoice_document',
+                    client_id: req.user.clientId,
+                    document_id: documentId,
+                    document_name: document.document_name
+                },
+                ipAddress: req.ip,
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+        } catch (auditError) {
+            console.error('Audit log failed:', auditError);
+        }
+
+        // Set headers for download
+        res.setHeader('Content-Disposition', `attachment; filename="${document.document_name}"`);
+        res.setHeader('Content-Type', 'application/octet-stream');
+
+        // Send file
+        const absolutePath = path.resolve(filePath);
+        res.sendFile(absolutePath);
+    } catch (error) {
+        console.error('Error downloading invoice document:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
     }
+});
 
-    // Set headers for download
-    res.setHeader('Content-Disposition', `attachment; filename="${document.document_name}"`);
-    res.setHeader('Content-Type', 'application/octet-stream');
+// Get dashboard statistics
+router.get('/dashboard/stats', authenticate, restrictToOwnData, async (req, res) => {
+    try {
+        if (req.user.userType !== 'client') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
 
-    // Send file
-    const absolutePath = path.resolve(filePath);
-    res.sendFile(absolutePath);
-  } catch (error) {
-    console.error('Error downloading invoice document:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
-  }
+        const stats = await PortalService.getClientDashboardStats(req.user.clientId);
+
+        // Audit log
+        try {
+            await AuditService.log({
+                clientId: req.user.clientId,
+                userType: 'client',
+                actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_DASHBOARD,
+                entityType: ENTITY_TYPES.CLIENT,
+                entityId: req.user.clientId,
+                newValues: {
+                    action: 'view_dashboard_stats',
+                    client_id: req.user.clientId
+                },
+                ipAddress: req.ip,
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+        } catch (auditError) {
+            console.error('Audit log failed:', auditError);
+        }
+
+        res.json({
+            success: true,
+            stats
+        });
+    } catch (error) {
+        console.error('Error fetching dashboard stats:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// Create new ticket (client portal)
+router.post('/tickets', authenticate, restrictToOwnData, async (req, res) => {
+    const client = await pool.connect();
+    try {
+        if (req.user.userType !== 'client') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+
+        const { title, description, category_id, object_id, priority = 'medium' } = req.body;
+
+        // Validate required fields
+        if (!title || !description) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Title and description are required' 
+            });
+        }
+
+        await client.query('BEGIN');
+
+        const ticket = await PortalService.createClientTicket(
+            client,
+            req.user.clientId,
+            { title, description, category_id, object_id, priority }
+        );
+
+        await client.query('COMMIT');
+
+        // Audit log
+        try {
+            await AuditService.log({
+                clientId: req.user.clientId,
+                userType: 'client',
+                actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.CREATE_TICKET,
+                entityType: ENTITY_TYPES.TICKET,
+                entityId: ticket.id,
+                newValues: {
+                    ticket_id: ticket.id,
+                    ticket_number: ticket.ticket_number,
+                    title: ticket.title,
+                    client_id: req.user.clientId,
+                    category_id: ticket.category_id,
+                    priority: ticket.priority
+                },
+                ipAddress: req.ip,
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+        } catch (auditError) {
+            console.error('Audit log failed:', auditError);
+        }
+
+        res.status(201).json({
+            success: true,
+            ticket
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error creating ticket:', error);
+        
+        if (error.message === 'Object not found or access denied') {
+            return res.status(400).json({ success: false, message: error.message });
+        }
+        
+        res.status(500).json({ success: false, message: 'Server error' });
+    } finally {
+        client.release();
+    }
 });
 
 module.exports = router;

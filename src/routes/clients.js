@@ -7,6 +7,7 @@ const ClientService = require('../services/clients.service');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { staffOnly } = require('../middleware/clientAccess');
 
 // Налаштування для завантаження файлів
 const storage = multer.diskStorage({
@@ -26,23 +27,41 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-// Отримання списку клієнтів
-router.get('/', authenticate, checkPermission('clients.read'), async (req, res) => {
-    try {
-        const result = await ClientService.getClients(req.query);
-        res.json({
-            success: true,
-            clients: result.clients,
-            total: result.total
-        });
-    } catch (error) {
-        console.error('Error fetching clients:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Помилка при отриманні списку клієнтів'
-        });
+// Search clients (for autocomplete)
+router.get('/search', authenticate, staffOnly, async (req, res) => {
+  try {
+    const { query, limit = 10 } = req.query;
+
+    let whereClause = 'WHERE is_active = true';
+    let queryParams = [];
+    
+    if (query && query.length >= 2) {
+      whereClause += ' AND (name ILIKE $1 OR email ILIKE $1)';
+      queryParams.push(`%${query}%`);
+      queryParams.push(parseInt(limit));
+    } else {
+      queryParams.push(parseInt(limit));
     }
+
+    const result = await pool.query(
+      `SELECT id, name, email 
+       FROM clients.clients 
+       ${whereClause}
+       ORDER BY name 
+       LIMIT $${queryParams.length}`,
+      queryParams
+    );
+
+    res.json({
+      success: true,
+      clients: result.rows
+    });
+  } catch (error) {
+    console.error('Error searching clients:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
 });
+
 
 // Отримання одного клієнта
 router.get('/:id', authenticate, checkPermission('clients.read'), async (req, res) => {
@@ -68,6 +87,24 @@ router.get('/:id', authenticate, checkPermission('clients.read'), async (req, re
         });
     }
 });
+// Отримання списку клієнтів
+router.get('/', authenticate, checkPermission('clients.read'), async (req, res) => {
+    try {
+        const result = await ClientService.getClients(req.query);
+        res.json({
+            success: true,
+            clients: result.clients,
+            total: result.total
+        });
+    } catch (error) {
+        console.error('Error fetching clients:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні списку клієнтів'
+        });
+    }
+});
+
 
 // Отримання інформації про оплату клієнта в Wialon
 router.get('/:id/payment-status', authenticate, checkPermission('clients.read'), async (req, res) => {
@@ -347,5 +384,7 @@ router.delete('/:clientId/documents/:documentId', authenticate, checkPermission(
         client.release();
     }
 });
+
+
 
 module.exports = router;

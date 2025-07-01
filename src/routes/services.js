@@ -8,6 +8,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const PDFService = require('../services/pdfService');
+const AuditService = require('../services/auditService');
+const { AUDIT_TYPES } = require('../constants/constants');
 
 // Налаштування для завантаження файлів
 const storage = multer.diskStorage({
@@ -26,6 +28,81 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage });
+
+// Отримання списку документів рахунку (додатковий корисний ендпойнт)
+router.get('/invoices/:id/documents', authenticate, checkPermission('invoices.read'), async (req, res) => {
+    try {
+        const documentsResult = await pool.query(
+            `SELECT 
+                id.id,
+                id.document_name,
+                id.document_type,
+                id.file_path,
+                id.file_size,
+                id.created_at,
+                u.email as uploaded_by_email,
+                COALESCE(u.first_name || ' ' || u.last_name, u.email) as uploaded_by_name
+            FROM services.invoice_documents id
+            LEFT JOIN auth.users u ON id.uploaded_by = u.id
+            WHERE id.invoice_id = $1
+            ORDER BY id.created_at DESC`,
+            [req.params.id]
+        );
+
+        res.json({
+            success: true,
+            documents: documentsResult.rows
+        });
+    } catch (error) {
+        console.error('Error fetching invoice documents:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні списку документів'
+        });
+    }
+});
+
+// Завантаження документу (скачування)
+router.get('/invoices/:id/documents/:documentId/download', authenticate, checkPermission('invoices.read'), async (req, res) => {
+    try {
+        // Отримуємо інформацію про документ
+        const documentResult = await pool.query(
+            'SELECT * FROM services.invoice_documents WHERE id = $1 AND invoice_id = $2',
+            [req.params.documentId, req.params.id]
+        );
+
+        if (documentResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Документ не знайдено'
+            });
+        }
+
+        const document = documentResult.rows[0];
+        const fullFilePath = path.join(process.env.UPLOAD_DIR, document.file_path);
+
+        // Перевіряємо чи існує файл
+        if (!fs.existsSync(fullFilePath)) {
+            return res.status(404).json({
+                success: false,
+                message: 'Файл не знайдено на сервері'
+            });
+        }
+
+        // Встановлюємо заголовки для скачування
+        res.setHeader('Content-Disposition', `attachment; filename="${document.document_name}"`);
+        res.setHeader('Content-Type', 'application/octet-stream');
+
+        // Відправляємо файл
+        res.sendFile(fullFilePath);
+    } catch (error) {
+        console.error('Error downloading document:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при завантаженні документа'
+        });
+    }
+});
 
 // Отримання списку послуг
 router.get('/', authenticate, checkPermission('services.read'), async (req, res) => {
@@ -502,7 +579,6 @@ router.delete('/:id', authenticate, checkPermission('services.delete'), async (r
 });
 
 // Генерація PDF для рахунку
-// Генерація PDF для рахунку
 router.get('/invoices/:id/pdf', authenticate, checkPermission('invoices.read'), async (req, res) => {
     try {
         const invoice = await ServiceService.getInvoiceDetails(req.params.id);
@@ -666,5 +742,77 @@ router.put('/invoices/:id', authenticate, checkPermission('invoices.update'), as
         client.release();
     }
 });
+
+// Видалення документа з рахунку
+router.delete('/invoices/:id/documents/:documentId', authenticate, checkPermission('invoices.update'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        // Отримуємо інформацію про документ
+        const documentResult = await client.query(
+            'SELECT * FROM services.invoice_documents WHERE id = $1 AND invoice_id = $2',
+            [req.params.documentId, req.params.id]
+        );
+
+        if (documentResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Документ не знайдено'
+            });
+        }
+
+        const document = documentResult.rows[0];
+        
+        // Видаляємо запис з бази даних
+        await client.query(
+            'DELETE FROM services.invoice_documents WHERE id = $1',
+            [req.params.documentId]
+        );
+        
+        // Видаляємо файл з файлової системи
+        const fullFilePath = path.join(process.env.UPLOAD_DIR, document.file_path);
+        if (fs.existsSync(fullFilePath)) {
+            try {
+                fs.unlinkSync(fullFilePath);
+            } catch (fileError) {
+                console.warn('Warning: Could not delete file from filesystem:', fileError);
+                // Не кидаємо помилку, оскільки запис з БД вже видалено
+            }
+        }
+
+        // Аудит (якщо потрібно)
+        await AuditService.log({
+            userId: req.user.userId,
+            actionType: 'INVOICE_DOCUMENT_DELETE',
+            entityType: 'INVOICE_DOCUMENT',
+            entityId: req.params.documentId,
+            oldValues: document,
+            ipAddress: req.ip,
+            tableSchema: 'services',
+            tableName: 'invoice_documents',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+        
+        await client.query('COMMIT');
+        
+        res.json({
+            success: true,
+            message: 'Документ успішно видалено'
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error deleting document:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при видаленні документа'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+
 
 module.exports = router;
