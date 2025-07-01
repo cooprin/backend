@@ -43,9 +43,10 @@ static async getUserNotifications(recipientId, recipientType, filters = {}) {
 
     // Фільтр по пошуку в заголовку та повідомленні
     if (search && search.trim()) {
-        whereConditions.push(`(title ILIKE $${paramIndex} OR message ILIKE $${paramIndex})`);
+        whereConditions.push(`(title ILIKE ${paramIndex} OR message ILIKE ${paramIndex + 1})`);
         params.push(`%${search.trim()}%`);
-        paramIndex++;
+        params.push(`%${search.trim()}%`);
+        paramIndex += 2;
     }
 
     const whereClause = whereConditions.join(' AND ');
