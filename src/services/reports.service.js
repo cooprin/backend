@@ -540,17 +540,192 @@ class ReportsService {
     }
 
     // Завантаження звітів з файлової системи (для майбутнього використання)
-    static async loadReportsFromFiles(reportsDir = './reports') {
+// Завантаження звітів з файлової системи
+static async loadReportsFromFiles(reportsDir = './reports') {
+    const client = await pool.connect();
+    
+    try {
+        await client.query('BEGIN');
+        
+        console.log('Loading reports from directory:', reportsDir);
+        
+        // Перевіряємо чи існує директорія
         try {
-            // Ця функція буде розширена пізніше для читання JSON/YAML файлів
-            console.log('Loading reports from directory:', reportsDir);
-            // TODO: Implement file-based report loading
-            return { success: true, message: 'File-based loading not implemented yet' };
+            await fs.access(reportsDir);
         } catch (error) {
-            console.error('Error loading reports from files:', error);
-            throw error;
+            throw new Error(`Директорія ${reportsDir} не існує`);
         }
+
+        // Читаємо всі файли з директорії
+        const files = await fs.readdir(reportsDir);
+        const jsonFiles = files.filter(file => 
+            file.endsWith('.json') || file.endsWith('.yaml') || file.endsWith('.yml')
+        );
+
+        if (jsonFiles.length === 0) {
+            return { 
+                success: true, 
+                message: 'Не знайдено файлів звітів (.json, .yaml, .yml)', 
+                loaded: 0,
+                errors: []
+            };
+        }
+
+        const results = {
+            loaded: 0,
+            skipped: 0,
+            errors: [],
+            reports: []
+        };
+
+        // Обробляємо кожен файл
+        for (const file of jsonFiles) {
+            try {
+                const filePath = path.join(reportsDir, file);
+                const fileContent = await fs.readFile(filePath, 'utf8');
+                
+                let reportData;
+                
+                // Парсимо залежно від типу файлу
+                if (file.endsWith('.json')) {
+                    reportData = JSON.parse(fileContent);
+                } else if (file.endsWith('.yaml') || file.endsWith('.yml')) {
+                    // Якщо потрібна підтримка YAML, треба встановити yaml пакет
+                    // const yaml = require('yaml');
+                    // reportData = yaml.parse(fileContent);
+                    throw new Error('YAML файли поки не підтримуються. Використовуйте JSON.');
+                }
+
+                // Валідація обов'язкових полів
+                if (!reportData.name || !reportData.code || !reportData.sql_query) {
+                    results.errors.push({
+                        file,
+                        error: 'Відсутні обов\'язкові поля: name, code, sql_query'
+                    });
+                    continue;
+                }
+
+                // Перевіряємо чи звіт з таким кодом вже існує
+                const existingReport = await client.query(
+                    'SELECT id FROM reports.report_definitions WHERE code = $1',
+                    [reportData.code]
+                );
+
+                if (existingReport.rows.length > 0) {
+                    results.skipped++;
+                    results.errors.push({
+                        file,
+                        error: `Звіт з кодом "${reportData.code}" вже існує`
+                    });
+                    continue;
+                }
+
+                // Створюємо звіт
+                const newReport = await client.query(
+                    `INSERT INTO reports.report_definitions (
+                        name, code, description, sql_query, parameters_schema,
+                        output_format, chart_config, execution_timeout, cache_duration,
+                        is_active, created_by
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    RETURNING *`,
+                    [
+                        reportData.name,
+                        reportData.code,
+                        reportData.description || '',
+                        reportData.sql_query,
+                        reportData.parameters_schema || {},
+                        reportData.output_format || 'table',
+                        reportData.chart_config || {},
+                        reportData.execution_timeout || 30,
+                        reportData.cache_duration || 0,
+                        reportData.is_active !== false, // true за замовчуванням
+                        1 // system user ID, можна передавати як параметр
+                    ]
+                );
+
+                const createdReport = newReport.rows[0];
+
+                // Додаємо параметри, якщо є
+                if (reportData.parameters && Array.isArray(reportData.parameters)) {
+                    for (const param of reportData.parameters) {
+                        await client.query(
+                            `INSERT INTO reports.report_parameters (
+                                report_id, parameter_name, parameter_type, display_name,
+                                description, is_required, default_value, validation_rules,
+                                options, ordering
+                            )
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                            [
+                                createdReport.id,
+                                param.parameter_name,
+                                param.parameter_type,
+                                param.display_name || param.parameter_name,
+                                param.description || '',
+                                param.is_required || false,
+                                param.default_value || null,
+                                param.validation_rules || {},
+                                param.options || [],
+                                param.ordering || 0
+                            ]
+                        );
+                    }
+                }
+
+                // Додаємо прив'язки до сторінок, якщо є
+                if (reportData.page_assignments && Array.isArray(reportData.page_assignments)) {
+                    for (const assignment of reportData.page_assignments) {
+                        await client.query(
+                            `INSERT INTO reports.page_report_assignments (
+                                report_id, page_identifier, page_title, display_order,
+                                is_visible, auto_execute, created_by
+                            )
+                            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                            [
+                                createdReport.id,
+                                assignment.page_identifier,
+                                assignment.page_title || assignment.page_identifier,
+                                assignment.display_order || 0,
+                                assignment.is_visible !== false,
+                                assignment.auto_execute || false,
+                                1 // system user ID
+                            ]
+                        );
+                    }
+                }
+
+                results.loaded++;
+                results.reports.push({
+                    file,
+                    code: reportData.code,
+                    name: reportData.name,
+                    id: createdReport.id
+                });
+
+            } catch (error) {
+                results.errors.push({
+                    file,
+                    error: error.message
+                });
+            }
+        }
+
+        await client.query('COMMIT');
+
+        return {
+            success: true,
+            message: `Завантажено ${results.loaded} звітів з ${jsonFiles.length} файлів`,
+            ...results
+        };
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error loading reports from files:', error);
+        throw error;
+    } finally {
+        client.release();
     }
+}
 }
 
 module.exports = ReportsService;
