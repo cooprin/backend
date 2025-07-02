@@ -1,0 +1,42 @@
+{
+  "name": "Список клієнтів",
+  "code": "clients_list",
+  "description": "Звіт зі списком всіх клієнтів з фільтрацією",
+  "sql_query": "SELECT c.id, c.name, c.email, c.phone, c.contact_person, c.is_active, c.created_at, COUNT(o.id) as objects_count FROM clients.clients c LEFT JOIN wialon.objects o ON c.id = o.client_id WHERE (:search = '' OR c.name ILIKE '%' || :search || '%' OR c.email ILIKE '%' || :search || '%') AND (:is_active IS NULL OR c.is_active = :is_active) GROUP BY c.id ORDER BY c.name",
+  "output_format": "table",
+  "execution_timeout": 30,
+  "cache_duration": 15,
+  "parameters": [
+    {
+      "parameter_name": "search",
+      "parameter_type": "text",
+      "display_name": "Пошук",
+      "description": "Пошук за назвою або email клієнта",
+      "is_required": false,
+      "default_value": "",
+      "ordering": 1
+    },
+    {
+      "parameter_name": "is_active",
+      "parameter_type": "select",
+      "display_name": "Статус",
+      "description": "Активний статус клієнта",
+      "is_required": false,
+      "options": [
+        {"value": null, "label": "Всі"},
+        {"value": true, "label": "Активні"},
+        {"value": false, "label": "Неактивні"}
+      ],
+      "ordering": 2
+    }
+  ],
+  "page_assignments": [
+    {
+      "page_identifier": "clients",
+      "page_title": "Клієнти",
+      "display_order": 1,
+      "is_visible": true,
+      "auto_execute": true
+    }
+  ]
+}
