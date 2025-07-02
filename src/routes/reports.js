@@ -377,4 +377,48 @@ router.post('/load-from-files', authenticate, staffOnly, checkPermission('report
     }
 });
 
+// Попередній перегляд SQL запиту (тільки персонал)
+router.post('/preview-sql', authenticate, staffOnly, checkPermission('reports.read'), async (req, res) => {
+    try {
+        const { sql_query, parameters = {}, limit = 10 } = req.body;
+        
+        if (!sql_query || sql_query.trim() === '') {
+            return res.status(400).json({
+                success: false,
+                message: 'SQL запит є обов\'язковим'
+            });
+        }
+
+        // Підготовляємо SQL запит з параметрами
+        let previewQuery = sql_query;
+        
+        // Замінюємо параметри в запиті (як в execute_report функції)
+        for (const [paramKey, paramValue] of Object.entries(parameters)) {
+            previewQuery = previewQuery.replace(
+                new RegExp(':' + paramKey, 'g'), 
+                `'${paramValue}'`
+            );
+        }
+        
+        // Додаємо LIMIT для безпеки
+        const limitedQuery = `SELECT * FROM (${previewQuery}) preview_data LIMIT ${parseInt(limit)}`;
+        
+        const result = await pool.query(limitedQuery);
+        
+        res.json({
+            success: true,
+            data: result.rows,
+            rowsCount: result.rows.length,
+            query: limitedQuery
+        });
+        
+    } catch (error) {
+        console.error('Error previewing SQL query:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при виконанні SQL запиту'
+        });
+    }
+});
+
 module.exports = router;
