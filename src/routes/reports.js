@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage() });
 const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { checkPermission } = require('../middleware/checkPermission');
@@ -351,9 +353,16 @@ router.post('/cache/clear', authenticate, staffOnly, checkPermission('reports.up
 });
 
 // Завантаження звітів з файлів (тільки персонал)
-router.post('/load-from-files', authenticate, staffOnly, checkPermission('reports.create'), async (req, res) => {
+router.post('/load-from-files', authenticate, staffOnly, checkPermission('reports.create'), upload.array('reports', 10), async (req, res) => {
     try {
-        const result = await ReportsService.loadReportsFromFiles(req.body.reportsDir);
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Не завантажено жодного файлу'
+            });
+        }
+
+        const result = await ReportsService.loadReportsFromFiles(req.files, req.user.userId, req);
         
         res.json({
             success: true,
@@ -363,7 +372,7 @@ router.post('/load-from-files', authenticate, staffOnly, checkPermission('report
         console.error('Error loading reports from files:', error);
         res.status(500).json({
             success: false,
-            message: 'Помилка при завантаженні звітів з файлів'
+            message: error.message || 'Помилка при завантаженні звітів з файлів'
         });
     }
 });

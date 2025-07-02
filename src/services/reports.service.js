@@ -539,37 +539,14 @@ class ReportsService {
         }
     }
 
-    // Завантаження звітів з файлової системи (для майбутнього використання)
-// Завантаження звітів з файлової системи
-static async loadReportsFromFiles(reportsDir = './reports') {
+// Завантаження звітів з файлів (через upload)
+static async loadReportsFromFiles(files, userId, req) {
     const client = await pool.connect();
     
     try {
         await client.query('BEGIN');
         
-        console.log('Loading reports from directory:', reportsDir);
-        
-        // Перевіряємо чи існує директорія
-        try {
-            await fs.access(reportsDir);
-        } catch (error) {
-            throw new Error(`Директорія ${reportsDir} не існує`);
-        }
-
-        // Читаємо всі файли з директорії
-        const files = await fs.readdir(reportsDir);
-        const jsonFiles = files.filter(file => 
-            file.endsWith('.json') || file.endsWith('.yaml') || file.endsWith('.yml')
-        );
-
-        if (jsonFiles.length === 0) {
-            return { 
-                success: true, 
-                message: 'Не знайдено файлів звітів (.json, .yaml, .yml)', 
-                loaded: 0,
-                errors: []
-            };
-        }
+        console.log('Loading reports from uploaded files:', files.length);
 
         const results = {
             loaded: 0,
@@ -578,28 +555,35 @@ static async loadReportsFromFiles(reportsDir = './reports') {
             reports: []
         };
 
-        // Обробляємо кожен файл
-        for (const file of jsonFiles) {
+        // Обробляємо кожен завантажений файл
+        for (const file of files) {
             try {
-                const filePath = path.join(reportsDir, file);
-                const fileContent = await fs.readFile(filePath, 'utf8');
+                // Перевіряємо розширення файлу
+                const fileName = file.originalname;
+                const fileExtension = fileName.split('.').pop().toLowerCase();
                 
+                if (!['json', 'yaml', 'yml'].includes(fileExtension)) {
+                    results.errors.push({
+                        file: fileName,
+                        error: 'Підтримуються тільки JSON, YAML файли'
+                    });
+                    continue;
+                }
+
+                // Парсимо вміст файлу з buffer
+                const fileContent = file.buffer.toString('utf8');
                 let reportData;
                 
-                // Парсимо залежно від типу файлу
-                if (file.endsWith('.json')) {
+                if (fileExtension === 'json') {
                     reportData = JSON.parse(fileContent);
-                } else if (file.endsWith('.yaml') || file.endsWith('.yml')) {
-                    // Якщо потрібна підтримка YAML, треба встановити yaml пакет
-                    // const yaml = require('yaml');
-                    // reportData = yaml.parse(fileContent);
+                } else if (['yaml', 'yml'].includes(fileExtension)) {
                     throw new Error('YAML файли поки не підтримуються. Використовуйте JSON.');
                 }
 
                 // Валідація обов'язкових полів
                 if (!reportData.name || !reportData.code || !reportData.sql_query) {
                     results.errors.push({
-                        file,
+                        file: fileName,
                         error: 'Відсутні обов\'язкові поля: name, code, sql_query'
                     });
                     continue;
@@ -614,7 +598,7 @@ static async loadReportsFromFiles(reportsDir = './reports') {
                 if (existingReport.rows.length > 0) {
                     results.skipped++;
                     results.errors.push({
-                        file,
+                        file: fileName,
                         error: `Звіт з кодом "${reportData.code}" вже існує`
                     });
                     continue;
@@ -639,8 +623,8 @@ static async loadReportsFromFiles(reportsDir = './reports') {
                         reportData.chart_config || {},
                         reportData.execution_timeout || 30,
                         reportData.cache_duration || 0,
-                        reportData.is_active !== false, // true за замовчуванням
-                        1 // system user ID, можна передавати як параметр
+                        reportData.is_active !== false,
+                        userId
                     ]
                 );
 
@@ -688,7 +672,7 @@ static async loadReportsFromFiles(reportsDir = './reports') {
                                 assignment.display_order || 0,
                                 assignment.is_visible !== false,
                                 assignment.auto_execute || false,
-                                1 // system user ID
+                                userId
                             ]
                         );
                     }
@@ -696,7 +680,7 @@ static async loadReportsFromFiles(reportsDir = './reports') {
 
                 results.loaded++;
                 results.reports.push({
-                    file,
+                    file: fileName,
                     code: reportData.code,
                     name: reportData.name,
                     id: createdReport.id
@@ -704,7 +688,7 @@ static async loadReportsFromFiles(reportsDir = './reports') {
 
             } catch (error) {
                 results.errors.push({
-                    file,
+                    file: file.originalname,
                     error: error.message
                 });
             }
@@ -714,7 +698,7 @@ static async loadReportsFromFiles(reportsDir = './reports') {
 
         return {
             success: true,
-            message: `Завантажено ${results.loaded} звітів з ${jsonFiles.length} файлів`,
+            message: `Завантажено ${results.loaded} звітів з ${files.length} файлів`,
             ...results
         };
 
