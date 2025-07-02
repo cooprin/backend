@@ -108,14 +108,16 @@ class ReportsService {
     }
 
     // Отримання звіту за ID з детальною інформацією
-    static async getReportById(id) {
-        const reportQuery = `
-            SELECT 
-                rd.*,
-                u.email as created_by_email,
-                u.first_name || ' ' || u.last_name as created_by_name,
-                json_agg(
-                    DISTINCT jsonb_build_object(
+static async getReportById(id) {
+    const reportQuery = `
+        SELECT 
+            rd.*,
+            u.email as created_by_email,
+            u.first_name || ' ' || u.last_name as created_by_name,
+            COALESCE(
+                (SELECT json_agg(param_data ORDER BY param_data->>'ordering')
+                 FROM (
+                    SELECT jsonb_build_object(
                         'id', rp.id,
                         'parameter_name', rp.parameter_name,
                         'parameter_type', rp.parameter_type,
@@ -126,34 +128,41 @@ class ReportsService {
                         'validation_rules', rp.validation_rules,
                         'options', rp.options,
                         'ordering', rp.ordering
-                    ) ORDER BY rp.ordering
-                ) FILTER (WHERE rp.id IS NOT NULL) as parameters,
-                json_agg(
-                    DISTINCT jsonb_build_object(
+                    ) as param_data
+                    FROM reports.report_parameters rp
+                    WHERE rp.report_id = rd.id
+                 ) params),
+                '[]'::json
+            ) as parameters,
+            COALESCE(
+                (SELECT json_agg(assign_data)
+                 FROM (
+                    SELECT jsonb_build_object(
                         'id', pra.id,
                         'page_identifier', pra.page_identifier,
                         'page_title', pra.page_title,
                         'display_order', pra.display_order,
                         'is_visible', pra.is_visible,
                         'auto_execute', pra.auto_execute
-                    )
-                ) FILTER (WHERE pra.id IS NOT NULL) as page_assignments
-            FROM reports.report_definitions rd
-            LEFT JOIN auth.users u ON rd.created_by = u.id
-            LEFT JOIN reports.report_parameters rp ON rd.id = rp.report_id
-            LEFT JOIN reports.page_report_assignments pra ON rd.id = pra.report_id
-            WHERE rd.id = $1
-            GROUP BY rd.id, u.email, u.first_name, u.last_name
-        `;
+                    ) as assign_data
+                    FROM reports.page_report_assignments pra
+                    WHERE pra.report_id = rd.id
+                 ) assignments),
+                '[]'::json
+            ) as page_assignments
+        FROM reports.report_definitions rd
+        LEFT JOIN auth.users u ON rd.created_by = u.id
+        WHERE rd.id = $1
+    `;
 
-        const result = await pool.query(reportQuery, [id]);
-        
-        if (result.rows.length === 0) {
-            return null;
-        }
-
-        return result.rows[0];
+    const result = await pool.query(reportQuery, [id]);
+    
+    if (result.rows.length === 0) {
+        return null;
     }
+
+    return result.rows[0];
+}
 
     // Створення нового звіту
     static async createReport(client, data, userId, req) {
