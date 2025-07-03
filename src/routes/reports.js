@@ -12,13 +12,13 @@ const ReportsService = require('../services/reports.service');
 router.get('/page/:pageIdentifier', authenticate, async (req, res) => {
     try {
         const { pageIdentifier } = req.params;
-        const { userType, userId, clientId } = req.user;
+        const { userType, userId } = req.user;
 
         const reports = await ReportsService.getPageReports(
             pageIdentifier,
             userId,
             userType,
-            userType === 'client' ? clientId : null
+            null
         );
 
         res.json({
@@ -380,7 +380,7 @@ router.post('/load-from-files', authenticate, staffOnly, checkPermission('report
 // Попередній перегляд SQL запиту (тільки персонал)
 router.post('/preview-sql', authenticate, staffOnly, checkPermission('reports.read'), async (req, res) => {
     try {
-        const { sql_query, parameters = {}, limit = 10 } = req.body;
+        const { sql_query, parameters = {} } = req.body;
         
         if (!sql_query || sql_query.trim() === '') {
             return res.status(400).json({
@@ -389,34 +389,58 @@ router.post('/preview-sql', authenticate, staffOnly, checkPermission('reports.re
             });
         }
 
-        // Підготовляємо SQL запит з параметрами
-        let previewQuery = sql_query;
+        const result = await ReportsService.previewSqlQuery(
+            sql_query,
+            parameters,
+            req.user.userId,
+            req
+        );
         
-        // Замінюємо параметри в запиті (як в execute_report функції)
-        for (const [paramKey, paramValue] of Object.entries(parameters)) {
-            previewQuery = previewQuery.replace(
-                new RegExp(':' + paramKey, 'g'), 
-                `'${paramValue}'`
-            );
-        }
-        
-        // Додаємо LIMIT для безпеки
-        const limitedQuery = `SELECT * FROM (${previewQuery}) preview_data LIMIT ${parseInt(limit)}`;
-        
-        const result = await pool.query(limitedQuery);
-        
-        res.json({
-            success: true,
-            data: result.rows,
-            rowsCount: result.rows.length,
-            query: limitedQuery
-        });
+        res.json(result);
         
     } catch (error) {
         console.error('Error previewing SQL query:', error);
         res.status(400).json({
             success: false,
             message: error.message || 'Помилка при виконанні SQL запиту'
+        });
+    }
+});
+
+// Експорт результатів звіту (тільки персонал)
+router.post('/:id/export', authenticate, staffOnly, checkPermission('reports.read'), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { parameters = {}, format = 'csv' } = req.body;
+        
+        // Валідація формату
+        const validFormats = ['csv', 'json'];
+        if (!validFormats.includes(format)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Unsupported export format. Supported: csv, json'
+            });
+        }
+
+        const result = await ReportsService.exportReportResults(
+            id,
+            parameters,
+            format,
+            req.user.userId,
+            req
+        );
+
+        // Встановлюємо заголовки для завантаження файлу
+        res.setHeader('Content-Type', result.contentType);
+        res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+        
+        res.send(result.data);
+        
+    } catch (error) {
+        console.error('Error exporting report:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message || 'Помилка при експорті звіту'
         });
     }
 });

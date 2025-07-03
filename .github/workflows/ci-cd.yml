@@ -52,7 +52,6 @@ jobs:
           platforms: linux/amd64
           tags: |
             ${{ secrets.DOCKER_HUB_USERNAME }}/crm_backend:${{ steps.params.outputs.tag }}
-            ${{ secrets.DOCKER_HUB_USERNAME }}/crm_backend:prod-${{ github.sha }}
 
       # Збірка для development (повний образ з dev tools)
       - name: Build and push development image
@@ -65,7 +64,6 @@ jobs:
           platforms: linux/amd64
           tags: |
             ${{ secrets.DOCKER_HUB_USERNAME }}/crm_backend:${{ steps.params.outputs.tag }}
-            ${{ secrets.DOCKER_HUB_USERNAME }}/crm_backend:dev-${{ github.sha }}
 
       # Виводимо інформацію про створений образ
       - name: Image info
