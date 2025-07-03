@@ -32,6 +32,7 @@ const ticketsRoutes = require('./routes/tickets');
 const ticketCommentsRoutes = require('./routes/ticket-comments');
 const notificationsRoutes = require('./routes/notifications');
 const chatRoutes = require('./routes/chat');
+const reportsRouter = require('./routes/reports');
 
 const app = express();
 app.set('trust proxy', true);
@@ -79,6 +80,7 @@ app.use('/tickets', ticketsRoutes);
 app.use('/ticket-comments', ticketCommentsRoutes);
 app.use('/notifications', authenticate, notificationsRoutes);
 app.use('/chat', authenticate, chatRoutes);
+app.use('/reports', authenticate, reportsRouter);
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
