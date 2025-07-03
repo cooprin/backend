@@ -442,6 +442,10 @@ static async getReportById(id) {
 
     // Виконання звіту
     static async executeReport(reportId, parameters = {}, userId, userType = 'staff', clientId = null, pageIdentifier = null, req) {
+    // Перевіряємо що це staff користувач
+    if (userType !== 'staff') {
+        throw new Error('Reports are only available for staff users');
+    }
         try {
             // Використовуємо функцію з БД
             const result = await pool.query(
@@ -717,6 +721,108 @@ static async loadReportsFromFiles(files, userId, req) {
         throw error;
     } finally {
         client.release();
+    }
+}
+// Експорт результатів звіту
+static async exportReportResults(reportId, parameters = {}, format = 'csv', userId, req) {
+    try {
+        const result = await pool.query(
+            'SELECT * FROM reports.export_report_results($1, $2, $3, $4, $5)',
+            [
+                reportId,
+                JSON.stringify(parameters),
+                userId,
+                'staff',
+                format
+            ]
+        );
+
+        const exportResult = result.rows[0];
+        
+        if (!exportResult.success) {
+            throw new Error(exportResult.error_message || 'Export failed');
+        }
+
+        // Логуємо експорт через аудит
+        await AuditService.log({
+            userId,
+            actionType: 'EXPORT',
+            entityType: 'REPORT',
+            entityId: reportId,
+            newValues: {
+                format,
+                parameters,
+                filename: exportResult.filename
+            },
+            ipAddress: req.ip,
+            tableSchema: 'reports',
+            tableName: 'report_definitions',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+
+        return {
+            success: true,
+            data: exportResult.data,
+            filename: exportResult.filename,
+            contentType: exportResult.content_type
+        };
+    } catch (error) {
+        console.error('Error exporting report:', error);
+        throw error;
+    }
+}
+
+// Попередній перегляд SQL запиту (безпечний)
+static async previewSqlQuery(sqlQuery, parameters = {}, userId, req) {
+    try {
+        // Валідуємо SQL на заборонені команди
+        const forbiddenPatterns = [
+            /\b(DROP|DELETE|UPDATE|INSERT|ALTER|CREATE|TRUNCATE|GRANT|REVOKE)\b/i,
+            /\b(pg_|information_schema\.|pg_catalog\.)\b/i,
+            /\b(SELECT\s+.*\s+INTO\s+)\b/i,
+            /\b(COPY\s+|\\copy\s+)\b/i
+        ];
+
+        for (const pattern of forbiddenPatterns) {
+            if (pattern.test(sqlQuery)) {
+                throw new Error('SQL query contains forbidden operations');
+            }
+        }
+
+        // Обмежуємо кількість результатів
+        const limitedQuery = `SELECT * FROM (${sqlQuery}) preview_query LIMIT 10`;
+        
+        const result = await pool.query(limitedQuery);
+        
+        // Логуємо перегляд
+        await AuditService.log({
+            userId,
+            actionType: 'PREVIEW',
+            entityType: 'REPORT',
+            entityId: null,
+            newValues: {
+                sql_query: sqlQuery.substring(0, 500), // Обмежуємо довжину для логу
+                parameters,
+                rows_returned: result.rows.length
+            },
+            ipAddress: req.ip,
+            tableSchema: 'reports',
+            tableName: 'report_definitions',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+
+        return {
+            success: true,
+            data: result.rows,
+            rowsCount: result.rows.length,
+            query: limitedQuery
+        };
+        
+    } catch (error) {
+        console.error('Error previewing SQL query:', error);
+        throw error;
     }
 }
 }
