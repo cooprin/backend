@@ -14,14 +14,11 @@ router.get('/page/:pageIdentifier', authenticate, async (req, res) => {
         const { pageIdentifier } = req.params;
         const { userType, userId } = req.user;
 
-        const result = await ReportsService.executeReport(
-            id,
-            parameters,
+        const reports = await ReportsService.getPageReports(
+            pageIdentifier,
             userId,
             userType,
-            null,
-            pageIdentifier,
-            req
+            null
         );
 
         res.json({
