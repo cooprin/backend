@@ -159,12 +159,6 @@ router.put('/:id', authenticate, checkPermission('permissions.update'), async (r
       [id]
     );
 
-    if (oldData.rows[0]?.is_system) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot modify system permission'
-      });
-    }
 
     await client.query('BEGIN');
 
@@ -219,12 +213,6 @@ router.delete('/:id', authenticate, checkPermission('permissions.delete'), async
       [id]
     );
 
-    if (permissionData.rows[0]?.is_system) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot delete system permission'
-      });
-    }
 
     await pool.query('DELETE FROM auth.permissions WHERE id = $1', [id]);
 

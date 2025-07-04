@@ -270,13 +270,7 @@ router.put('/:id', authenticate, checkPermission('roles.update'), async (req, re
      });
    }
 
-   if (currentRole.rows[0].is_system) {
-     return res.status(400).json({
-       success: false,
-       message: 'Cannot modify system role'
-     });
-   }
-   
+  
    // Перевірка унікальності імені
    if (name !== currentRole.rows[0].name) {
      const existingRole = await client.query(
@@ -394,13 +388,6 @@ router.delete('/:id', authenticate, checkPermission('roles.delete'), async (req,
      });
    }
    
-   if (roleData.rows[0].is_system) {
-     return res.status(400).json({
-       success: false,
-       message: 'Cannot delete system role'
-     });
-   }
-
    const usersWithRole = await pool.query(
      'SELECT COUNT(*) FROM auth.user_roles WHERE role_id = $1',
      [id]
