@@ -476,7 +476,7 @@ static async getObjectRealTimeInfo(apiUrl, eid, wialonId, objectInfo) {
         itemId: parseInt(wialonId),
         timeFrom: thirtyMinutesAgo,
         timeTo: currentTime,
-        flags: 0,
+        flags: 1,
         flagsMask: 1, 
         loadCount: 100
     }))}&sid=${eid}`;
