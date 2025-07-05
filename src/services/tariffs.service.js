@@ -365,35 +365,64 @@ static async assignTariffToObject(client, data, userId, req) {
 
         const tariffData = tariffExists.rows[0];
 
-        // Отримуємо оптимальну дату початку дії тарифу (перше число першого неоплаченого місяця)
-        const optimalDateResult = await client.query(
-            'SELECT billing.get_optimal_tariff_change_date($1) as optimal_date',
-            [object_id]
-        );
-        const optimalDate = optimalDateResult.rows[0].optimal_date;
 
-        // Розбираємося з датою початку дії
+
+        // Отримуємо оптимальну дату початку дії тарифу (перше число першого неоплаченого місяця)
+// Розбираємося з датою початку дії
         let effectiveDate;
         if (effective_from) {
             effectiveDate = new Date(effective_from);
-            
-            // Перевіряємо, чи період вже оплачений
-            const effectiveMonth = effectiveDate.getMonth() + 1;
-            const effectiveYear = effectiveDate.getFullYear();
-            
-            const isPeriodPaidResult = await client.query(
-                'SELECT billing.is_period_paid($1, $2, $3) as is_paid',
-                [object_id, effectiveYear, effectiveMonth]
-            );
-            
-            if (isPeriodPaidResult.rows[0].is_paid) {
-                throw new Error(`Період ${effectiveMonth}/${effectiveYear} вже оплачений. Рекомендована дата початку дії: ${optimalDate.toLocaleDateString()}`);
-            }
         } else {
             // Якщо дата не вказана, використовуємо оптимальну дату
-            effectiveDate = optimalDate;
+            const optimalDateResult = await client.query(
+                'SELECT billing.get_optimal_tariff_change_date($1) as optimal_date',
+                [object_id]
+            );
+            effectiveDate = optimalDateResult.rows[0].optimal_date;
         }
 
+        // Перевірка існуючих тарифів - не можна встановлювати попередню або таку саму дату
+        const existingTariffsCheck = await client.query(
+            `SELECT id, effective_from, tariff_id, t.name as tariff_name
+             FROM billing.object_tariffs ot
+             JOIN billing.tariffs t ON ot.tariff_id = t.id
+             WHERE ot.object_id = $1 
+             AND ot.effective_from >= $2
+             ORDER BY ot.effective_from DESC`,
+            [object_id, effectiveDate]
+        );
+
+        if (existingTariffsCheck.rows.length > 0) {
+            const existingTariff = existingTariffsCheck.rows[0];
+            throw new Error(
+                `Неможливо встановити тариф на ${effectiveDate.toLocaleDateString()}, ` +
+                `оскільки існує тариф "${existingTariff.tariff_name}" ` +
+                `з ${new Date(existingTariff.effective_from).toLocaleDateString()}. ` +
+                `Можна встановити тариф тільки на більш пізню дату.`
+            );
+        }
+
+        // Перевірка оплат за поточний місяць - якщо є оплата, не можна змінювати тариф цього місяця
+        const effectiveMonth = effectiveDate.getMonth() + 1;
+        const effectiveYear = effectiveDate.getFullYear();
+
+        const currentMonthPaymentCheck = await client.query(
+            `SELECT COUNT(*) as payment_count
+             FROM billing.object_payment_records
+             WHERE object_id = $1 
+             AND billing_year = $2 
+             AND billing_month = $3
+             AND status IN ('paid', 'partial')`,
+            [object_id, effectiveYear, effectiveMonth]
+        );
+
+        if (parseInt(currentMonthPaymentCheck.rows[0].payment_count) > 0) {
+            throw new Error(
+                `Неможливо встановити тариф на ${effectiveDate.toLocaleDateString()}, ` +
+                `оскільки за ${effectiveMonth}/${effectiveYear} вже є оплата. ` +
+                `Тариф можна встановити тільки на наступний місяць.`
+            );
+        }
         // Перевірка, чи є вже активний тариф
         const currentTariff = await client.query(
             `SELECT id, tariff_id, effective_from FROM billing.object_tariffs 

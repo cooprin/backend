@@ -376,20 +376,40 @@ class PaymentService {
                         continue;
                     }
     
-                    // Отримуємо інформацію про тариф, якщо сума не вказана
+// Отримуємо інформацію про тариф, якщо сума не вказана
                     let objAmount = objPayment.amount;
-                    if (!objAmount) {
-                        const tariffQuery = `
-                            SELECT price FROM billing.tariffs WHERE id = $1
-                        `;
-                        const tariffResult = await client.query(tariffQuery, [objPayment.tariff_id]);
-                        if (tariffResult.rows.length > 0) {
-                            objAmount = tariffResult.rows[0].price;
-                        } else {
-                            throw new Error(`Тариф з ID ${objPayment.tariff_id} не знайдено`);
-                        }
-                    }
+                    let actualTariffId = objPayment.tariff_id;
                     
+                    if (!objAmount) {
+                        // Визначаємо період оплати
+                        const billingMonth = objPayment.billing_month || paymentMonth;
+                        const billingYear = objPayment.billing_year || paymentYear;
+                        
+                        // Отримуємо останній тариф для цього місяця
+                        const latestTariffResult = await client.query(
+                            'SELECT * FROM billing.get_latest_tariff_for_month($1, $2, $3)',
+                            [objPayment.object_id, billingYear, billingMonth]
+                        );
+                        
+                        if (latestTariffResult.rows.length > 0) {
+                            const latestTariff = latestTariffResult.rows[0];
+                            objAmount = latestTariff.tariff_price;
+                            actualTariffId = latestTariff.tariff_id;
+                        } else if (objPayment.tariff_id) {
+                            // Fallback до вказаного тарифу
+                            const tariffQuery = `
+                                SELECT price FROM billing.tariffs WHERE id = $1
+                            `;
+                            const tariffResult = await client.query(tariffQuery, [objPayment.tariff_id]);
+                            if (tariffResult.rows.length > 0) {
+                                objAmount = tariffResult.rows[0].price;
+                            } else {
+                                throw new Error(`Тариф з ID ${objPayment.tariff_id} не знайдено`);
+                            }
+                        } else {
+                            throw new Error(`Не знайдено активний тариф для об'єкта ${objPayment.object_id} за період ${billingMonth}/${billingYear}`);
+                        }
+                    }                    
                     // Визначаємо період оплати (поточний, якщо не вказано)
                     const billingMonth = objPayment.billing_month || paymentMonth;
                     const billingYear = objPayment.billing_year || paymentYear;
@@ -406,7 +426,7 @@ class PaymentService {
                     }
     
                     // Створюємо запис оплати для об'єкта за вказаний період
-                    await client.query(
+await client.query(
                         `INSERT INTO billing.object_payment_records (
                             object_id, payment_id, tariff_id, amount,
                             billing_month, billing_year, status
@@ -415,14 +435,13 @@ class PaymentService {
                         [
                             objPayment.object_id,
                             paymentId,
-                            objPayment.tariff_id,
+                            actualTariffId,
                             objAmount,
                             billingMonth,
                             billingYear,
                             objPayment.status || 'paid'
                         ]
-                    );
-                }
+                    );                }
             }
     
             // Аудит
@@ -705,16 +724,37 @@ static async getAvailablePaymentPeriods(objectId, count = 12) {
             const year = iterDate.getFullYear();
             const month = iterDate.getMonth() + 1; // Місяці в JS починаються з 0
             
-            // Знаходимо активний тариф для цього періоду
-            const activeTariff = tariffHistoryResult.rows.find(tariff => {
-                const effectiveFrom = new Date(tariff.effective_from);
-                const effectiveTo = tariff.effective_to ? new Date(tariff.effective_to) : new Date(9999, 11, 31);
+// Отримуємо останній тариф для цього періоду через нову функцію
+            let activeTariff = null;
+            try {
+                const latestTariffResult = await pool.query(
+                    'SELECT * FROM billing.get_latest_tariff_for_month($1, $2, $3)',
+                    [objectId, year, month]
+                );
                 
-                // Перше число поточного місяця
-                const periodDate = new Date(year, month - 1, 1);
-                
-                return effectiveFrom <= periodDate && periodDate <= effectiveTo;
-            });
+                if (latestTariffResult.rows.length > 0) {
+                    const latestTariff = latestTariffResult.rows[0];
+                    // Шукаємо відповідний тариф в історії для отримання назви
+                    const tariffWithName = tariffHistoryResult.rows.find(t => t.tariff_id === latestTariff.tariff_id);
+                    
+                    activeTariff = {
+                        tariff_id: latestTariff.tariff_id,
+                        tariff_name: tariffWithName ? tariffWithName.tariff_name : 'Невідомий тариф',
+                        price: latestTariff.tariff_price
+                    };
+                }
+            } catch (error) {
+                console.error(`Помилка отримання тарифу для періоду ${month}/${year}:`, error);
+                // Fallback до старої логіки
+                activeTariff = tariffHistoryResult.rows.find(tariff => {
+                    const effectiveFrom = new Date(tariff.effective_from);
+                    const effectiveTo = tariff.effective_to ? new Date(tariff.effective_to) : new Date(9999, 11, 31);
+                    
+                    const periodDate = new Date(year, month - 1, 1);
+                    
+                    return effectiveFrom <= periodDate && periodDate <= effectiveTo;
+                });
+            }
             
             // Додаємо період, тільки якщо є активний тариф
             if (activeTariff) {
