@@ -458,8 +458,16 @@ static async getObjectRealTimeInfo(apiUrl, eid, wialonId, objectInfo) {
     const position = objectData.pos || {};
     
     // Розрахунок часу 30 хвилин тому
-    const thirtyMinutesAgo = Math.floor(Date.now() / 1000) - (30 * 60);
-    const currentTime = Math.floor(Date.now() / 1000);
+    const now = Math.floor(Date.now() / 1000);
+    const thirtyMinutesAgo = now - (30 * 60);
+    const currentTime = now;
+
+        // Додаткова перевірка
+    console.log('DEBUG TIME CHECK:');
+    console.log('Date.now():', Date.now());
+    console.log('now (seconds):', now);
+    console.log('thirtyMinutesAgo:', thirtyMinutesAgo);
+    console.log('currentTime:', currentTime);
 
     console.log(`Loading messages for object ${wialonId} from ${new Date(thirtyMinutesAgo * 1000)} to ${new Date(currentTime * 1000)}`);
 
