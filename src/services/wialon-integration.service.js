@@ -461,20 +461,34 @@ static async getObjectRealTimeInfo(apiUrl, eid, wialonId, objectInfo) {
     const thirtyMinutesAgo = Math.floor(Date.now() / 1000) - (30 * 60);
     const currentTime = Math.floor(Date.now() / 1000);
 
-    // Отримання повідомлень за останні 30 хвилин
-    const messagesResponse = await axios.get(
-        `${apiUrl}/wialon/ajax.html?svc=messages/load_interval&params=${encodeURIComponent(JSON.stringify({
-            itemId: parseInt(wialonId),
-            timeFrom: thirtyMinutesAgo,
-            timeTo: currentTime,
-            flags: 0,
-            flagsMask: 65535,
-            loadCount: 100
-        }))}&sid=${eid}`,
-        { timeout: 10000 }
-    );
+    console.log(`Loading messages for object ${wialonId} from ${new Date(thirtyMinutesAgo * 1000)} to ${new Date(currentTime * 1000)}`);
 
-    const messages = messagesResponse.data?.messages || [];
+    // Отримання повідомлень за останні 30 хвилин - ПРАВИЛЬНИЙ ЗАПИТ згідно документації
+    const messagesUrl = `${apiUrl}/wialon/ajax.html?svc=messages/load_interval&params=${encodeURIComponent(JSON.stringify({
+        itemId: parseInt(wialonId),
+        timeFrom: thirtyMinutesAgo,
+        timeTo: currentTime,
+        flags: 0,
+        flagsMask: 65535,
+        loadCount: 100
+    }))}&sid=${eid}`;
+
+    const messagesResponse = await axios.get(messagesUrl, { timeout: 15000 });
+
+    console.log(`Messages response for object ${wialonId}:`, messagesResponse.data);
+
+    let messages = [];
+    if (messagesResponse.data && !messagesResponse.data.error) {
+        messages = messagesResponse.data.messages || [];
+        console.log(`Found ${messages.length} messages for object ${wialonId}`);
+    } else {
+        console.warn(`No messages or error for object ${wialonId}:`, messagesResponse.data);
+        
+        // Якщо помилка 1001 (Invalid session), логуємо це
+        if (messagesResponse.data?.error === 1001) {
+            console.error('Invalid session error - session may have expired');
+        }
+    }
     
     // Аналіз повідомлень
     const analysis = this.analyzeMessages(messages);
@@ -495,7 +509,12 @@ static async getObjectRealTimeInfo(apiUrl, eid, wialonId, objectInfo) {
             lat: position.y || 0,
             lon: position.x || 0
         },
-        last30min: analysis
+        last30min: analysis,
+        debug: {
+            messagesCount: messages.length,
+            timeFrom: new Date(thirtyMinutesAgo * 1000).toISOString(),
+            timeTo: new Date(currentTime * 1000).toISOString()
+        }
     };
 }
 
