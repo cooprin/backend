@@ -825,6 +825,17 @@ static async previewSqlQuery(sqlQuery, parameters = {}, userId, req) {
         throw error;
     }
 }
+// Отримання real-time даних об'єктів клієнта
+static async getClientObjectsRealTimeData(clientId) {
+    try {
+        const WialonIntegrationService = require('./wialon-integration.service');
+        const objectsData = await WialonIntegrationService.getObjectsRealTimeData(clientId);
+        return objectsData;
+    } catch (error) {
+        console.error('Error getting client objects real-time data:', error);
+        throw error;
+    }
+}
 }
 
 module.exports = ReportsService;

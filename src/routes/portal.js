@@ -93,6 +93,50 @@ router.get('/objects', authenticate, restrictToOwnData, async (req, res) => {
     }
 });
 
+// Get client objects real-time data
+router.get('/objects/real-time-data', authenticate, restrictToOwnData, async (req, res) => {
+    try {
+        if (req.user.userType !== 'client') {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+
+        const objectsData = await PortalService.getClientObjectsRealTimeData(req.user.clientId);
+
+        // Audit log
+        try {
+            await AuditService.log({
+                clientId: req.user.clientId,
+                userType: 'client',
+                actionType: AUDIT_LOG_TYPES.CLIENT_PORTAL.VIEW_OBJECTS,
+                entityType: ENTITY_TYPES.WIALON_OBJECT,
+                entityId: null,
+                newValues: {
+                    action: 'view_objects_realtime_data',
+                    client_id: req.user.clientId,
+                    objects_count: objectsData.length
+                },
+                ipAddress: req.ip,
+                auditType: AUDIT_TYPES.BUSINESS,
+                req
+            });
+        } catch (auditError) {
+            console.error('Audit log failed:', auditError);
+        }
+
+        res.json({
+            success: true,
+            objectsData
+        });
+    } catch (error) {
+        console.error('Error fetching client objects real-time data:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Server error',
+            error: error.message 
+        });
+    }
+});
+
 // Get client invoices
 router.get('/invoices', authenticate, restrictToOwnData, async (req, res) => {
     try {
