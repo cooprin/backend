@@ -463,13 +463,13 @@ static async getObjectRealTimeInfo(apiUrl, eid, wialonId, objectInfo) {
 
     console.log(`Loading messages for object ${wialonId} from ${new Date(thirtyMinutesAgo * 1000)} to ${new Date(currentTime * 1000)}`);
 
-    // Отримання повідомлень за останні 30 хвилин - ПРАВИЛЬНИЙ ЗАПИТ згідно документації
+    // Отримання повідомлень за останні 30 хвилин - ВИПРАВЛЕНІ ПАРАМЕТРИ
     const messagesUrl = `${apiUrl}/wialon/ajax.html?svc=messages/load_interval&params=${encodeURIComponent(JSON.stringify({
         itemId: parseInt(wialonId),
         timeFrom: thirtyMinutesAgo,
         timeTo: currentTime,
         flags: 0,
-        flagsMask: 65535,
+        flagsMask: 1, 
         loadCount: 100
     }))}&sid=${eid}`;
 
@@ -518,7 +518,7 @@ static async getObjectRealTimeInfo(apiUrl, eid, wialonId, objectInfo) {
     };
 }
 
-// Аналіз повідомлень за останні 30 хвилин
+// Аналіз повідомлень за останні 30 хвилин - ВИПРАВЛЕНО під нову структуру
 static analyzeMessages(messages) {
     if (!messages || messages.length === 0) {
         return {
@@ -545,11 +545,16 @@ static analyzeMessages(messages) {
         const timeStr = time.getHours().toString().padStart(2, '0') + ':' + 
                        time.getMinutes().toString().padStart(2, '0');
 
+        // Перевіряємо чи є позиція в повідомленні
+        const position = msg.pos || {};
+        const speed = position.s || 0;
+        const satellites = position.sc || 0;
+
         // Графік швидкості (кожні 5 хвилин)
         if (i % Math.max(1, Math.floor(messages.length / 6)) === 0) {
             speedChart.push({
                 time: timeStr,
-                speed: Math.round(msg.s || 0)
+                speed: Math.round(speed)
             });
         }
 
@@ -557,23 +562,25 @@ static analyzeMessages(messages) {
         if (i % Math.max(1, Math.floor(messages.length / 6)) === 0) {
             satelliteChart.push({
                 time: timeStr,
-                count: msg.sc || 0
+                count: satellites
             });
         }
 
         // Підрахунок змін супутників
-        if (previousSatellites !== null && msg.sc !== previousSatellites) {
+        if (previousSatellites !== null && satellites !== previousSatellites) {
             satelliteChanges++;
         }
-        previousSatellites = msg.sc;
+        previousSatellites = satellites;
 
         // Розрахунок відстані
         if (i > 0) {
             const prevMsg = messages[i - 1];
-            if (msg.y && msg.x && prevMsg.y && prevMsg.x) {
+            const prevPosition = prevMsg.pos || {};
+            
+            if (position.y && position.x && prevPosition.y && prevPosition.x) {
                 const distance = this.calculateDistance(
-                    prevMsg.y, prevMsg.x,
-                    msg.y, msg.x
+                    prevPosition.y, prevPosition.x,
+                    position.y, position.x
                 );
                 totalDistance += distance;
             }
