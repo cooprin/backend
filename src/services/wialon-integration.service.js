@@ -472,9 +472,27 @@ static async getObjectRealTimeInfo(apiUrl, eid, wialonId, objectInfo) {
         flagsMask: 1, 
         loadCount: 100
     }))}&sid=${eid}`;
+    // Логування запиту
+    console.log(`=== WIALON REQUEST FOR OBJECT ${wialonId} ===`);
+    console.log(`Request URL: ${messagesUrl}`);
+    console.log(`Request params:`, {
+        itemId: parseInt(wialonId),
+        timeFrom: thirtyMinutesAgo,
+        timeTo: currentTime,
+        timeFromReadable: new Date(thirtyMinutesAgo * 1000).toISOString(),
+        timeToReadable: new Date(currentTime * 1000).toISOString(),
+        flags: 0,
+        flagsMask: 1,
+        loadCount: 100
+    });
 
     const messagesResponse = await axios.get(messagesUrl, { timeout: 15000 });
 
+    // Логування відповіді
+    console.log(`=== WIALON RESPONSE FOR OBJECT ${wialonId} ===`);
+    console.log(`Response status: ${messagesResponse.status}`);
+    console.log(`Response data:`, JSON.stringify(messagesResponse.data, null, 2));
+    console.log(`=== END RESPONSE ===`); 
     console.log(`Messages response for object ${wialonId}:`, messagesResponse.data);
 
     let messages = [];
