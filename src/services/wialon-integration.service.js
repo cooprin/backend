@@ -568,8 +568,6 @@ static analyzeMessages(messages) {
     for (let i = 0; i < messages.length; i++) {
         const msg = messages[i];
         const time = new Date(msg.t * 1000);
-        const timeStr = time.getHours().toString().padStart(2, '0') + ':' + 
-                       time.getMinutes().toString().padStart(2, '0');
 
         // Перевіряємо чи є позиція в повідомленні
         const position = msg.pos || {};
@@ -579,7 +577,7 @@ static analyzeMessages(messages) {
         // Графік швидкості (кожні 5 хвилин)
         if (i % Math.max(1, Math.floor(messages.length / 6)) === 0) {
             speedChart.push({
-                time: timeStr,
+                timestamp: msg.t * 1000,
                 speed: Math.round(speed)
             });
         }
@@ -587,11 +585,10 @@ static analyzeMessages(messages) {
         // Графік супутників
         if (i % Math.max(1, Math.floor(messages.length / 6)) === 0) {
             satelliteChart.push({
-                time: timeStr,
+                timestamp: msg.t * 1000,
                 count: satellites
             });
         }
-
         // Підрахунок змін супутників
         if (previousSatellites !== null && satellites !== previousSatellites) {
             satelliteChanges++;
