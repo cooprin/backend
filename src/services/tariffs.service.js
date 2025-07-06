@@ -365,10 +365,7 @@ static async assignTariffToObject(client, data, userId, req) {
 
         const tariffData = tariffExists.rows[0];
 
-
-
-        // Отримуємо оптимальну дату початку дії тарифу (перше число першого неоплаченого місяця)
-// Розбираємося з датою початку дії
+        // Розбираємося з датою початку дії
         let effectiveDate;
         if (effective_from) {
             effectiveDate = new Date(effective_from);
@@ -383,7 +380,7 @@ static async assignTariffToObject(client, data, userId, req) {
 
         // Перевірка існуючих тарифів - не можна встановлювати попередню або таку саму дату
         const existingTariffsCheck = await client.query(
-            `SELECT id, effective_from, tariff_id, t.name as tariff_name
+            `SELECT ot.id, ot.effective_from, ot.tariff_id, t.name as tariff_name
              FROM billing.object_tariffs ot
              JOIN billing.tariffs t ON ot.tariff_id = t.id
              WHERE ot.object_id = $1 

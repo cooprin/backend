@@ -417,10 +417,9 @@ static async updateObject(client, id, data, userId, req) {
             const tariffDate = data.tariff_effective_from ? 
                 new Date(data.tariff_effective_from) : effectiveDate;
 
-            // Перевіряємо, чи період вже оплачений
- // Перевірка існуючих тарифів - не можна встановлювати попередню або таку саму дату
+            // Перевірка існуючих тарифів - не можна встановлювати попередню або таку саму дату
             const existingTariffsCheck = await client.query(
-                `SELECT id, effective_from, tariff_id, t.name as tariff_name
+                `SELECT ot.id, ot.effective_from, ot.tariff_id, t.name as tariff_name
                  FROM billing.object_tariffs ot
                  JOIN billing.tariffs t ON ot.tariff_id = t.id
                  WHERE ot.object_id = $1 
