@@ -110,7 +110,7 @@ setupDatabase()
 
     // Підключаємо PostgreSQL notification слухач
     const { setupNotificationListener } = require('./socket/notificationListener');
-    const objectsRealtimeService = require('./services/objectsRealtimeService');
+    const objectsRealtimeService = require('./socket/objectsRealtimeService');
     setupNotificationListener();
     objectsRealtimeService.start();
 
