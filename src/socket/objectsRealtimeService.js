@@ -74,7 +74,7 @@ async getObjectsRealTimeData() {
 
     console.log(`Updating real-time data for ${onlineClientIds.length} online clients`);
 
-    const WialonIntegrationService = require('./wialon-integration.service');
+    const WialonIntegrationService = require('../services/wialon-integration.service');
     const allObjectsData = [];
     
     // Отримуємо дані тільки для онлайн клієнтів
