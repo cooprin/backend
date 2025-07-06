@@ -1,5 +1,5 @@
 const { pool } = require('../database');
-const { PortalApi } = require('../api/portal'); // Припускаю що є такий API
+
 
 class ObjectsRealtimeService {
   constructor() {
