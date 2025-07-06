@@ -33,6 +33,7 @@ const ticketCommentsRoutes = require('./routes/ticket-comments');
 const notificationsRoutes = require('./routes/notifications');
 const chatRoutes = require('./routes/chat');
 const reportsRouter = require('./routes/reports');
+const licenseRoutes = require('./routes/license');
 
 const app = express();
 app.set('trust proxy', true);
@@ -73,6 +74,7 @@ app.use('/billing/payments', authenticate, staffOnly, paymentsRoutes);
 app.use('/company', authenticate, staffOnly, companyRouter);
 app.use('/wialon-integration', authenticate, staffOnly, wialonIntegrationRouter);
 app.use('/wialon-sync', authenticate, staffOnly, wialonSyncRouter);
+app.use('/license', authenticate, licenseRoutes);
 
 // Customer portal routes (clients + staff)
 app.use('/portal', portalRoutes);

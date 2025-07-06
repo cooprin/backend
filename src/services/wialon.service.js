@@ -1,6 +1,7 @@
 const { pool } = require('../database');
 const AuditService = require('./auditService');
 const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
+const DirectusLicenseService = require('./DirectusLicenseService');
 
 class WialonService {
     // Отримання списку об'єктів з фільтрацією та пагінацією
@@ -180,115 +181,160 @@ class WialonService {
     }
 
     // Створення нового об'єкта
-    static async createObject(client, data, userId, req) {
-        try {
-            const { 
-                name, wialon_id, description, client_id, status,
-                tariff_id, tariff_effective_from, attributes, operation_date
-            } = data;
+static async createObject(client, data, userId, req) {
+    try {
+        const { 
+            name, wialon_id, description, client_id, status,
+            tariff_id, tariff_effective_from, attributes, operation_date
+        } = data;
 
-            // Перевірка наявності об'єкта з таким Wialon ID
-            const existingObject = await client.query(
-                'SELECT id FROM wialon.objects WHERE wialon_id = $1',
-                [wialon_id]
+        // NEW LOGIC: Check object limit
+        const systemDomain = req.get('host') || req.headers.host;
+        
+        if (systemDomain) {
+            // Count current objects
+            const countResult = await client.query(
+                'SELECT COUNT(*) as count FROM wialon.objects WHERE status = $1',
+                ['active']
             );
-
-            if (existingObject.rows.length > 0) {
-                throw new Error('Об\'єкт з таким Wialon ID вже існує');
+            
+            const currentObjectsCount = parseInt(countResult.rows[0].count);
+            
+            // Check limit
+            const limitCheck = await DirectusLicenseService.checkObjectLimit(systemDomain, currentObjectsCount);
+            
+            // If limit reached - block creation
+            if (!limitCheck.allowed && !limitCheck.error) {
+                throw new Error(`Object limit reached. Your license allows a maximum of ${limitCheck.objectLimit} objects. Currently in system: ${limitCheck.currentObjects} objects.`);
             }
+        }
 
-            // Перевірка наявності клієнта
-            const clientExists = await client.query(
-                'SELECT id FROM clients.clients WHERE id = $1',
-                [client_id]
-            );
+        // Existing logic continues unchanged...
+        // Перевірка наявності об'єкта з таким Wialon ID
+        const existingObject = await client.query(
+            'SELECT id FROM wialon.objects WHERE wialon_id = $1',
+            [wialon_id]
+        );
 
-            if (clientExists.rows.length === 0) {
-                throw new Error('Вказаний клієнт не існує');
-            }
+        if (existingObject.rows.length > 0) {
+            throw new Error('Об\'єкт з таким Wialon ID вже існує');
+        }
 
-            // Використовуємо вказану дату операції або поточну дату
-            const effectiveDate = operation_date ? new Date(operation_date) : new Date();
+        // Перевірка наявності клієнта
+        const clientExists = await client.query(
+            'SELECT id FROM clients.clients WHERE id = $1',
+            [client_id]
+        );
 
-            // Створення об'єкта
-            const result = await client.query(
-                `INSERT INTO wialon.objects (
-                    name, wialon_id, description, client_id, status, created_at
+        if (clientExists.rows.length === 0) {
+            throw new Error('Вказаний клієнт не існує');
+        }
+
+        // Використовуємо вказану дату операції або поточну дату
+        const effectiveDate = operation_date ? new Date(operation_date) : new Date();
+
+        // Створення об'єкта
+        const result = await client.query(
+            `INSERT INTO wialon.objects (
+                name, wialon_id, description, client_id, status, created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *`,
+            [
+                name, 
+                wialon_id, 
+                description, 
+                client_id, 
+                status || 'active',
+                effectiveDate
+            ]
+        );
+
+        const newObject = result.rows[0];
+
+        // Додавання запису в історію власників з вказаною датою
+        await client.query(
+            `INSERT INTO wialon.object_ownership_history (
+                object_id, client_id, start_date, created_by, created_at
+            )
+            VALUES ($1, $2, $3, $4, $5)`,
+            [newObject.id, client_id, effectiveDate, userId, effectiveDate]
+        );
+
+        // Додавання тарифу, якщо він вказаний
+        if (tariff_id) {
+            const tariffDate = tariff_effective_from ? new Date(tariff_effective_from) : effectiveDate;
+            
+            await client.query(
+                `INSERT INTO billing.object_tariffs (
+                    object_id, tariff_id, effective_from, created_by
                 )
-                VALUES ($1, $2, $3, $4, $5, $6)
-                RETURNING *`,
+                VALUES ($1, $2, $3, $4)`,
                 [
-                    name, 
-                    wialon_id, 
-                    description, 
-                    client_id, 
-                    status || 'active',
-                    effectiveDate
+                    newObject.id, 
+                    tariff_id, 
+                    tariffDate, 
+                    userId
                 ]
             );
+        }
 
-            const newObject = result.rows[0];
-
-            // Додавання запису в історію власників з вказаною датою
-            await client.query(
-                `INSERT INTO wialon.object_ownership_history (
-                    object_id, client_id, start_date, created_by, created_at
-                )
-                VALUES ($1, $2, $3, $4, $5)`,
-                [newObject.id, client_id, effectiveDate, userId, effectiveDate]
-            );
-
-            // Додавання тарифу, якщо він вказаний
-            if (tariff_id) {
-                const tariffDate = tariff_effective_from ? new Date(tariff_effective_from) : effectiveDate;
-                
+        // Додавання атрибутів, якщо вони є
+        if (attributes && typeof attributes === 'object') {
+            for (const [key, value] of Object.entries(attributes)) {
                 await client.query(
-                    `INSERT INTO billing.object_tariffs (
-                        object_id, tariff_id, effective_from, created_by
+                    `INSERT INTO wialon.object_attributes (
+                        object_id, attribute_name, attribute_value
                     )
-                    VALUES ($1, $2, $3, $4)`,
-                    [
-                        newObject.id, 
-                        tariff_id, 
-                        tariffDate, 
-                        userId
-                    ]
+                    VALUES ($1, $2, $3)`,
+                    [newObject.id, key, value]
                 );
             }
-
-            // Додавання атрибутів, якщо вони є
-            if (attributes && typeof attributes === 'object') {
-                for (const [key, value] of Object.entries(attributes)) {
-                    await client.query(
-                        `INSERT INTO wialon.object_attributes (
-                            object_id, attribute_name, attribute_value
-                        )
-                        VALUES ($1, $2, $3)`,
-                        [newObject.id, key, value]
-                    );
-                }
-            }
-
-            // Аудит
-            await AuditService.log({
-                userId,
-                actionType: 'OBJECT_CREATE',
-                entityType: 'WIALON_OBJECT',
-                entityId: newObject.id,
-                newValues: {...data, operation_date: effectiveDate},
-                ipAddress: req.ip,
-                tableSchema: 'wialon',
-                tableName: 'objects',
-                auditType: AUDIT_TYPES.BUSINESS,
-                req
-            });
-
-            return newObject;
-        } catch (error) {
-            throw error;
         }
-    }
 
+        // NEW LOGIC: Log object creation in Directus
+        if (systemDomain) {
+            try {
+                const finalCount = parseInt(await client.query(
+                    'SELECT COUNT(*) as count FROM wialon.objects WHERE status = $1',
+                    ['active']
+                ).then(r => r.rows[0].count));
+
+                await DirectusLicenseService.logLicenseUsage(
+                    systemDomain, 
+                    finalCount, 
+                    req.licenseInfo?.objectLimit || null, 
+                    'create_object'
+                );
+            } catch (logError) {
+                console.error('Error logging object creation to Directus:', logError);
+                // Don't block creation due to logging error
+            }
+        }
+
+        // Аудит
+        await AuditService.log({
+            userId,
+            actionType: 'OBJECT_CREATE',
+            entityType: 'WIALON_OBJECT',
+            entityId: newObject.id,
+            newValues: {
+                ...data, 
+                operation_date: effectiveDate,
+                licenseInfo: req.licenseInfo
+            },
+            ipAddress: req.ip,
+            tableSchema: 'wialon',
+            tableName: 'objects',
+            auditType: AUDIT_TYPES.BUSINESS,
+            req
+        });
+
+        return newObject;
+    } catch (error) {
+        throw error;
+    }
+}
 // Оновлення існуючого об'єкта
 static async updateObject(client, id, data, userId, req) {
     try {
