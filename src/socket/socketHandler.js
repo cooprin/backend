@@ -114,8 +114,67 @@ module.exports = (io) => {
         ticket_id: ticketId,
         comment: comment
       });
-}
+},
+emitObjectsUpdate: (objectsData) => {
+  // Відправити оновлення об'єктів всім підключеним користувачам
+  io.emit('objects_realtime_updated', {
+    objectsData: objectsData,
+    timestamp: new Date().toISOString()
+  });
+},
+emitObjectStatusChange: (objectId, newStatus, clientId = null) => {
+  // Відправити зміну статусу об'єкта
+  const data = {
+    objectId: objectId,
+    newStatus: newStatus,
+    timestamp: new Date().toISOString()
   };
+  
+  if (clientId) {
+    // Відправити конкретному клієнту
+    io.to(`user_${clientId}`).emit('object_status_changed', data);
+  } else {
+    // Відправити всім
+    io.emit('object_status_changed', data);
+  }
+},
+getConnectedClients: () => {
+  const clients = [];
+  activeConnections.forEach((socketId, userId) => {
+    const socket = io.sockets.sockets.get(socketId);
+    if (socket && socket.user) {
+      clients.push({
+        id: socket.user.id,
+        userType: socket.user.userType,
+        email: socket.user.email
+      });
+    }
+  });
+  return clients;
+},
+getOnlineClientsCount: () => {
+  let clientsCount = 0;
+  activeConnections.forEach((socketId, userId) => {
+    const socket = io.sockets.sockets.get(socketId);
+    if (socket && socket.user && socket.user.userType === 'client') {
+      clientsCount++;
+    }
+  });
+  return clientsCount;
+},
+getOnlineStaffCount: () => {
+  let staffCount = 0;
+  activeConnections.forEach((socketId, userId) => {
+    const socket = io.sockets.sockets.get(socketId);
+    if (socket && socket.user && socket.user.userType === 'staff') {
+      staffCount++;
+    }
+  });
+  return staffCount;
+}
+
+  };
+  
 
   console.log('Socket.io server initialized');
 };
@@ -303,4 +362,14 @@ function setupNotificationHandlers(io, socket) {
       console.error('Error marking notification as read:', error);
     }
   });
+  // Обробник запиту на оновлення об'єктів
+socket.on('request_objects_update', async () => {
+  try {
+    // Тут можна додати логіку отримання актуальних даних об'єктів
+    // Поки що просто логуємо
+    console.log(`User ${socket.user.id} requested objects update`);
+  } catch (error) {
+    console.error('Error handling objects update request:', error);
+  }
+});
 }
