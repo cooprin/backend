@@ -1557,7 +1557,7 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                             continue;
                         }
                         
-                        // Перевіряємо, чи потрібно нараховувати оплату
+// Перевіряємо, чи потрібно нараховувати оплату
                         let shouldCharge = false;
                         
                         if (isFuturePeriod) {
@@ -1578,10 +1578,28 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                         }
                         
                         if (shouldCharge) {
-                            const objPrice = parseFloat(obj.price || 0);
+                            // Використовуємо функцію для отримання останнього тарифу місяця
+                            let latestTariffResult;
+                            try {
+                                latestTariffResult = await client.query(
+                                    'SELECT * FROM billing.get_latest_tariff_for_month($1, $2, $3)',
+                                    [obj.id, billingYear, billingMonth]
+                                );
+                            } catch(error) {
+                                console.error(`Помилка отримання тарифу для об'єкта ${obj.id}:`, error);
+                                continue;
+                            }
+                            
+                            if (latestTariffResult.rows.length === 0) {
+                                console.warn(`Не знайдено тариф для об'єкта ${obj.id} за період ${billingMonth}/${billingYear}`);
+                                continue;
+                            }
+                            
+                            const latestTariff = latestTariffResult.rows[0];
+                            const objPrice = parseFloat(latestTariff.tariff_price || 0);
                             
                             if (isNaN(objPrice)) {
-                                console.warn(`Пропускаємо об'єкт з ID ${obj.id}: некоректна ціна ${obj.price}`);
+                                console.warn(`Пропускаємо об'єкт з ID ${obj.id}: некоректна ціна тарифу ${latestTariff.tariff_price}`);
                                 continue;
                             }
                             
@@ -1590,12 +1608,11 @@ static async generateMonthlyInvoices(client, billingMonth, billingYear, userId, 
                             objectsMetadata.push({
                                 id: obj.id,
                                 name: obj.name,
-                                tariff_id: obj.tariff_id,
-                                tariff_name: obj.tariff_name,
+                                tariff_id: latestTariff.tariff_id,
+                                tariff_name: obj.tariff_name, // назва з основного запиту
                                 price: objPrice
                             });
-                        }
-                    }
+                        }                    }
                     
                     // Якщо є об'єкти для нарахування, додаємо позицію рахунку
                     if (objectBasedTotal > 0) {

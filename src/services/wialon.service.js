@@ -418,25 +418,48 @@ static async updateObject(client, id, data, userId, req) {
                 new Date(data.tariff_effective_from) : effectiveDate;
 
             // Перевіряємо, чи період вже оплачений
+ // Перевірка існуючих тарифів - не можна встановлювати попередню або таку саму дату
+            const existingTariffsCheck = await client.query(
+                `SELECT id, effective_from, tariff_id, t.name as tariff_name
+                 FROM billing.object_tariffs ot
+                 JOIN billing.tariffs t ON ot.tariff_id = t.id
+                 WHERE ot.object_id = $1 
+                 AND ot.effective_from >= $2
+                 ORDER BY ot.effective_from DESC`,
+                [id, tariffDate]
+            );
+
+            if (existingTariffsCheck.rows.length > 0) {
+                const existingTariff = existingTariffsCheck.rows[0];
+                throw new Error(
+                    `Неможливо встановити тариф на ${tariffDate.toLocaleDateString()}, ` +
+                    `оскільки існує тариф "${existingTariff.tariff_name}" ` +
+                    `з ${new Date(existingTariff.effective_from).toLocaleDateString()}. ` +
+                    `Можна встановити тариф тільки на більш пізню дату.`
+                );
+            }
+
+            // Перевірка оплат за поточний місяць - якщо є оплата, не можна змінювати тариф цього місяця
             const effectiveMonth = tariffDate.getMonth() + 1;
             const effectiveYear = tariffDate.getFullYear();
 
-            const isPeriodPaidResult = await client.query(
-                'SELECT billing.is_period_paid($1, $2, $3) as is_paid',
+            const currentMonthPaymentCheck = await client.query(
+                `SELECT COUNT(*) as payment_count
+                 FROM billing.object_payment_records
+                 WHERE object_id = $1 
+                 AND billing_year = $2 
+                 AND billing_month = $3
+                 AND status IN ('paid', 'partial')`,
                 [id, effectiveYear, effectiveMonth]
             );
 
-            if (isPeriodPaidResult.rows[0].is_paid) {
-                // Отримуємо оптимальну дату
-                const optimalDateResult = await client.query(
-                    'SELECT billing.get_optimal_tariff_change_date($1) as optimal_date',
-                    [id]
+            if (parseInt(currentMonthPaymentCheck.rows[0].payment_count) > 0) {
+                throw new Error(
+                    `Неможливо встановити тариф на ${tariffDate.toLocaleDateString()}, ` +
+                    `оскільки за ${effectiveMonth}/${effectiveYear} вже є оплата. ` +
+                    `Тариф можна встановити тільки на наступний місяць.`
                 );
-                const optimalDate = optimalDateResult.rows[0].optimal_date;
-                
-                throw new Error(`Період ${effectiveMonth}/${effectiveYear} вже оплачений. Рекомендована дата початку дії: ${optimalDate.toLocaleDateString()}`);
             }
-
             // Перевіряємо чи є вже активний тариф
             const currentTariff = await client.query(
                 `SELECT id FROM billing.object_tariffs 

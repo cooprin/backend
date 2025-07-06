@@ -825,6 +825,7 @@ static async previewSqlQuery(sqlQuery, parameters = {}, userId, req) {
         throw error;
     }
 }
+
 }
 
 module.exports = ReportsService;
