@@ -21,6 +21,20 @@ class DirectusLicenseService {
                 return cached.data;
             }
 
+                    // ДОДАЙТЕ ЦЕ ЛОГУВАННЯ:
+        const requestUrl = `${this.apiUrl}/system_licenses`;
+        const requestParams = {
+            'filter[domain][_eq]': domain,
+            'filter[status][_eq]': 'active',
+            limit: 1
+        };
+        
+        console.log('=== DIRECTUS REQUEST DEBUG ===');
+        console.log('Full URL:', requestUrl);
+        console.log('Params:', requestParams);
+        console.log('Final URL with params:', `${requestUrl}?${new URLSearchParams(requestParams).toString()}`);
+        console.log('Directus URL from env:', this.directusUrl);
+        console.log('===============================');
             // Request to Directus
             const response = await axios.get(`${this.apiUrl}/system_licenses`, {
                 params: {

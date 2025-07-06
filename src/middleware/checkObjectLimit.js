@@ -9,9 +9,6 @@ const checkObjectLimit = async (req, res, next) => {
         // Get system domain
         const systemDomain = req.get('host') || req.headers.host;
 
-        console.log('System domain detected:', systemDomain);
-console.log('Request headers host:', req.headers.host);
-console.log('Request get host:', req.get('host'));
         
         if (!systemDomain) {
             return res.status(500).json({
