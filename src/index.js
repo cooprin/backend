@@ -110,7 +110,9 @@ setupDatabase()
 
     // Підключаємо PostgreSQL notification слухач
     const { setupNotificationListener } = require('./socket/notificationListener');
+    const objectsRealtimeService = require('./services/objectsRealtimeService');
     setupNotificationListener();
+    objectsRealtimeService.start();
 
     server.listen(port, () => {
       console.log(`Server running on port ${port}`);
@@ -130,4 +132,16 @@ process.on('unhandledRejection', (error) => {
 process.on('uncaughtException', (error) => {
   console.error('Uncaught exception:', error);
   process.exit(1);
+});
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('🛑 Shutting down gracefully...');
+  objectsRealtimeService.stop();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('🛑 Shutting down gracefully...');
+  objectsRealtimeService.stop();
+  process.exit(0);
 });
