@@ -29,14 +29,37 @@ const checkObjectLimit = async (req, res, next) => {
         // Check limit through Directus
         const limitCheck = await DirectusLicenseService.checkObjectLimit(systemDomain, currentObjectsCount);
 
-        // If license error, log but don't block
+        // If license error, check offline allowance
         if (limitCheck.error) {
             console.warn(`License check error for ${systemDomain}:`, limitCheck.error);
             
+            // Check offline daily allowance
+            const offlineCheck = await checkOfflineDailyLimit();
+            
+            if (!offlineCheck.allowed) {
+                return res.status(503).json({
+                    success: false,
+                    message: 'License verification failed and daily offline limit reached',
+                    description: `Cannot verify license. Offline mode allows ${offlineCheck.dailyLimit} object(s) per day. Today created: ${offlineCheck.usedToday}/${offlineCheck.dailyLimit}`,
+                    code: 'OFFLINE_DAILY_LIMIT_REACHED',
+                    offlineInfo: {
+                        usedToday: offlineCheck.usedToday,
+                        dailyLimit: offlineCheck.dailyLimit,
+                        nextResetTime: offlineCheck.nextResetTime,
+                        error: limitCheck.error
+                    }
+                });
+            }
+            
             req.licenseWarning = {
-                type: 'error',
-                message: 'License verification error',
-                description: `Failed to verify license: ${limitCheck.error}`
+                type: 'offline',
+                message: 'Operating in offline mode',
+                description: `License server unavailable. Using offline quota: ${offlineCheck.usedToday + 1}/${offlineCheck.dailyLimit} for today.`,
+                offlineInfo: {
+                    usedToday: offlineCheck.usedToday,
+                    dailyLimit: offlineCheck.dailyLimit,
+                    nextResetTime: offlineCheck.nextResetTime
+                }
             };
             
             return next();
@@ -135,7 +158,45 @@ const getLicenseStats = async (req, res, next) => {
     }
 };
 
+/**
+ * Check if we can create object offline (1 per day limit)
+ */
+const checkOfflineDailyLimit = async () => {
+    try {
+        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        
+        // Знайти кількість об'єктів створених сьогодні (по updated_at)
+        const result = await pool.query(`
+            SELECT COUNT(*) as objects_created_today
+            FROM wialon.objects 
+            WHERE DATE(updated_at) = CURRENT_DATE
+        `);
+        
+        const objectsCreatedToday = parseInt(result.rows[0].objects_created_today);
+        const dailyLimit = 1; // Ліміт 1 об'єкт на день в offline режимі
+        
+        return {
+            allowed: objectsCreatedToday < dailyLimit,
+            usedToday: objectsCreatedToday,
+            dailyLimit: dailyLimit,
+            date: today,
+            nextResetTime: `${today} 23:59:59`
+        };
+        
+    } catch (error) {
+        console.error('Error checking offline daily limit:', error);
+        // В разі помилки з БД - блокуємо створення (безпечний режим)
+        return {
+            allowed: false,
+            usedToday: 0,
+            dailyLimit: 1,
+            error: error.message
+        };
+    }
+};
+
 module.exports = {
     checkObjectLimit,
-    getLicenseStats
+    getLicenseStats,
+    checkOfflineDailyLimit
 };

@@ -127,9 +127,9 @@ class DirectusLicenseService {
         } catch (error) {
             console.error('Error checking object limit:', error.message);
             
-            // On error, allow creation with logging
+            // ЗМІНА: при помилці блокуємо створення замість дозволу
             return {
-                allowed: true,
+                allowed: false,
                 error: error.message,
                 currentObjects: currentObjectsCount,
                 objectLimit: null,
