@@ -515,7 +515,7 @@ static async getObjectRealTimeInfo(apiUrl, eid, wialonId, objectInfo) {
     };
 }
 
-// Аналіз повідомлень за останні 30 хвилин - ВИПРАВЛЕНО під нову структуру
+// Аналіз повідомлень за останні 30 хвилин - ВИПРАВЛЕНО під часові інтервали
 static analyzeMessages(messages) {
     if (!messages || messages.length === 0) {
         return {
@@ -530,36 +530,19 @@ static analyzeMessages(messages) {
     let totalDistance = 0;
     let satelliteChanges = 0;
     let previousSatellites = null;
-    const speedChart = [];
-    const satelliteChart = [];
 
     // Сортуємо повідомлення за часом
     messages.sort((a, b) => a.t - b.t);
 
+    // Створюємо графіки на основі часових інтервалів
+    const speedChart = this.createTimeBasedChart(messages, 'speed');
+    const satelliteChart = this.createTimeBasedChart(messages, 'satellites');
+
     for (let i = 0; i < messages.length; i++) {
         const msg = messages[i];
-        const time = new Date(msg.t * 1000);
-
-        // Перевіряємо чи є позиція в повідомленні
         const position = msg.pos || {};
-        const speed = position.s || 0;
         const satellites = position.sc || 0;
 
-        // Графік швидкості (кожні 5 хвилин)
-        if (i % Math.max(1, Math.floor(messages.length / 6)) === 0) {
-            speedChart.push({
-                timestamp: msg.t * 1000,
-                speed: Math.round(speed)
-            });
-        }
-
-        // Графік супутників
-        if (i % Math.max(1, Math.floor(messages.length / 6)) === 0) {
-            satelliteChart.push({
-                timestamp: msg.t * 1000,
-                count: satellites
-            });
-        }
         // Підрахунок змін супутників
         if (previousSatellites !== null && satellites !== previousSatellites) {
             satelliteChanges++;
@@ -582,12 +565,62 @@ static analyzeMessages(messages) {
     }
 
     return {
-        distance: Math.round(totalDistance * 100) / 100, // км з точністю до сотих
+        distance: Math.round(totalDistance * 100) / 100,
         satelliteChanges,
         messageCount: messages.length,
-        speedChart: speedChart.slice(-6), // останні 6 точок
-        satelliteChart: satelliteChart.slice(-6)
+        speedChart,
+        satelliteChart
     };
+}
+
+// Нова функція для створення графіків на основі часових інтервалів
+static createTimeBasedChart(messages, dataType) {
+    if (messages.length === 0) return [];
+
+    const chart = [];
+    const now = Math.floor(Date.now() / 1000);
+    const intervalDuration = 5 * 60; // 5 хвилин в секундах
+    const intervalsCount = 6; // 6 інтервалів = 30 хвилин
+
+    // Створюємо 6 інтервалів по 5 хвилин, починаючи з найновішого часу
+    for (let i = 0; i < intervalsCount; i++) {
+        const intervalEnd = now - (i * intervalDuration);
+        const intervalStart = intervalEnd - intervalDuration;
+        
+        // Знаходимо найближче повідомлення до кінця інтервалу
+        let bestMessage = null;
+        let smallestTimeDiff = Infinity;
+        
+        for (const msg of messages) {
+            if (msg.t >= intervalStart && msg.t <= intervalEnd) {
+                const timeDiff = Math.abs(intervalEnd - msg.t);
+                if (timeDiff < smallestTimeDiff) {
+                    smallestTimeDiff = timeDiff;
+                    bestMessage = msg;
+                }
+            }
+        }
+        
+        // Якщо знайшли повідомлення в інтервалі, додаємо його до графіку
+        if (bestMessage) {
+            const position = bestMessage.pos || {};
+            let value = 0;
+            
+            if (dataType === 'speed') {
+                value = Math.round(position.s || 0);
+            } else if (dataType === 'satellites') {
+                value = position.sc || 0;
+            }
+            
+            chart.unshift({ // unshift щоб найстарші дані були спочатку
+                timestamp: bestMessage.t * 1000,
+                [dataType === 'speed' ? 'speed' : 'count']: value
+            });
+        }
+    }
+    
+    // Обмежуємо до останніх 6 точок і сортуємо по часу
+    return chart.slice(-6).sort((a, b) => a.timestamp - b.timestamp);
 }
 
 // Геокодування координат
