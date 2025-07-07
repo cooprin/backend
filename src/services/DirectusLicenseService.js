@@ -129,7 +129,7 @@ class DirectusLicenseService {
             
             // On error, allow creation with logging
             return {
-                allowed: false,
+                allowed: true,
                 error: error.message,
                 currentObjects: currentObjectsCount,
                 objectLimit: null,
