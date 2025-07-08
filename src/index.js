@@ -34,6 +34,7 @@ const notificationsRoutes = require('./routes/notifications');
 const chatRoutes = require('./routes/chat');
 const reportsRouter = require('./routes/reports');
 const licenseRoutes = require('./routes/license');
+const systemRouter = require('./routes/system');
 
 const app = express();
 app.set('trust proxy', true);
@@ -75,6 +76,7 @@ app.use('/company', authenticate, staffOnly, companyRouter);
 app.use('/wialon-integration', authenticate, staffOnly, wialonIntegrationRouter);
 app.use('/wialon-sync', authenticate, staffOnly, wialonSyncRouter);
 app.use('/license', authenticate, licenseRoutes);
+app.use('/system', authenticate, systemRouter);
 
 // Customer portal routes (clients + staff)
 app.use('/portal', portalRoutes);
