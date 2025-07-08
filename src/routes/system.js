@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const SystemService = require('../services/systemService');
-const { authenticateToken } = require('../middleware/auth');
+const authenticate = require('../middleware/auth');
 
 // GET /api/system/online-stats - отримати онлайн статистику
-router.get('/online-stats', authenticateToken, async (req, res) => {
+router.get('/online-stats', authenticate, async (req, res) => {
   try {
     const stats = await SystemService.getOnlineStats();
     res.json({
@@ -21,7 +21,7 @@ router.get('/online-stats', authenticateToken, async (req, res) => {
 });
 
 // GET /api/system/status - отримати системний статус
-router.get('/status', authenticateToken, async (req, res) => {
+router.get('/status', authenticate, async (req, res) => {
   try {
     const status = await SystemService.getSystemStatus();
     res.json({
