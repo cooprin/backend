@@ -20,7 +20,8 @@
     "puppeteer": "^21.6.0",
     "axios": "^1.6.2",
     "crypto": "^1.0.1",
-    "socket.io": "^4.7.5"
+    "socket.io": "^4.7.5",
+    "nodemailer": "^6.9.8"
   },
   "repository": {
     "type": "git",

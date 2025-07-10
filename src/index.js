@@ -35,6 +35,8 @@ const chatRoutes = require('./routes/chat');
 const reportsRouter = require('./routes/reports');
 const licenseRoutes = require('./routes/license');
 const systemRouter = require('./routes/system');
+const emailRouter = require('./routes/email');
+const emailTemplatesRouter = require('./routes/email-templates');
 
 const app = express();
 app.set('trust proxy', true);
@@ -77,6 +79,8 @@ app.use('/wialon-integration', authenticate, staffOnly, wialonIntegrationRouter)
 app.use('/wialon-sync', authenticate, staffOnly, wialonSyncRouter);
 app.use('/license', authenticate, licenseRoutes);
 app.use('/system', authenticate, systemRouter);
+app.use('/email', authenticate, emailRouter);
+app.use('/email-templates', authenticate, staffOnly, emailTemplatesRouter);
 
 // Customer portal routes (clients + staff)
 app.use('/portal', portalRoutes);

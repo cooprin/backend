@@ -448,4 +448,77 @@ router.delete('/settings/:id', authenticate, checkPermission('company_profile.de
     }
 });
 
+// Налаштування сповіщень
+router.get('/notification-settings', authenticate, staffOnly, checkPermission('company_profile.read'), async (req, res) => {
+  try {
+    const settings = await CompanyService.getSystemSettings('notifications');
+    
+    // Перетворюємо в зручний формат
+    const notificationSettings = {};
+    settings.forEach(setting => {
+      const keys = setting.key.split('_');
+      const category = keys[0];
+      const property = keys.slice(1).join('_');
+      
+      if (!notificationSettings[category]) {
+        notificationSettings[category] = {};
+      }
+      
+      notificationSettings[category][property] = setting.value;
+    });
+    
+    res.json({
+      success: true,
+      settings: notificationSettings
+    });
+  } catch (error) {
+    console.error('Error fetching notification settings:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching notification settings'
+    });
+  }
+});
+
+router.put('/notification-settings', authenticate, staffOnly, checkPermission('company_profile.update'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const notifications = req.body;
+    const settings = [];
+
+    // Перетворюємо вкладену структуру в плоскі налаштування
+    Object.keys(notifications).forEach(category => {
+      Object.keys(notifications[category]).forEach(property => {
+        settings.push({
+          category: 'notifications',
+          key: `${category}_${property}`,
+          value: notifications[category][property]?.toString()
+        });
+      });
+    });
+
+    // Зберігаємо налаштування
+    for (const setting of settings) {
+      await CompanyService.saveSystemSetting(client, setting, req.user.userId, req);
+    }
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      message: 'Notification settings saved successfully'
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error saving notification settings:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Error saving notification settings'
+    });
+  } finally {
+    client.release();
+  }
+});
 module.exports = router;

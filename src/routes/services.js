@@ -812,6 +812,48 @@ router.delete('/invoices/:id/documents/:documentId', authenticate, checkPermissi
         client.release();
     }
 });
+// Відправка email сповіщення про рахунок
+router.post('/invoices/:id/send-email', authenticate, checkPermission('invoices.update'), async (req, res) => {
+    try {
+        const invoiceId = req.params.id;
+        
+        // Перевіряємо чи існує рахунок
+        const invoiceExists = await pool.query(
+            'SELECT id FROM services.invoices WHERE id = $1',
+            [invoiceId]
+        );
+
+        if (invoiceExists.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Рахунок не знайдено'
+            });
+        }
+
+        // Відправляємо email
+        const result = await ServiceService.sendInvoiceEmailNotification(invoiceId);
+        
+        if (result.success) {
+            res.json({
+                success: true,
+                message: 'Email успішно відправлено',
+                messageId: result.messageId
+            });
+        } else {
+            res.status(400).json({
+                success: false,
+                message: result.reason || 'Не вдалося відправити email',
+                error: result.error
+            });
+        }
+    } catch (error) {
+        console.error('Error sending invoice email:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при відправці email'
+        });
+    }
+});
 
 
 
