@@ -36,34 +36,34 @@ static async getActiveEmailSettings() {
   }
 }
 
-  // Створити транспорт для відправки
-  static async createTransporter() {
-    try {
-      const settings = await this.getActiveEmailSettings();
-      
-      if (!settings) {
-        throw new Error('No active email settings found');
-      }
-
-      const transportConfig = {
-        host: settings.smtp_server,
-        port: settings.smtp_port,
-        secure: settings.use_ssl, // true для порту 465, false для інших
-        auth: {
-          user: settings.smtp_username || settings.email_address,
-          pass: settings.smtp_password
-        },
-        tls: {
-          rejectUnauthorized: false // для Gmail
-        }
-      };
-
-      return nodemailer.createTransporter(transportConfig);
-    } catch (error) {
-      console.error('Error creating email transporter:', error);
-      throw error;
+// Створити транспорт для відправки
+static async createTransporter() {
+  try {
+    const settings = await this.getActiveEmailSettings();
+    
+    if (!settings) {
+      throw new Error('No active email settings found');
     }
+
+    const transportConfig = {
+      host: settings.smtp_server,
+      port: settings.smtp_port,
+      secure: settings.use_ssl, // true для порту 465, false для інших
+      auth: {
+        user: settings.smtp_username || settings.email_address,
+        pass: settings.smtp_password
+      },
+      tls: {
+        rejectUnauthorized: false // для Gmail
+      }
+    };
+
+    return nodemailer.createTransport(transportConfig); // <-- ВИПРАВЛЕНО
+  } catch (error) {
+    console.error('Error creating email transporter:', error);
+    throw error;
   }
+}
 
   // Тестування з'єднання
   static async testConnection() {
