@@ -298,12 +298,15 @@ static async getPaymentData(paymentId) {
 }
 
 // Отримання даних клієнта
+// Отримання даних клієнта
 static async getClientData(clientId) {
   try {
     const result = await pool.query(`
-      SELECT *
-      FROM clients.clients
-      WHERE id = $1
+      SELECT 
+        c.*,
+        to_char(c.created_at, 'DD.MM.YYYY') as formatted_created_date
+      FROM clients.clients c
+      WHERE c.id = $1
     `, [clientId]);
     
     return result.rows.length > 0 ? result.rows[0] : null;
@@ -343,10 +346,10 @@ static async buildModuleVariables(moduleType, entityData, customVariables = {}) 
     
     // Базові змінні компанії
     const variables = {
-      company_name: companyData.legal_name || companyData.short_name || 'Наша компанія',
-      company_address: companyData.legal_address || '',
-      company_phone: companyData.phone || '',
-      company_email: companyData.email || '',
+      company_name: companyData.legal_name || companyData.short_name || EMAIL_DEFAULTS.company.name,
+      company_address: companyData.legal_address || EMAIL_DEFAULTS.company.address,
+      company_phone: companyData.phone || EMAIL_DEFAULTS.company.phone,
+      company_email: companyData.email || EMAIL_DEFAULTS.company.email,
       portal_url: process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/portal` : EMAIL_DEFAULTS.portal_url,
       ...customVariables
     };
@@ -355,34 +358,38 @@ static async buildModuleVariables(moduleType, entityData, customVariables = {}) 
     switch (moduleType) {
       case 'invoice':
         Object.assign(variables, {
-          invoice_number: entityData.invoice_number,
-          invoice_date: entityData.formatted_invoice_date,
-          client_name: entityData.client_name,
-          billing_period: entityData.billing_period_text,
-          total_amount: new Intl.NumberFormat('uk-UA').format(entityData.total_amount),
+          invoice_number: entityData.invoice_number || EMAIL_DEFAULTS.invoice.default_number,
+          invoice_date: entityData.formatted_invoice_date || new Date().toLocaleDateString('uk-UA'),
+          client_name: entityData.client_name || EMAIL_DEFAULTS.client.default_name,
+          billing_period: entityData.billing_period_text || 'Не вказано',
+          total_amount: entityData.total_amount ? new Intl.NumberFormat('uk-UA').format(entityData.total_amount) : EMAIL_DEFAULTS.invoice.default_amount,
           due_date: new Date(Date.now() + EMAIL_DEFAULTS.payment_due_days * 24 * 60 * 60 * 1000).toLocaleDateString('uk-UA')
         });
         break;
         
       case 'payment':
         Object.assign(variables, {
-          payment_amount: new Intl.NumberFormat('uk-UA').format(entityData.amount),
-          payment_date: entityData.formatted_payment_date,
-          client_name: entityData.client_name
+          payment_amount: entityData.amount ? new Intl.NumberFormat('uk-UA').format(entityData.amount) : EMAIL_DEFAULTS.payment.default_amount,
+          payment_date: entityData.formatted_payment_date || new Date().toLocaleDateString('uk-UA'),
+          client_name: entityData.client_name || EMAIL_DEFAULTS.client.default_name
         });
         break;
         
       case 'client':
         Object.assign(variables, {
-          client_name: entityData.name,
-          client_email: entityData.email
+          client_name: entityData.name || EMAIL_DEFAULTS.client.default_name,
+          client_email: entityData.email || '',
+          client_phone: entityData.phone || '',
+          client_address: entityData.address || '',
+          contact_person: entityData.contact_person || '',
+          registration_date: entityData.formatted_created_date || new Date().toLocaleDateString('uk-UA')
         });
         break;
         
       case 'service':
         Object.assign(variables, {
-          service_name: entityData.name,
-          service_description: entityData.description
+          service_name: entityData.name || 'Послуга',
+          service_description: entityData.description || ''
         });
         break;
     }
@@ -392,7 +399,6 @@ static async buildModuleVariables(moduleType, entityData, customVariables = {}) 
     console.error('Error building module variables:', error);
     throw error;
   }
-}
 }
 
 module.exports = EmailService;
