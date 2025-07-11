@@ -331,7 +331,7 @@ static async getServiceData(serviceId) {
     throw error;
   }
 }
-
+  
 // Формування змінних для шаблону
 static async buildModuleVariables(moduleType, entityData, customVariables = {}) {
   try {
@@ -400,5 +400,7 @@ static async buildModuleVariables(moduleType, entityData, customVariables = {}) 
     throw error;
   }
 }
+}
+
 
 module.exports = EmailService;
