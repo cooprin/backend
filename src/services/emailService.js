@@ -346,10 +346,10 @@ static async buildModuleVariables(moduleType, entityData, customVariables = {}) 
     
     // Базові змінні компанії
     const variables = {
-      company_name: companyData.legal_name || companyData.short_name || EMAIL_DEFAULTS.company.name,
-      company_address: companyData.legal_address || EMAIL_DEFAULTS.company.address,
-      company_phone: companyData.phone || EMAIL_DEFAULTS.company.phone,
-      company_email: companyData.email || EMAIL_DEFAULTS.company.email,
+      company_name: companyData.legal_name || companyData.short_name || 'Наша компанія',
+      company_address: companyData.legal_address || '',
+      company_phone: companyData.phone || '',
+      company_email: companyData.email || '',
       portal_url: process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/portal` : EMAIL_DEFAULTS.portal_url,
       ...customVariables
     };
@@ -358,26 +358,26 @@ static async buildModuleVariables(moduleType, entityData, customVariables = {}) 
     switch (moduleType) {
       case 'invoice':
         Object.assign(variables, {
-          invoice_number: entityData.invoice_number || EMAIL_DEFAULTS.invoice.default_number,
+          invoice_number: entityData.invoice_number || '2024-0001',
           invoice_date: entityData.formatted_invoice_date || new Date().toLocaleDateString('uk-UA'),
-          client_name: entityData.client_name || EMAIL_DEFAULTS.client.default_name,
+          client_name: entityData.client_name || 'Клієнт',
           billing_period: entityData.billing_period_text || 'Не вказано',
-          total_amount: entityData.total_amount ? new Intl.NumberFormat('uk-UA').format(entityData.total_amount) : EMAIL_DEFAULTS.invoice.default_amount,
+          total_amount: entityData.total_amount ? new Intl.NumberFormat('uk-UA').format(entityData.total_amount) : '0,00',
           due_date: new Date(Date.now() + EMAIL_DEFAULTS.payment_due_days * 24 * 60 * 60 * 1000).toLocaleDateString('uk-UA')
         });
         break;
         
       case 'payment':
         Object.assign(variables, {
-          payment_amount: entityData.amount ? new Intl.NumberFormat('uk-UA').format(entityData.amount) : EMAIL_DEFAULTS.payment.default_amount,
+          payment_amount: entityData.amount ? new Intl.NumberFormat('uk-UA').format(entityData.amount) : '0,00',
           payment_date: entityData.formatted_payment_date || new Date().toLocaleDateString('uk-UA'),
-          client_name: entityData.client_name || EMAIL_DEFAULTS.client.default_name
+          client_name: entityData.client_name || 'Клієнт'
         });
         break;
         
       case 'client':
         Object.assign(variables, {
-          client_name: entityData.name || EMAIL_DEFAULTS.client.default_name,
+          client_name: entityData.name || 'Клієнт',
           client_email: entityData.email || '',
           client_phone: entityData.phone || '',
           client_address: entityData.address || '',
