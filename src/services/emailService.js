@@ -1,5 +1,6 @@
 const nodemailer = require('nodemailer');
 const { pool } = require('../database');
+const { EMAIL_DEFAULTS } = require('../constants/emailDefaults');
 
 class EmailService {
   // Отримати налаштування email для відправки
@@ -346,7 +347,7 @@ static async buildModuleVariables(moduleType, entityData, customVariables = {}) 
       company_address: companyData.legal_address || '',
       company_phone: companyData.phone || '',
       company_email: companyData.email || '',
-      portal_url: process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/portal` : '#',
+      portal_url: process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/portal` : EMAIL_DEFAULTS.portal_url,
       ...customVariables
     };
 
@@ -359,7 +360,7 @@ static async buildModuleVariables(moduleType, entityData, customVariables = {}) 
           client_name: entityData.client_name,
           billing_period: entityData.billing_period_text,
           total_amount: new Intl.NumberFormat('uk-UA').format(entityData.total_amount),
-          due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('uk-UA')
+          due_date: new Date(Date.now() + EMAIL_DEFAULTS.payment_due_days * 24 * 60 * 60 * 1000).toLocaleDateString('uk-UA')
         });
         break;
         
