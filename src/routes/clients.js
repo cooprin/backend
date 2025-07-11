@@ -8,6 +8,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { staffOnly } = require('../middleware/clientAccess');
+const EmailService = require('../services/emailService');
 
 // Налаштування для завантаження файлів
 const storage = multer.diskStorage({
