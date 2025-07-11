@@ -9,10 +9,9 @@ const AuditService = require('../services/auditService');
 router.get('/', authenticate, checkPermission('company_profile.read'), async (req, res) => {
   try {
     const query = `
-      SELECT * FROM company.view_email_templates
+      SELECT * FROM company.email_templates
       ORDER BY is_active DESC, name ASC
     `;
-    
     const result = await pool.query(query);
     
     res.json({
