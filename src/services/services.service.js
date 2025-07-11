@@ -1,6 +1,8 @@
 const { pool } = require('../database');
 const AuditService = require('./auditService');
 const { ENTITY_TYPES, AUDIT_TYPES, AUDIT_LOG_TYPES } = require('../constants/constants');
+const EmailService = require('./emailService');
+const CompanyService = require('./company.service');
 
 class ServiceService {
     // Отримання списку послуг з фільтрацією та пагінацією
@@ -1874,6 +1876,61 @@ static async updateInvoice(client, id, data, userId, req) {
         return result.rows[0];
     } catch (error) {
         throw error;
+    }
+}
+// Відправити email про рахунок (викликається по кнопці)
+static async sendInvoiceEmailNotification(invoiceId, templateCode = 'new_invoice_created') {
+    try {
+        // Отримуємо деталі рахунку з клієнтом
+        const invoiceQuery = `
+            SELECT 
+                i.*,
+                c.name as client_name,
+                c.email as client_email
+            FROM services.invoices i
+            JOIN clients.clients c ON i.client_id = c.id
+            WHERE i.id = $1
+        `;
+        
+        const invoiceResult = await pool.query(invoiceQuery, [invoiceId]);
+        
+        if (invoiceResult.rows.length === 0) {
+            throw new Error('Invoice not found');
+        }
+        
+        const invoice = invoiceResult.rows[0];
+        
+        // Перевіряємо чи є email у клієнта
+        if (!invoice.client_email) {
+            return { 
+                success: false, 
+                reason: `У клієнта ${invoice.client_name} не вказано email адресу` 
+            };
+        }
+        
+        // Використовуємо новий метод відправки
+        const result = await EmailService.sendModuleEmail(
+            'invoice',
+            templateCode,
+            invoiceId,
+            invoice.client_email
+        );
+        
+        console.log(`Invoice notification sent to ${invoice.client_email} for invoice ${invoice.invoice_number}`);
+        
+        return { 
+            success: true, 
+            messageId: result.messageId,
+            recipient: invoice.client_email 
+        };
+        
+    } catch (error) {
+        console.error('Error sending invoice notification:', error);
+        return { 
+            success: false, 
+            error: error.message,
+            reason: 'Помилка відправки email'
+        };
     }
 }
 

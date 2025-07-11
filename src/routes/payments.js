@@ -4,6 +4,7 @@ const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { checkPermission } = require('../middleware/checkPermission');
 const PaymentService = require('../services/paymentService');
+const EmailService = require('../services/emailService');
 
 // Отримання списку платежів
 router.get('/', authenticate, checkPermission('payments.read'), async (req, res) => {
@@ -386,4 +387,70 @@ router.get('/overdue/monthly', authenticate, checkPermission('payments.read'), a
     }
 });
 
+// Відправка email про платіж
+router.post('/:id/send-email', authenticate, checkPermission('payments.update'), async (req, res) => {
+    try {
+        const paymentId = req.params.id;
+        const { templateCode } = req.body;
+        
+        // Перевіряємо чи існує платіж
+        const paymentResult = await pool.query(
+            'SELECT id FROM billing.payments WHERE id = $1',
+            [paymentId]
+        );
+
+        if (paymentResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Платіж не знайдено'
+            });
+        }
+
+        // Отримуємо email клієнта через платіж
+        const clientResult = await pool.query(`
+            SELECT c.email, c.name as client_name
+            FROM billing.payments p
+            JOIN clients.clients c ON p.client_id = c.id
+            WHERE p.id = $1
+        `, [paymentId]);
+
+        if (clientResult.rows.length === 0 || !clientResult.rows[0].email) {
+            return res.status(400).json({
+                success: false,
+                message: 'У клієнта не вказано email адресу'
+            });
+        }
+
+        const client = clientResult.rows[0];
+
+        // Відправляємо email з вказаним шаблоном
+        const result = await EmailService.sendModuleEmail(
+            'payment',
+            templateCode || 'payment_received',
+            paymentId,
+            client.email
+        );
+        
+        if (result.success) {
+            res.json({
+                success: true,
+                message: 'Email успішно відправлено',
+                messageId: result.messageId,
+                recipient: client.email
+            });
+        } else {
+            res.status(400).json({
+                success: false,
+                message: result.reason || 'Не вдалося відправити email',
+                error: result.error
+            });
+        }
+    } catch (error) {
+        console.error('Error sending payment email:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при відправці email'
+        });
+    }
+});
 module.exports = router;

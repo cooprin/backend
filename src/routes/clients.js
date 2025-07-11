@@ -8,6 +8,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { staffOnly } = require('../middleware/clientAccess');
+const EmailService = require('../services/emailService');
 
 // Налаштування для завантаження файлів
 const storage = multer.diskStorage({
@@ -382,6 +383,65 @@ router.delete('/:clientId/documents/:documentId', authenticate, checkPermission(
         });
     } finally {
         client.release();
+    }
+});
+
+// Відправка email клієнту
+router.post('/:id/send-email', authenticate, checkPermission('clients.update'), async (req, res) => {
+    try {
+        const clientId = req.params.id;
+        const { templateCode } = req.body;
+        
+        // Перевіряємо чи існує клієнт
+        const clientExists = await pool.query(
+            'SELECT id, name, email FROM clients.clients WHERE id = $1',
+            [clientId]
+        );
+
+        if (clientExists.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Клієнта не знайдено'
+            });
+        }
+
+        const client = clientExists.rows[0];
+
+        // Перевіряємо чи є email у клієнта
+        if (!client.email) {
+            return res.status(400).json({
+                success: false,
+                message: 'У клієнта не вказано email адресу'
+            });
+        }
+
+        // Відправляємо email з вказаним шаблоном або дефолтним
+        const result = await EmailService.sendModuleEmail(
+            'client',
+            templateCode || 'welcome_client',
+            clientId,
+            client.email
+        );
+        
+        if (result.success) {
+            res.json({
+                success: true,
+                message: 'Email успішно відправлено',
+                messageId: result.messageId
+            });
+        } else {
+            res.status(400).json({
+                success: false,
+                message: result.reason || 'Не вдалося відправити email',
+                error: result.error
+            });
+        }
+    } catch (error) {
+        console.error('Error sending client email:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при відправці email'
+        });
     }
 });
 
