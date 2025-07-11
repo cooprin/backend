@@ -1,6 +1,8 @@
 const nodemailer = require('nodemailer');
 const { pool } = require('../database');
 const { EMAIL_DEFAULTS } = require('../constants/emailDefaults');
+const fs = require('fs');
+const path = require('path');
 
 class EmailService {
   // Отримати налаштування email для відправки
@@ -344,6 +346,29 @@ static async buildModuleVariables(moduleType, entityData, customVariables = {}) 
     
     const companyData = companyResult.rows[0] || {};
     
+    // Читаємо логотип як base64
+    let logoBase64 = '';
+    if (companyData.logo_path) {
+      try {
+        // Прибираємо перший / з шляху
+        const logoPath = path.join(__dirname, '..', 'uploads', companyData.logo_path.substring(1));
+        console.log('Trying to read logo from:', logoPath);
+        
+        if (fs.existsSync(logoPath)) {
+          const logoBuffer = fs.readFileSync(logoPath);
+          const mimeType = companyData.logo_path.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+          logoBase64 = `data:${mimeType};base64,${logoBuffer.toString('base64')}`;
+          console.log('Logo loaded successfully, size:', logoBuffer.length, 'bytes');
+        } else {
+          console.log('Logo file not found:', logoPath);
+        }
+      } catch (error) {
+        console.error('Error reading logo file:', error);
+      }
+    } else {
+      console.log('No logo_path in company data');
+    }
+    
     // Базові змінні компанії
     const variables = {
       company_name: companyData.legal_name || companyData.short_name || 'Наша компанія',
@@ -351,7 +376,7 @@ static async buildModuleVariables(moduleType, entityData, customVariables = {}) 
       company_phone: companyData.phone || '',
       company_email: companyData.email || '',
       company_website: companyData.website || '',
-      company_logo_url: companyData.logo_path ? `${process.env.API_URL || 'http://localhost:3000'}${companyData.logo_path}` : '',
+      company_logo_url: logoBase64,
       portal_url: EMAIL_DEFAULTS.portal_url,
       ...customVariables
     };
