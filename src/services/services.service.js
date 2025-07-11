@@ -1879,82 +1879,60 @@ static async updateInvoice(client, id, data, userId, req) {
     }
 }
 // Відправити email про рахунок (викликається по кнопці)
-    static async sendInvoiceEmailNotification(invoiceId) {
-        try {
-            // Отримуємо деталі рахунку з клієнтом
-            const invoiceQuery = `
-                SELECT 
-                    i.*,
-                    c.name as client_name,
-                    c.email as client_email,
-                    to_char(i.invoice_date, 'DD.MM.YYYY') as formatted_invoice_date,
-                    to_char(make_date(i.billing_year, i.billing_month, 1), 'FMMonth YYYY') as billing_period_text
-                FROM services.invoices i
-                JOIN clients.clients c ON i.client_id = c.id
-                WHERE i.id = $1
-            `;
-            
-            const invoiceResult = await pool.query(invoiceQuery, [invoiceId]);
-            
-            if (invoiceResult.rows.length === 0) {
-                throw new Error('Invoice not found');
-            }
-            
-            const invoice = invoiceResult.rows[0];
-            
-            // Перевіряємо чи є email у клієнта
-            if (!invoice.client_email) {
-                return { 
-                    success: false, 
-                    reason: `У клієнта ${invoice.client_name} не вказано email адресу` 
-                };
-            }
-            
-            // Отримуємо дані компанії
-            const companyData = await CompanyService.getOrganizationDetails();
-            
-            // Формуємо змінні для шаблону
-            const templateVariables = {
-                invoice_number: invoice.invoice_number,
-                invoice_date: invoice.formatted_invoice_date,
-                client_name: invoice.client_name,
-                company_name: companyData?.legal_name || companyData?.short_name || 'Наша компанія',
-                billing_period: invoice.billing_period_text,
-                total_amount: new Intl.NumberFormat('uk-UA').format(invoice.total_amount),
-                due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('uk-UA'), // +30 днів
-                portal_url: process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/portal` : '#',
-                company_address: companyData?.legal_address || '',
-                company_phone: companyData?.phone || '',
-                company_email: companyData?.email || ''
-            };
-            
-            // Відправляємо email з шаблоном
-            const result = await EmailService.sendEmailWithTemplate(
-                'new_invoice_created',
-                invoice.client_email,
-                templateVariables,
-                {
-                    sendImmediate: true
-                }
-            );
-            
-            console.log(`Invoice notification sent to ${invoice.client_email} for invoice ${invoice.invoice_number}`);
-            
-            return { 
-                success: true, 
-                messageId: result.messageId,
-                recipient: invoice.client_email 
-            };
-            
-        } catch (error) {
-            console.error('Error sending invoice notification:', error);
+static async sendInvoiceEmailNotification(invoiceId, templateCode = 'new_invoice_created') {
+    try {
+        // Отримуємо деталі рахунку з клієнтом
+        const invoiceQuery = `
+            SELECT 
+                i.*,
+                c.name as client_name,
+                c.email as client_email
+            FROM services.invoices i
+            JOIN clients.clients c ON i.client_id = c.id
+            WHERE i.id = $1
+        `;
+        
+        const invoiceResult = await pool.query(invoiceQuery, [invoiceId]);
+        
+        if (invoiceResult.rows.length === 0) {
+            throw new Error('Invoice not found');
+        }
+        
+        const invoice = invoiceResult.rows[0];
+        
+        // Перевіряємо чи є email у клієнта
+        if (!invoice.client_email) {
             return { 
                 success: false, 
-                error: error.message,
-                reason: 'Помилка відправки email'
+                reason: `У клієнта ${invoice.client_name} не вказано email адресу` 
             };
         }
+        
+        // Використовуємо новий метод відправки
+        const result = await EmailService.sendModuleEmail(
+            'invoice',
+            templateCode,
+            invoiceId,
+            invoice.client_email
+        );
+        
+        console.log(`Invoice notification sent to ${invoice.client_email} for invoice ${invoice.invoice_number}`);
+        
+        return { 
+            success: true, 
+            messageId: result.messageId,
+            recipient: invoice.client_email 
+        };
+        
+    } catch (error) {
+        console.error('Error sending invoice notification:', error);
+        return { 
+            success: false, 
+            error: error.message,
+            reason: 'Помилка відправки email'
+        };
     }
+}
 
 }
 

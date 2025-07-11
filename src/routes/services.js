@@ -816,6 +816,7 @@ router.delete('/invoices/:id/documents/:documentId', authenticate, checkPermissi
 router.post('/invoices/:id/send-email', authenticate, checkPermission('invoices.update'), async (req, res) => {
     try {
         const invoiceId = req.params.id;
+        const { templateCode } = req.body; // Отримуємо templateCode з body запиту
         
         // Перевіряємо чи існує рахунок
         const invoiceExists = await pool.query(
@@ -830,8 +831,11 @@ router.post('/invoices/:id/send-email', authenticate, checkPermission('invoices.
             });
         }
 
-        // Відправляємо email
-        const result = await ServiceService.sendInvoiceEmailNotification(invoiceId);
+        // Відправляємо email з вказаним шаблоном або дефолтним
+        const result = await ServiceService.sendInvoiceEmailNotification(
+            invoiceId, 
+            templateCode || 'new_invoice_created'
+        );
         
         if (result.success) {
             res.json({
@@ -854,7 +858,6 @@ router.post('/invoices/:id/send-email', authenticate, checkPermission('invoices.
         });
     }
 });
-
 
 
 module.exports = router;

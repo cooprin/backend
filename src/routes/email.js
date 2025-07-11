@@ -120,8 +120,8 @@ router.post('/send-test', authenticate, checkPermission('company_profile.update'
 
     const emailData = {
       recipient,
-      subject: 'Test Email from CRM System',
-      bodyHtml: '<h1>Test Email</h1><p>This is a test email from your CRM system. Email configuration is working correctly!</p>',
+      subject: 'Test Email from ERP System',
+      bodyHtml: '<h1>Test Email</h1><p>This is a test email from your ERP system. Email configuration is working correctly!</p>',
       bodyText: 'Test Email - This is a test email from your CRM system. Email configuration is working correctly!'
     };
 

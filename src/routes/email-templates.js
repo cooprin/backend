@@ -66,7 +66,7 @@ router.post('/', authenticate, checkPermission('company_profile.update'), async 
   try {
     await client.query('BEGIN');
 
-    const { name, code, subject, body_html, body_text, description, variables, is_active } = req.body;
+    const { name, code, subject, body_html, body_text, description, variables, is_active, module_type } = req.body;
 
     // Перевірка обов'язкових полів
     if (!name || !code || !subject || !body_html) {
@@ -89,25 +89,26 @@ router.post('/', authenticate, checkPermission('company_profile.update'), async 
       });
     }
 
-    const insertQuery = `
-      INSERT INTO company.email_templates (
-        name, code, subject, body_html, body_text, description, 
-        variables, is_active, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      RETURNING *
-    `;
+const insertQuery = `
+  INSERT INTO company.email_templates (
+    name, code, subject, body_html, body_text, description, 
+    variables, is_active, module_type, created_by
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+  RETURNING *
+`;
 
-    const result = await client.query(insertQuery, [
-      name,
-      code,
-      subject,
-      body_html,
-      body_text || null,
-      description || null,
-      variables || null,
-      is_active !== undefined ? is_active : true,
-      req.user.userId
-    ]);
+const result = await client.query(insertQuery, [
+  name,
+  code,
+  subject,
+  body_html,
+  body_text || null,
+  description || null,
+  variables || null,
+  is_active !== undefined ? is_active : true,
+  module_type || null,
+  req.user.userId
+]);
 
     await client.query('COMMIT');
 
@@ -147,7 +148,7 @@ router.put('/:id', authenticate, checkPermission('company_profile.update'), asyn
     await client.query('BEGIN');
 
     const { id } = req.params;
-    const { name, subject, body_html, body_text, description, variables, is_active } = req.body;
+    const { name, subject, body_html, body_text, description, variables, is_active, module_type } = req.body;
 
     // Отримання поточних даних для аудиту
     const currentData = await client.query(
@@ -164,24 +165,25 @@ router.put('/:id', authenticate, checkPermission('company_profile.update'), asyn
 
     const oldData = currentData.rows[0];
 
-    const updateQuery = `
-      UPDATE company.email_templates 
-      SET name = $1, subject = $2, body_html = $3, body_text = $4, 
-          description = $5, variables = $6, is_active = $7, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $8
-      RETURNING *
-    `;
+const updateQuery = `
+  UPDATE company.email_templates 
+  SET name = $1, subject = $2, body_html = $3, body_text = $4, 
+      description = $5, variables = $6, is_active = $7, module_type = $8, updated_at = CURRENT_TIMESTAMP
+  WHERE id = $9
+  RETURNING *
+`;
 
-    const result = await client.query(updateQuery, [
-      name || oldData.name,
-      subject || oldData.subject,
-      body_html || oldData.body_html,
-      body_text !== undefined ? body_text : oldData.body_text,
-      description !== undefined ? description : oldData.description,
-      variables !== undefined ? variables : oldData.variables,
-      is_active !== undefined ? is_active : oldData.is_active,
-      id
-    ]);
+const result = await client.query(updateQuery, [
+  name || oldData.name,
+  subject || oldData.subject,
+  body_html || oldData.body_html,
+  body_text !== undefined ? body_text : oldData.body_text,
+  description !== undefined ? description : oldData.description,
+  variables !== undefined ? variables : oldData.variables,
+  is_active !== undefined ? is_active : oldData.is_active,
+  module_type !== undefined ? module_type : oldData.module_type,
+  id
+]);
 
     await client.query('COMMIT');
 

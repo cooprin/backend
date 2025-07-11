@@ -200,6 +200,198 @@ static async createTransporter() {
       throw error;
     }
   }
+  // Основний метод для відправки email з модулів
+static async sendModuleEmail(moduleType, templateCode, entityId, recipient, customVariables = {}) {
+  try {
+    const template = await this.getTemplateByCode(templateCode);
+    
+    if (!template) {
+      throw new Error(`Email template '${templateCode}' not found`);
+    }
+
+    // Отримуємо дані залежно від типу модуля
+    const entityData = await this.getModuleData(moduleType, entityId);
+    
+    if (!entityData) {
+      throw new Error(`${moduleType} with ID ${entityId} not found`);
+    }
+
+    // Формуємо змінні для шаблону
+    const variables = await this.buildModuleVariables(moduleType, entityData, customVariables);
+
+    const rendered = this.renderTemplate(template, variables);
+
+    const emailData = {
+      recipient,
+      subject: rendered.subject,
+      bodyHtml: rendered.bodyHtml,
+      bodyText: rendered.bodyText,
+      templateId: template.id
+    };
+
+    return await this.sendEmail(emailData);
+  } catch (error) {
+    console.error('Error sending module email:', error);
+    throw error;
+  }
+}
+
+// Отримання даних залежно від типу модуля
+static async getModuleData(moduleType, entityId) {
+  switch (moduleType) {
+    case 'invoice':
+      return await this.getInvoiceData(entityId);
+    case 'payment':
+      return await this.getPaymentData(entityId);
+    case 'client':
+      return await this.getClientData(entityId);
+    case 'service':
+      return await this.getServiceData(entityId);
+    default:
+      throw new Error(`Unknown module type: ${moduleType}`);
+  }
+}
+
+// Отримання даних рахунку
+static async getInvoiceData(invoiceId) {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        i.*,
+        c.name as client_name,
+        c.email as client_email,
+        c.address as client_address,
+        to_char(i.invoice_date, 'DD.MM.YYYY') as formatted_invoice_date,
+        to_char(make_date(i.billing_year, i.billing_month, 1), 'FMMonth YYYY') as billing_period_text
+      FROM services.invoices i
+      JOIN clients.clients c ON i.client_id = c.id
+      WHERE i.id = $1
+    `, [invoiceId]);
+    
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (error) {
+    console.error('Error getting invoice data:', error);
+    throw error;
+  }
+}
+
+// Отримання даних платежу
+static async getPaymentData(paymentId) {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        p.*,
+        c.name as client_name,
+        c.email as client_email,
+        to_char(p.payment_date, 'DD.MM.YYYY') as formatted_payment_date
+      FROM billing.payments p
+      JOIN clients.clients c ON p.client_id = c.id
+      WHERE p.id = $1
+    `, [paymentId]);
+    
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (error) {
+    console.error('Error getting payment data:', error);
+    throw error;
+  }
+}
+
+// Отримання даних клієнта
+static async getClientData(clientId) {
+  try {
+    const result = await pool.query(`
+      SELECT *
+      FROM clients.clients
+      WHERE id = $1
+    `, [clientId]);
+    
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (error) {
+    console.error('Error getting client data:', error);
+    throw error;
+  }
+}
+
+// Отримання даних послуги
+static async getServiceData(serviceId) {
+  try {
+    const result = await pool.query(`
+      SELECT *
+      FROM services.services
+      WHERE id = $1
+    `, [serviceId]);
+    
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (error) {
+    console.error('Error getting service data:', error);
+    throw error;
+  }
+}
+
+// Формування змінних для шаблону
+static async buildModuleVariables(moduleType, entityData, customVariables = {}) {
+  try {
+    // Отримуємо дані компанії
+    const companyResult = await pool.query(`
+      SELECT legal_name, short_name, legal_address, phone, email
+      FROM company.organization_details 
+      LIMIT 1
+    `);
+    
+    const companyData = companyResult.rows[0] || {};
+    
+    // Базові змінні компанії
+    const variables = {
+      company_name: companyData.legal_name || companyData.short_name || 'Наша компанія',
+      company_address: companyData.legal_address || '',
+      company_phone: companyData.phone || '',
+      company_email: companyData.email || '',
+      portal_url: process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/portal` : '#',
+      ...customVariables
+    };
+
+    // Додаємо змінні залежно від типу модуля
+    switch (moduleType) {
+      case 'invoice':
+        Object.assign(variables, {
+          invoice_number: entityData.invoice_number,
+          invoice_date: entityData.formatted_invoice_date,
+          client_name: entityData.client_name,
+          billing_period: entityData.billing_period_text,
+          total_amount: new Intl.NumberFormat('uk-UA').format(entityData.total_amount),
+          due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('uk-UA')
+        });
+        break;
+        
+      case 'payment':
+        Object.assign(variables, {
+          payment_amount: new Intl.NumberFormat('uk-UA').format(entityData.amount),
+          payment_date: entityData.formatted_payment_date,
+          client_name: entityData.client_name
+        });
+        break;
+        
+      case 'client':
+        Object.assign(variables, {
+          client_name: entityData.name,
+          client_email: entityData.email
+        });
+        break;
+        
+      case 'service':
+        Object.assign(variables, {
+          service_name: entityData.name,
+          service_description: entityData.description
+        });
+        break;
+    }
+
+    return variables;
+  } catch (error) {
+    console.error('Error building module variables:', error);
+    throw error;
+  }
+}
 }
 
 module.exports = EmailService;
