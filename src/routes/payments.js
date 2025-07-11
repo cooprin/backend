@@ -4,6 +4,7 @@ const { pool } = require('../database');
 const authenticate = require('../middleware/auth');
 const { checkPermission } = require('../middleware/checkPermission');
 const PaymentService = require('../services/paymentService');
+const EmailService = require('../services/emailService');
 
 // Отримання списку платежів
 router.get('/', authenticate, checkPermission('payments.read'), async (req, res) => {
