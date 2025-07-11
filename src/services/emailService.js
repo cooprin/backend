@@ -337,7 +337,7 @@ static async buildModuleVariables(moduleType, entityData, customVariables = {}) 
   try {
     // Отримуємо дані компанії
     const companyResult = await pool.query(`
-      SELECT legal_name, short_name, legal_address, phone, email
+      SELECT legal_name, short_name, legal_address, phone, email, website, logo_path
       FROM company.organization_details 
       LIMIT 1
     `);
@@ -350,7 +350,9 @@ static async buildModuleVariables(moduleType, entityData, customVariables = {}) 
       company_address: companyData.legal_address || '',
       company_phone: companyData.phone || '',
       company_email: companyData.email || '',
-      portal_url: process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/portal` : EMAIL_DEFAULTS.portal_url,
+      company_website: companyData.website || '',
+      company_logo_url: companyData.logo_path ? `${process.env.API_URL || 'http://localhost:3000'}${companyData.logo_path}` : '',
+      portal_url: EMAIL_DEFAULTS.portal_url,
       ...customVariables
     };
 
