@@ -350,8 +350,7 @@ static async buildModuleVariables(moduleType, entityData, customVariables = {}) 
     let logoBase64 = '';
     if (companyData.logo_path) {
       try {
-        // Прибираємо перший / з шляху
-        const logoPath = path.join(__dirname, '..', 'uploads', companyData.logo_path.substring(1));
+        const logoPath = path.join(process.env.UPLOAD_DIR, companyData.logo_path.substring(1));
         console.log('Trying to read logo from:', logoPath);
         
         if (fs.existsSync(logoPath)) {
@@ -377,6 +376,7 @@ static async buildModuleVariables(moduleType, entityData, customVariables = {}) 
       company_email: companyData.email || '',
       company_website: companyData.website || '',
       company_logo_url: logoBase64,
+      logo_display_style: logoBase64 ? 'display: block;' : 'display: none;',
       portal_url: EMAIL_DEFAULTS.portal_url,
       ...customVariables
     };
