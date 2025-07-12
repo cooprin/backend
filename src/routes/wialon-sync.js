@@ -7,7 +7,7 @@ const WialonSyncService = require('../services/wialon-sync.service');
 const AuditService = require('../services/auditService');
 const { AUDIT_TYPES } = require('../constants/constants');
 
-// Отримання списку сесій синхронізації
+// Отримання списку сесій синхронізації - ВИПРАВЛЕНО для глобальної статистики
 router.get('/sessions', authenticate, checkPermission('wialon_sync.read'), async (req, res) => {
     try {
         const { 
@@ -63,15 +63,49 @@ router.get('/sessions', authenticate, checkPermission('wialon_sync.read'), async
             countParams.push(`%${search}%`);
         }
         
-        const [sessionsResult, countResult] = await Promise.all([
+        // 🆕 ГЛОБАЛЬНА СТАТИСТИКА (без фільтрів)
+        const globalStatsQuery = `
+            SELECT 
+                status,
+                COUNT(*) as count,
+                COALESCE(SUM(pending_discrepancies), 0) as total_pending_discrepancies
+            FROM wialon_sync.sync_sessions
+            GROUP BY status
+            ORDER BY status
+        `;
+        
+        const totalPendingQuery = `
+            SELECT COALESCE(SUM(pending_discrepancies), 0) as total_pending
+            FROM wialon_sync.sync_sessions
+        `;
+        
+        const [sessionsResult, countResult, globalStatsResult, totalPendingResult] = await Promise.all([
             pool.query(query, params),
-            pool.query(countQuery, countParams)
+            pool.query(countQuery, countParams),
+            pool.query(globalStatsQuery),
+            pool.query(totalPendingQuery)
         ]);
+        
+        // Перетворити результат в об'єкт
+        const globalStats = {
+            total: 0,
+            completed: 0,
+            failed: 0,
+            running: 0,
+            cancelled: 0,
+            pendingDiscrepancies: parseInt(totalPendingResult.rows[0].total_pending)
+        };
+        
+        globalStatsResult.rows.forEach(row => {
+            globalStats[row.status] = parseInt(row.count);
+            globalStats.total += parseInt(row.count);
+        });
         
         res.json({
             success: true,
             sessions: sessionsResult.rows,
             total: parseInt(countResult.rows[0].total),
+            globalStats: globalStats, // 🆕 Глобальна статистика
             pagination: {
                 page: parseInt(page),
                 perPage: limit,
@@ -129,7 +163,7 @@ router.get('/sessions/:sessionId', authenticate, checkPermission('wialon_sync.re
     }
 });
 
-// Отримання логів синхронізації - ВИПРАВЛЕНО
+// Отримання логів синхронізації - ВИПРАВЛЕНО для глобальної статистики
 router.get('/logs', authenticate, checkPermission('wialon_sync.read'), async (req, res) => {
     try {
         const { 
@@ -201,25 +235,56 @@ router.get('/logs', authenticate, checkPermission('wialon_sync.read'), async (re
             WHERE 1=1
         `;
         
-        const countParams = [...params]; // Копіюємо параметри
+        const countParams = [...params.slice(0, paramIndex - 1)]; // Копіюємо параметри без LIMIT/OFFSET
+        let countParamIndex = 1;
         
-        const countResult = await pool.query(countQuery.replace(/JOIN wialon_sync\.sync_sessions ss ON sl\.session_id = ss\.id/, 'JOIN wialon_sync.sync_sessions ss ON sl.session_id = ss.id').replace(/sl\./g, 'sl.').replace(/ss\./g, 'ss.'), countParams.slice(0, -1));
-        const totalCount = parseInt(countResult.rows[0].total);
+        if (sessionId) {
+            countQuery += ` AND sl.session_id = $${countParamIndex++}`;
+        }
+        if (level) {
+            countQuery += ` AND sl.log_level = $${countParamIndex++}`;
+        }
+        if (dateFrom) {
+            countQuery += ` AND sl.created_at >= $${countParamIndex++}`;
+        }
+        if (dateTo) {
+            countQuery += ` AND sl.created_at <= $${countParamIndex++}`;
+        }
+        if (search) {
+            countQuery += ` AND (
+                sl.message ILIKE $${countParamIndex} OR
+                sl.log_level ILIKE $${countParamIndex}
+            )`;
+            countParamIndex++;
+        }
+        
+        // 🆕 ГЛОБАЛЬНА СТАТИСТИКА (без фільтрів)
+        const globalStatsQuery = `
+            SELECT 
+                log_level,
+                COUNT(*) as count
+            FROM wialon_sync.sync_logs
+            GROUP BY log_level
+            ORDER BY log_level
+        `;
+        
+        const globalTotalQuery = `
+            SELECT COUNT(*) as total
+            FROM wialon_sync.sync_logs
+        `;
         
         // Сортування
         const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
         query += ` ORDER BY sl.${sortBy} ${orderDirection}`;
         
-        // Пагінація - ВИПРАВЛЕНО
+        // Пагінація
         const limit = parseInt(perPage);
         const offset = (parseInt(page) - 1) * limit;
         query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
         params.push(limit, offset);
         
-        const logsResult = await pool.query(query, params);
-        
-        // Статистика по рівням логів (БЕЗ пагінації)
-        let statsQuery = `
+        // Локальна статистика (з фільтрами)
+        let localStatsQuery = `
             SELECT 
                 log_level,
                 COUNT(*) as count
@@ -228,52 +293,72 @@ router.get('/logs', authenticate, checkPermission('wialon_sync.read'), async (re
             WHERE 1=1
         `;
         
-        const statsParams = [];
-        let statsParamIndex = 1;
+        const localStatsParams = [];
+        let localStatsParamIndex = 1;
         
         if (sessionId) {
-            statsQuery += ` AND sl.session_id = $${statsParamIndex++}`;
-            statsParams.push(sessionId);
+            localStatsQuery += ` AND sl.session_id = $${localStatsParamIndex++}`;
+            localStatsParams.push(sessionId);
         }
         
         if (level) {
-            statsQuery += ` AND sl.log_level = $${statsParamIndex++}`;
-            statsParams.push(level);
+            localStatsQuery += ` AND sl.log_level = $${localStatsParamIndex++}`;
+            localStatsParams.push(level);
         }
         
         if (dateFrom) {
-            statsQuery += ` AND sl.created_at >= $${statsParamIndex++}`;
-            statsParams.push(dateFrom + ' 00:00:00');
+            localStatsQuery += ` AND sl.created_at >= $${localStatsParamIndex++}`;
+            localStatsParams.push(dateFrom + ' 00:00:00');
         }
         
         if (dateTo) {
-            statsQuery += ` AND sl.created_at <= $${statsParamIndex++}`;
-            statsParams.push(dateTo + ' 23:59:59');
+            localStatsQuery += ` AND sl.created_at <= $${localStatsParamIndex++}`;
+            localStatsParams.push(dateTo + ' 23:59:59');
         }
         
         if (search) {
-            statsQuery += ` AND (
-                sl.message ILIKE $${statsParamIndex} OR
-                sl.log_level ILIKE $${statsParamIndex}
+            localStatsQuery += ` AND (
+                sl.message ILIKE $${localStatsParamIndex} OR
+                sl.log_level ILIKE $${localStatsParamIndex}
             )`;
-            statsParams.push(`%${search}%`);
-            statsParamIndex++;
+            localStatsParams.push(`%${search}%`);
+            localStatsParamIndex++;
         }
         
-        statsQuery += ` GROUP BY log_level ORDER BY log_level`;
+        localStatsQuery += ` GROUP BY log_level ORDER BY log_level`;
         
-        const statsResult = await pool.query(statsQuery, statsParams);
+        const [logsResult, countResult, globalStatsResult, globalTotalResult, localStatsResult] = await Promise.all([
+            pool.query(query, params),
+            pool.query(countQuery, countParams),
+            pool.query(globalStatsQuery),
+            pool.query(globalTotalQuery),
+            pool.query(localStatsQuery, localStatsParams)
+        ]);
+        
+        // Перетворити глобальну статистику в об'єкт
+        const globalStats = {
+            total: parseInt(globalTotalResult.rows[0].total),
+            info: 0,
+            warning: 0,
+            error: 0,
+            debug: 0
+        };
+        
+        globalStatsResult.rows.forEach(row => {
+            globalStats[row.log_level] = parseInt(row.count);
+        });
         
         res.json({
             success: true,
             logs: logsResult.rows,
-            total: totalCount,
-            stats: statsResult.rows,
+            total: parseInt(countResult.rows[0].total),
+            stats: localStatsResult.rows, // Локальна статистика (як було)
+            globalStats: globalStats, // 🆕 Глобальна статистика
             pagination: {
                 page: parseInt(page),
                 perPage: limit,
-                total: totalCount,
-                hasMore: (parseInt(page) * limit) < totalCount
+                total: parseInt(countResult.rows[0].total),
+                hasMore: (parseInt(page) * limit) < parseInt(countResult.rows[0].total)
             }
         });
     } catch (error) {
@@ -436,7 +521,7 @@ router.post('/start', authenticate, checkPermission('wialon_sync.create'), async
     }
 });
 
-// Отримання списку розбіжностей - ВИПРАВЛЕНО
+// Отримання списку розбіжностей - ВИПРАВЛЕНО для глобальної статистики
 router.get('/discrepancies', authenticate, checkPermission('wialon_sync.read'), async (req, res) => {
     try {
         const { 
@@ -492,7 +577,7 @@ router.get('/discrepancies', authenticate, checkPermission('wialon_sync.read'), 
         const orderDirection = descending === 'true' ? 'DESC' : 'ASC';
         query += ` ORDER BY ${sortBy} ${orderDirection}`;
         
-        // Пагінація - ВИПРАВЛЕНО
+        // Пагінація
         const limit = parseInt(perPage);
         const offset = (parseInt(page) - 1) * limit;
         query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
@@ -500,8 +585,32 @@ router.get('/discrepancies', authenticate, checkPermission('wialon_sync.read'), 
         
         const discrepanciesResult = await pool.query(query, params);
         
-        // Отримання повної статистики (БЕЗ фільтрів пагінації)
-        let statsQuery = `
+        // 🆕 ГЛОБАЛЬНА СТАТИСТИКА (без фільтрів sessionId, status, type, search)
+        const globalStatsQuery = `
+            SELECT 
+                status,
+                COUNT(*) as count
+            FROM wialon_sync.sync_discrepancies
+            GROUP BY status
+            ORDER BY status
+        `;
+        
+        const globalStatsResult = await pool.query(globalStatsQuery);
+        
+        // Перетворити результат в об'єкт
+        const globalStats = {
+            pending: 0,
+            approved: 0,
+            rejected: 0,
+            ignored: 0
+        };
+        
+        globalStatsResult.rows.forEach(row => {
+            globalStats[row.status] = parseInt(row.count);
+        });
+        
+        // Локальна статистика для поточної сторінки (як було раніше)
+        let localStatsQuery = `
             SELECT 
                 status,
                 COUNT(*) as count
@@ -509,44 +618,43 @@ router.get('/discrepancies', authenticate, checkPermission('wialon_sync.read'), 
             WHERE 1=1
         `;
         
-        const statsParams = [];
-        let statsParamIndex = 1;
+        const localStatsParams = [];
+        let localStatsParamIndex = 1;
         
-        // Додаємо ті ж фільтри що і для основного запиту (крім пагінації)
         if (sessionId) {
-            statsQuery += ` AND session_id = $${statsParamIndex++}`;
-            statsParams.push(sessionId);
+            localStatsQuery += ` AND session_id = $${localStatsParamIndex++}`;
+            localStatsParams.push(sessionId);
         }
         
         if (status) {
-            statsQuery += ` AND status = $${statsParamIndex++}`;
-            statsParams.push(status);
+            localStatsQuery += ` AND status = $${localStatsParamIndex++}`;
+            localStatsParams.push(status);
         }
         
         if (type) {
-            statsQuery += ` AND discrepancy_type = $${statsParamIndex++}`;
-            statsParams.push(type);
+            localStatsQuery += ` AND discrepancy_type = $${localStatsParamIndex++}`;
+            localStatsParams.push(type);
         }
         
         if (search) {
-            statsQuery += ` AND (
-                discrepancy_type ILIKE $${statsParamIndex} OR
-                (wialon_entity_data->>'name') ILIKE $${statsParamIndex} OR
-                (system_entity_data->>'name') ILIKE $${statsParamIndex}
+            localStatsQuery += ` AND (
+                discrepancy_type ILIKE $${localStatsParamIndex} OR
+                (wialon_entity_data->>'name') ILIKE $${localStatsParamIndex} OR
+                (system_entity_data->>'name') ILIKE $${localStatsParamIndex}
             )`;
-            statsParams.push(`%${search}%`);
-            statsParamIndex++;
+            localStatsParams.push(`%${search}%`);
+            localStatsParamIndex++;
         }
         
-        statsQuery += ` GROUP BY status ORDER BY status`;
-        
-        const statsResult = await pool.query(statsQuery, statsParams);
+        localStatsQuery += ` GROUP BY status ORDER BY status`;
+        const localStatsResult = await pool.query(localStatsQuery, localStatsParams);
         
         res.json({
             success: true,
             discrepancies: discrepanciesResult.rows,
             total: totalCount,
-            stats: statsResult.rows,
+            stats: localStatsResult.rows, // Локальна статистика (як було)
+            globalStats: globalStats, // 🆕 Глобальна статистика
             pagination: {
                 page: parseInt(page),
                 perPage: limit,
