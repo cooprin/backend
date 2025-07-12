@@ -36,7 +36,7 @@ class CurrencyService {
       return {
         currency: settings[CURRENCY_SETTING_KEYS.DEFAULT_CURRENCY] || DEFAULT_CURRENCY_SETTINGS.currency,
         format: settings[CURRENCY_SETTING_KEYS.CURRENCY_FORMAT] || DEFAULT_CURRENCY_SETTINGS.format,
-        decimalPlaces: parseInt(settings[CURRENCY_SETTING_KEYS.DECIMAL_PLACES]) || DEFAULT_CURRENCY_SETTINGS.decimalPlaces,
+        decimalPlaces: settings[CURRENCY_SETTING_KEYS.DECIMAL_PLACES] !== undefined ? parseInt(settings[CURRENCY_SETTING_KEYS.DECIMAL_PLACES]) : DEFAULT_CURRENCY_SETTINGS.decimalPlaces,
         useThousandsSeparator: settings[CURRENCY_SETTING_KEYS.USE_THOUSANDS_SEPARATOR] !== 'false'
       };
     } catch (error) {
@@ -61,7 +61,7 @@ class CurrencyService {
         },
         {
           key: CURRENCY_SETTING_KEYS.DECIMAL_PLACES,
-          value: (settings.decimalPlaces || DEFAULT_CURRENCY_SETTINGS.decimalPlaces).toString(),
+          value: (settings.decimalPlaces !== undefined ? settings.decimalPlaces : DEFAULT_CURRENCY_SETTINGS.decimalPlaces).toString(),
           description: 'Number of decimal places for currency display'
         },
         {
