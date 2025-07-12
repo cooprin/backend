@@ -8,6 +8,7 @@ const CompanyService = require('../services/company.service');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const CurrencyService = require('../services/currencyService');
 
 // Налаштування для завантаження файлів
 const storage = multer.diskStorage({
@@ -521,5 +522,58 @@ router.put('/notification-settings', authenticate, staffOnly, checkPermission('c
   } finally {
     client.release();
   }
+});
+
+// Валютні налаштування
+router.get('/currency-settings', authenticate, checkPermission('company.read'), async (req, res) => {
+    try {
+        const settings = await CurrencyService.getCurrencySettings();
+        const supportedCurrencies = CurrencyService.getSupportedCurrencies();
+        const formats = CurrencyService.getCurrencyFormats();
+        
+        res.json({
+            success: true,
+            settings,
+            supportedCurrencies,
+            formats
+        });
+    } catch (error) {
+        console.error('Error fetching currency settings:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Помилка при отриманні налаштувань валюти'
+        });
+    }
+});
+
+router.post('/currency-settings', authenticate, checkPermission('company.update'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        const settings = await CurrencyService.saveCurrencySettings(
+            client,
+            req.body,
+            req.user.userId,
+            req
+        );
+        
+        await client.query('COMMIT');
+        
+        res.json({
+            success: true,
+            settings,
+            message: 'Налаштування валюти збережено'
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error saving currency settings:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Помилка при збереженні налаштувань валюти'
+        });
+    } finally {
+        client.release();
+    }
 });
 module.exports = router;
