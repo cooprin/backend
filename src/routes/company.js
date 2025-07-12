@@ -525,7 +525,7 @@ router.put('/notification-settings', authenticate, staffOnly, checkPermission('c
 });
 
 // Валютні налаштування
-router.get('/currency-settings', authenticate, checkPermission('company.read'), async (req, res) => {
+router.get('/currency-settings', authenticate, checkPermission('company_profile.read'), async (req, res) => {
     try {
         const settings = await CurrencyService.getCurrencySettings();
         const supportedCurrencies = CurrencyService.getSupportedCurrencies();
@@ -546,7 +546,7 @@ router.get('/currency-settings', authenticate, checkPermission('company.read'), 
     }
 });
 
-router.post('/currency-settings', authenticate, checkPermission('company.update'), async (req, res) => {
+router.post('/currency-settings', authenticate, checkPermission('company_profile.update'), async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
