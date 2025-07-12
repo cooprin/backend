@@ -63,20 +63,21 @@ router.get('/sessions', authenticate, checkPermission('wialon_sync.read'), async
             countParams.push(`%${search}%`);
         }
         
-        // 🆕 ГЛОБАЛЬНА СТАТИСТИКА (без фільтрів)
+        // 🆕 ВИПРАВЛЕНА ГЛОБАЛЬНА СТАТИСТИКА
         const globalStatsQuery = `
             SELECT 
                 status,
-                COUNT(*) as count,
-                COALESCE(SUM(pending_discrepancies), 0) as total_pending_discrepancies
+                COUNT(*) as count
             FROM wialon_sync.sync_sessions
             GROUP BY status
             ORDER BY status
         `;
         
+        // Підрахунок pending discrepancies з окремої таблиці
         const totalPendingQuery = `
-            SELECT COALESCE(SUM(pending_discrepancies), 0) as total_pending
-            FROM wialon_sync.sync_sessions
+            SELECT COUNT(*) as total_pending
+            FROM wialon_sync.sync_discrepancies
+            WHERE status = 'pending'
         `;
         
         const [sessionsResult, countResult, globalStatsResult, totalPendingResult] = await Promise.all([
